@@ -33,6 +33,7 @@ num_cpus = "1.10.1"
 itertools = "0.9.0"
 positioned-io = "0.2.2"
 byteorder = "1.3.4"
+rust-fil-nse-gpu = { git = "https://github.com/filecoin-project/rust-fil-nse-gpu.git" }
 
 [dev-dependencies]
 tempdir = "0.3.7"

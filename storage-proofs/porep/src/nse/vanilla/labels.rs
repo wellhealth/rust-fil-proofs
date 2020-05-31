@@ -4,6 +4,8 @@ use itertools::Itertools;
 use log::debug;
 use merkletree::store::{StoreConfig, StoreConfigDataVersion};
 use rayon::prelude::*;
+use rust_fil_nse_gpu as gpu;
+use rust_fil_nse_gpu::NarrowStackedExpander;
 use sha2raw::Sha256;
 use storage_proofs_core::{
     hasher::{Domain, Hasher},
@@ -19,10 +21,58 @@ use super::{
 };
 use crate::encode;
 
+fn to_gpu_config(conf: &Config) -> gpu::Config {
+    gpu::Config {
+        num_nodes_window: conf.num_nodes_window,
+        num_butterfly_layers: conf.num_butterfly_layers,
+        num_expander_layers: conf.num_expander_layers,
+        degree_expander: conf.degree_expander,
+        degree_butterfly: conf.degree_butterfly,
+        k: conf.k,
+    }
+}
+
 pub type LCMerkleTree<Tree> =
     LCTree<<Tree as MerkleTreeTrait>::Hasher, <Tree as MerkleTreeTrait>::Arity, U0, U0>;
 pub type MerkleTree<Tree> =
     DiskTree<<Tree as MerkleTreeTrait>::Hasher, <Tree as MerkleTreeTrait>::Arity, U0, U0>;
+
+type GPUHasherDomain = storage_proofs_core::hasher::PoseidonDomain;
+// type GPUHasher = storage_proofs_core::hasher::PoseidonHasher;
+// type GPUTree = storage_proofs_core::merkle::OctLCMerkleTree<GPUHasher>;
+pub fn encode_with_oct_lc_poseidon_trees_gpu(
+    conf: &Config,
+    window_index: u32,
+    replica_id: &GPUHasherDomain,
+    data: &mut [u8],
+) -> gpu::NSEResult<(Vec<GPUHasherDomain>, GPUHasherDomain)> {
+    //gpu::NSEResult<(Vec<MerkleTree<GPUTree>>, LCMerkleTree<GPUTree>)>
+    let gpu_conf = to_gpu_config(conf);
+    let mut context = gpu::GPU::new(gpu_conf)?;
+    let sealer = gpu::Sealer::new(
+        gpu_conf,
+        unsafe { std::mem::transmute::<_, gpu::ReplicaId>(*replica_id) },
+        window_index as usize,
+        gpu::Layer::from(&data.to_vec()),
+        &mut context,
+        false,
+        2,
+    )?;
+    let layers = sealer
+        .map(|v| v)
+        .collect::<gpu::NSEResult<Vec<gpu::LayerOutput>>>()?;
+    data.copy_from_slice(Vec::<u8>::from(&layers.last().unwrap().base).as_slice());
+    let mut roots = layers
+        .iter()
+        .map(|l| {
+            assert_eq!(l.tree.len(), 1);
+            unsafe { std::mem::transmute::<_, GPUHasherDomain>(l.tree[0]) }
+        })
+        .collect::<Vec<_>>();
+    let replica_root = roots.pop().unwrap();
+    assert_eq!(roots.len(), conf.num_layers() - 1);
+    Ok((roots, replica_root))
+}
 
 /// Encodes the provided data and returns the replica and a list of merkle trees for each layer.
 pub fn encode_with_trees<Tree: 'static + MerkleTreeTrait>(
@@ -694,5 +744,53 @@ mod tests {
                 0, 0, 0, 0
             ]
         );
+    }
+
+    #[test]
+    fn test_gpu_cpu_consistency() {
+        let rng = &mut XorShiftRng::from_seed(crate::TEST_SEED);
+
+        let config = sample_config();
+        let replica_id: PoseidonDomain = Fr::random(rng).into();
+        let window_index = rng.gen();
+
+        let data: Vec<u8> = (0..config.num_nodes_window)
+            .flat_map(|_| fr_into_bytes(&Fr::random(rng)))
+            .collect();
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        let store_config = StoreConfig::new(
+            cache_dir.path(),
+            CacheKey::CommDTree.to_string(),
+            StoreConfig::default_rows_to_discard(config.num_nodes_window as usize, 8),
+        );
+        let mut cpu_encoded_data = data.clone();
+
+        let store_configs = split_config(store_config.clone(), config.num_layers()).unwrap();
+
+        let (cpu_trees, cpu_replica_tree) = encode_with_trees::<OctLCMerkleTree<PoseidonHasher>>(
+            &config,
+            store_configs,
+            window_index,
+            &replica_id,
+            &mut cpu_encoded_data,
+        )
+        .unwrap();
+        let cpu_roots = cpu_trees.into_iter().map(|t| t.root()).collect::<Vec<_>>();
+        let cpu_replica_root = cpu_replica_tree.root();
+
+        let mut gpu_encoded_data = data.clone();
+
+        let (gpu_roots, gpu_replica_root) = encode_with_oct_lc_poseidon_trees_gpu(
+            &config,
+            window_index,
+            &replica_id,
+            &mut gpu_encoded_data,
+        )
+        .unwrap();
+
+        assert_eq!(cpu_roots, gpu_roots);
+        assert_eq!(cpu_replica_root, gpu_replica_root);
+        assert_eq!(cpu_encoded_data, gpu_encoded_data);
     }
 }
