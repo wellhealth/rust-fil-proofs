@@ -12,6 +12,7 @@ use storage_proofs_core::{
     merkle::{DiskTree, LCTree, MerkleTreeTrait, MerkleTreeWrapper},
     util::NODE_SIZE,
 };
+use ff::PrimeField;
 
 use super::{
     batch_hasher::{batch_hash, truncate_hash},
@@ -55,7 +56,7 @@ pub fn encode_with_oct_lc_poseidon_trees_gpu(
         window_index as usize,
         gpu::Layer::from(&data.to_vec()),
         &mut context,
-        false,
+        true,
         2,
     )?;
     let layers = sealer
@@ -66,7 +67,7 @@ pub fn encode_with_oct_lc_poseidon_trees_gpu(
         .iter()
         .map(|l| {
             assert_eq!(l.tree.len(), 1);
-            unsafe { std::mem::transmute::<_, GPUHasherDomain>(l.tree[0]) }
+            unsafe { std::mem::transmute::<_, GPUHasherDomain>(l.tree[0].0.into_repr()) }
         })
         .collect::<Vec<_>>();
     let replica_root = roots.pop().unwrap();
@@ -750,7 +751,16 @@ mod tests {
     fn test_gpu_cpu_consistency() {
         let rng = &mut XorShiftRng::from_seed(crate::TEST_SEED);
 
-        let config = sample_config();
+        let config = Config {
+            k: 2,
+            num_nodes_window: 512,
+            degree_expander: 96,
+            degree_butterfly: 4,
+            num_expander_layers: 4,
+            num_butterfly_layers: 3,
+            sector_size: 2048 * 8,
+        };
+
         let replica_id: PoseidonDomain = Fr::random(rng).into();
         let window_index = rng.gen();
 
