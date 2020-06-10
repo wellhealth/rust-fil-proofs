@@ -315,8 +315,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
             info!("  storing labels on disk");
             // Construct and persist the layer data.
-            let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
-                DiskStore::new_from_slice_with_config(
+            //let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+            let tmpstore : DiskStore<<Tree::Hasher as Hasher>::Domain> =
+            DiskStore::new_from_slice_with_config(
                     graph.size(),
                     Tree::Arity::to_usize(),
                     &labels_buffer[..layer_size],
@@ -326,8 +327,12 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 "  generated layer {} store with id {}",
                 layer, layer_config.id
             );
+            drop(tmpstore);
 
-            // Track the layer specific store and StoreConfig for later retrieval.
+            let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+                DiskStore::new_empty(graph.size())?;
+
+                // Track the layer specific store and StoreConfig for later retrieval.
             labels.push(layer_store);
             label_configs.push(layer_config);
         }
