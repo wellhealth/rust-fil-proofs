@@ -1,4 +1,4 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, metadata, File, OpenOptions};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -304,6 +304,20 @@ where
 {
     info!("seal_pre_commit_phase1: start");
 
+    // Sanity check all input path types.
+    ensure!(
+        metadata(in_path.as_ref())?.is_file(),
+        "in_path must be a file"
+    );
+    ensure!(
+        metadata(out_path.as_ref())?.is_file(),
+        "out_path must be a file"
+    );
+    ensure!(
+        metadata(cache_path.as_ref())?.is_dir(),
+        "cache_path must be a directory"
+    );
+
     let sector_bytes = usize::from(PaddedBytesAmount::from(porep_config));
     fs::metadata(&in_path)
         .with_context(|| format!("could not read in_path={:?})", in_path.as_ref().display()))?;
@@ -339,6 +353,7 @@ where
         vanilla_params: setup_params(
             PaddedBytesAmount::from(porep_config),
             usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
         )?,
         partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
         priority: false,
@@ -359,7 +374,7 @@ where
         );
 
         trace!(
-            "seal phase 1: sector_size {}, base tree size {}, base tree leafs {}, cached above base {}",
+            "seal phase 1: sector_size {}, base tree size {}, base tree leafs {}, rows to discard {}",
             u64::from(porep_config.sector_size),
             base_tree_size,
             base_tree_leafs,
@@ -396,8 +411,13 @@ where
         "pieces and comm_d do not match"
     );
 
-    let replica_id =
-        generate_replica_id::<Tree::Hasher, _>(&prover_id, sector_id.into(), &ticket, comm_d);
+    let replica_id = generate_replica_id::<Tree::Hasher, _>(
+        &prover_id,
+        sector_id.into(),
+        &ticket,
+        comm_d,
+        &porep_config.porep_id,
+    );
 
     let labels = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase1(
         &compound_public_params.vanilla_params,
@@ -424,6 +444,16 @@ where
     S: AsRef<Path>,
 {
     info!("seal_pre_commit_phase2: start");
+
+    // Sanity check all input path types.
+    ensure!(
+        metadata(cache_path.as_ref())?.is_dir(),
+        "cache_path must be a directory"
+    );
+    ensure!(
+        metadata(replica_path.as_ref())?.is_file(),
+        "replica_path must be a file"
+    );
 
     let SealPreCommitPhase1Output {
         mut labels,
@@ -461,7 +491,7 @@ where
         let base_tree_leafs = get_base_tree_leafs::<DefaultBinaryTree>(base_tree_size)?;
 
         trace!(
-            "seal phase 2: base tree size {}, base tree leafs {}, cached above base {}",
+            "seal phase 2: base tree size {}, base tree leafs {}, rows to discard {}",
             base_tree_size,
             base_tree_leafs,
             StoreConfig::default_rows_to_discard(base_tree_leafs, BINARY_ARITY)
@@ -481,6 +511,7 @@ where
         vanilla_params: setup_params(
             PaddedBytesAmount::from(porep_config),
             usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
         )?,
         partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
         priority: false,
@@ -536,6 +567,16 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
 ) -> Result<SealCommitPhase1Output<Tree>> {
     info!("seal_commit_phase1:start");
 
+    // Sanity check all input path types.
+    ensure!(
+        metadata(cache_path.as_ref())?.is_dir(),
+        "cache_path must be a directory"
+    );
+    ensure!(
+        metadata(replica_path.as_ref())?.is_file(),
+        "replica_path must be a file"
+    );
+
     let SealPreCommitOutput { comm_d, comm_r } = pre_commit;
 
     ensure!(comm_d != [0; 32], "Invalid all zero commitment (comm_d)");
@@ -574,11 +615,17 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     let comm_r_safe = as_safe_commitment(&comm_r, "comm_r")?;
     let comm_d_safe = DefaultPieceDomain::try_from_bytes(&comm_d)?;
 
-    let replica_id =
-        generate_replica_id::<Tree::Hasher, _>(&prover_id, sector_id.into(), &ticket, comm_d_safe);
+    let replica_id = generate_replica_id::<Tree::Hasher, _>(
+        &prover_id,
+        sector_id.into(),
+        &ticket,
+        comm_d_safe,
+        &porep_config.porep_id,
+    );
 
     let public_inputs = stacked::PublicInputs {
         replica_id,
+        porep_id: porep_config.porep_id,
         tau: Some(stacked::Tau {
             comm_d: comm_d_safe,
             comm_r: comm_r_safe,
@@ -596,6 +643,7 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
         vanilla_params: setup_params(
             PaddedBytesAmount::from(porep_config),
             usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
         )?,
         partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
         priority: false,
@@ -658,6 +706,7 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
 
     let public_inputs = stacked::PublicInputs {
         replica_id,
+        porep_id: porep_config.porep_id,
         tau: Some(stacked::Tau {
             comm_d: comm_d_safe,
             comm_r: comm_r_safe,
@@ -677,6 +726,7 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
         vanilla_params: setup_params(
             PaddedBytesAmount::from(porep_config),
             usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
         )?,
         partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
         priority: false,
@@ -764,13 +814,19 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     let comm_r: <Tree::Hasher as Hasher>::Domain = as_safe_commitment(&comm_r_in, "comm_r")?;
     let comm_d: DefaultPieceDomain = as_safe_commitment(&comm_d_in, "comm_d")?;
 
-    let replica_id =
-        generate_replica_id::<Tree::Hasher, _>(&prover_id, sector_id.into(), &ticket, comm_d);
+    let replica_id = generate_replica_id::<Tree::Hasher, _>(
+        &prover_id,
+        sector_id.into(),
+        &ticket,
+        comm_d,
+        &porep_config.porep_id,
+    );
 
     let compound_setup_params = compound_proof::SetupParams {
         vanilla_params: setup_params(
             PaddedBytesAmount::from(porep_config),
             usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
         )?,
         partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
         priority: false,
@@ -784,6 +840,7 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     let public_inputs =
         stacked::PublicInputs::<<Tree::Hasher as Hasher>::Domain, DefaultPieceDomain> {
             replica_id,
+            porep_id: porep_config.porep_id,
             tau: Some(Tau { comm_r, comm_d }),
             seed,
             k: None,
@@ -875,6 +932,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
         vanilla_params: setup_params(
             PaddedBytesAmount::from(porep_config),
             usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
         )?,
         partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
         priority: false,
@@ -897,6 +955,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
             sector_ids[i].into(),
             &tickets[i],
             comm_d,
+            &porep_config.porep_id,
         );
 
         public_inputs.push(stacked::PublicInputs::<
@@ -904,6 +963,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
             DefaultPieceDomain,
         > {
             replica_id,
+            porep_id: porep_config.porep_id,
             tau: Some(Tau { comm_r, comm_d }),
             seed: seeds[i],
             k: None,

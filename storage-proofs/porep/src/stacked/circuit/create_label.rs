@@ -1,20 +1,17 @@
-use bellperson::gadgets::{
-    boolean::Boolean,
-    sha256::sha256 as sha256_circuit,
-    {multipack, num},
-};
+use bellperson::gadgets::{boolean::Boolean, num, sha256::sha256 as sha256_circuit, uint32};
 use bellperson::{ConstraintSystem, SynthesisError};
 use ff::PrimeField;
 use fil_sapling_crypto::jubjub::JubjubEngine;
-use storage_proofs_core::gadgets::uint64;
+use storage_proofs_core::{gadgets::multipack, gadgets::uint64, util::reverse_bit_numbering};
 
-use super::super::vanilla::TOTAL_PARENTS;
+use crate::stacked::vanilla::TOTAL_PARENTS;
 
 /// Compute a single label.
 pub fn create_label_circuit<E, CS>(
     mut cs: CS,
     replica_id: &[Boolean],
     parents: Vec<Vec<Boolean>>,
+    layer_index: uint32::UInt32,
     node: uint64::UInt64,
 ) -> Result<num::AllocatedNum<E>, SynthesisError>
 where
@@ -34,6 +31,7 @@ where
         ciphertexts.push(Boolean::constant(false));
     }
 
+    ciphertexts.extend_from_slice(&layer_index.into_bits_be());
     ciphertexts.extend_from_slice(&node.to_bits_be());
     // pad to 64 bytes
     while ciphertexts.len() < 512 {
@@ -50,7 +48,7 @@ where
     }
 
     // 32b replica id
-    // 32b node
+    // 32b layer_index + node
     // 37 * 32b  = 1184b parents
     assert_eq!(ciphertexts.len(), (1 + 1 + TOTAL_PARENTS) * 32 * 8);
 
@@ -58,25 +56,11 @@ where
     let alloc_bits = sha256_circuit(cs.namespace(|| "hash"), &ciphertexts[..])?;
 
     // Convert the hash result into a single Fr.
-    let fr = if alloc_bits[0].get_value().is_some() {
-        let be_bits = alloc_bits
-            .iter()
-            .map(|v| v.get_value().ok_or(SynthesisError::AssignmentMissing))
-            .collect::<Result<Vec<bool>, SynthesisError>>()?;
-
-        let le_bits = be_bits
-            .chunks(8)
-            .flat_map(|chunk| chunk.iter().rev())
-            .copied()
-            .take(E::Fr::CAPACITY as usize)
-            .collect::<Vec<bool>>();
-
-        Ok(multipack::compute_multipacking::<E>(&le_bits)[0])
-    } else {
-        Err(SynthesisError::AssignmentMissing)
-    };
-
-    num::AllocatedNum::<E>::alloc(cs.namespace(|| "result_num"), || fr)
+    let bits = reverse_bit_numbering(alloc_bits);
+    multipack::pack_bits(
+        cs.namespace(|| "result_num"),
+        &bits[0..(E::Fr::CAPACITY as usize)],
+    )
 }
 
 #[cfg(test)]
@@ -90,7 +74,7 @@ mod tests {
     use rand::SeedableRng;
     use rand_xorshift::XorShiftRng;
     use storage_proofs_core::{
-        drgraph::{new_seed, Graph, BASE_DEGREE},
+        drgraph::{Graph, BASE_DEGREE},
         fr32::{bytes_into_fr, fr_into_bytes},
         gadgets::TestConstraintSystem,
         hasher::Sha256Hasher,
@@ -98,7 +82,9 @@ mod tests {
         util::{data_at_node, NODE_SIZE},
     };
 
-    use crate::stacked::vanilla::{StackedBucketGraph, EXP_DEGREE, TOTAL_PARENTS};
+    use crate::stacked::vanilla::{
+        create_label_exp, StackedBucketGraph, EXP_DEGREE, TOTAL_PARENTS,
+    };
 
     #[test]
     fn test_create_label() {
@@ -106,17 +92,19 @@ mod tests {
         let rng = &mut XorShiftRng::from_seed(crate::TEST_SEED);
 
         let size = 64;
+        let porep_id = [32; 32];
 
         let graph = StackedBucketGraph::<Sha256Hasher>::new_stacked(
             size,
             BASE_DEGREE,
             EXP_DEGREE,
-            new_seed(),
+            porep_id,
         )
         .unwrap();
 
         let id_fr = Fr::random(rng);
         let id: Vec<u8> = fr_into_bytes(&id_fr);
+        let layer = 3;
         let node = 22;
 
         let mut data: Vec<u8> = (0..2 * size)
@@ -163,22 +151,23 @@ mod tests {
             bytes_into_boolean_vec_be(&mut cs, Some(id.as_slice()), id.len()).unwrap()
         };
 
+        let layer_alloc = uint32::UInt32::constant(layer as u32);
         let node_alloc = uint64::UInt64::constant(node as u64);
 
         let out = create_label_circuit(
             cs.namespace(|| "create_label"),
             &id_bits,
             parents_bits.clone(),
+            layer_alloc,
             node_alloc,
         )
         .expect("key derivation function failed");
 
         assert!(cs.is_satisfied(), "constraints not satisfied");
-        assert_eq!(cs.num_constraints(), 532_024);
+        assert_eq!(cs.num_constraints(), 532_025);
 
         let (l1, l2) = data.split_at_mut(size * NODE_SIZE);
-        super::super::super::vanilla::create_label_exp(&graph, &id_fr.into(), &*l2, l1, node)
-            .unwrap();
+        create_label_exp(&graph, &id_fr.into(), &*l2, l1, layer, node).unwrap();
         let expected_raw = data_at_node(&l1, node).unwrap();
         let expected = bytes_into_fr(expected_raw).unwrap();
 

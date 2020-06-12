@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::marker::PhantomData;
 
 #[cfg(target_arch = "x86")]
@@ -11,7 +12,11 @@ use once_cell::sync::OnceCell;
 use rayon::prelude::*;
 use sha2raw::Sha256;
 use storage_proofs_core::{
-    crypto::feistel::{self, FeistelPrecomputed},
+    crypto::{
+        derive_porep_domain_seed,
+        feistel::{self, FeistelPrecomputed},
+        FEISTEL_DST,
+    },
     drgraph::BASE_DEGREE,
     drgraph::{BucketGraph, Graph},
     error::Result,
@@ -23,7 +28,6 @@ use storage_proofs_core::{
 
 /// The expansion degree used for Stacked Graphs.
 pub const EXP_DEGREE: usize = 8;
-const FEISTEL_KEYS: [feistel::Index; 4] = [1, 2, 3, 4];
 
 const DEGREE: usize = BASE_DEGREE + EXP_DEGREE;
 
@@ -114,6 +118,7 @@ where
 {
     expansion_degree: usize,
     base_graph: G,
+    feistel_keys: [feistel::Index; 4],
     feistel_precomputed: FeistelPrecomputed,
     id: String,
     cache: Option<&'static ParentCache>,
@@ -167,7 +172,7 @@ where
         nodes: usize,
         base_degree: usize,
         expansion_degree: usize,
-        seed: [u8; 28],
+        porep_id: [u8; 32],
     ) -> Result<Self> {
         assert_eq!(base_degree, BASE_DEGREE);
         assert_eq!(expansion_degree, EXP_DEGREE);
@@ -177,9 +182,16 @@ where
 
         let base_graph = match base_graph {
             Some(graph) => graph,
-            None => G::new(nodes, base_degree, 0, seed)?,
+            None => G::new(nodes, base_degree, 0, porep_id)?,
         };
         let bg_id = base_graph.identifier();
+
+        let mut feistel_keys = [0u64; 4];
+        let raw_seed = derive_porep_domain_seed(FEISTEL_DST, porep_id);
+        feistel_keys[0] = u64::from_le_bytes(raw_seed[0..8].try_into().unwrap());
+        feistel_keys[1] = u64::from_le_bytes(raw_seed[8..16].try_into().unwrap());
+        feistel_keys[2] = u64::from_le_bytes(raw_seed[16..24].try_into().unwrap());
+        feistel_keys[3] = u64::from_le_bytes(raw_seed[24..32].try_into().unwrap());
 
         let mut res = StackedGraph {
             base_graph,
@@ -189,6 +201,7 @@ where
             ),
             expansion_degree,
             cache: None,
+            feistel_keys,
             feistel_precomputed: feistel::precompute((expansion_degree * nodes) as feistel::Index),
             _h: PhantomData,
         };
@@ -369,9 +382,9 @@ where
         nodes: usize,
         base_degree: usize,
         expansion_degree: usize,
-        seed: [u8; 28],
+        porep_id: [u8; 32],
     ) -> Result<Self> {
-        Self::new_stacked(nodes, base_degree, expansion_degree, seed)
+        Self::new_stacked(nodes, base_degree, expansion_degree, porep_id)
     }
 
     fn create_key(
@@ -423,7 +436,7 @@ where
         let transformed = feistel::permute(
             self.size() as feistel::Index * self.expansion_degree as feistel::Index,
             a,
-            &FEISTEL_KEYS,
+            &self.feistel_keys,
             self.feistel_precomputed,
         );
         transformed as u32 / self.expansion_degree as u32
@@ -443,9 +456,9 @@ where
         nodes: usize,
         base_degree: usize,
         expansion_degree: usize,
-        seed: [u8; 28],
+        porep_id: [u8; 32],
     ) -> Result<Self> {
-        Self::new(None, nodes, base_degree, expansion_degree, seed)
+        Self::new(None, nodes, base_degree, expansion_degree, porep_id)
     }
 
     pub fn base_graph(&self) -> &G {
