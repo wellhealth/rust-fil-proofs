@@ -36,6 +36,7 @@ fn cache_porep_params<Tree: 'static + MerkleTreeTrait>(porep_config: PoRepConfig
     let public_params = public_params(
         PaddedBytesAmount::from(porep_config),
         usize::from(PoRepProofPartitions::from(porep_config)),
+        porep_config.porep_id,
     )
     .unwrap();
 
@@ -216,6 +217,7 @@ fn generate_params_porep(sector_size: u64) {
                     .get(&sector_size)
                     .expect("missing sector size"),
             ),
+            porep_id: [0; 32],
         }
     );
 }
@@ -243,7 +245,7 @@ pub fn main() {
             .collect::<Vec<_>>();
 
         let selected_sector_sizes = MultiSelect::with_theme(&ColorfulTheme::default())
-            .with_prompt("Select the sizes that should be generated if not already cached")
+            .with_prompt("Select the sizes that should be generated if not already cached [use space key to select]")
             .items(&sector_sizes[..])
             .interact()
             .unwrap();
