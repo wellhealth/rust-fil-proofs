@@ -41,7 +41,6 @@ use crate::types::{
 use std::marker::PhantomData;
 use crate::Labels;
 
-
 #[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
@@ -58,10 +57,23 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         S: AsRef<Path>,
         T: AsRef<Path>,
 {
-    info!("seal_pre_commit_phase1_tree: start");
+    info!("seal_pre_commit_phase1: start");
+
+    // Sanity check all input path types.
+    ensure!(
+        metadata(in_path.as_ref())?.is_file(),
+        "in_path must be a file"
+    );
+    ensure!(
+        metadata(out_path.as_ref())?.is_file(),
+        "out_path must be a file"
+    );
+    ensure!(
+        metadata(cache_path.as_ref())?.is_dir(),
+        "cache_path must be a directory"
+    );
 
     let sector_bytes = usize::from(PaddedBytesAmount::from(porep_config));
-
     fs::metadata(&in_path)
         .with_context(|| format!("could not read in_path={:?})", in_path.as_ref().display()))?;
 
@@ -96,6 +108,7 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         vanilla_params: setup_params(
             PaddedBytesAmount::from(porep_config),
             usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
         )?,
         partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
         priority: false,
@@ -116,7 +129,7 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         );
 
         trace!(
-            "seal phase 1: sector_size {}, base tree size {}, base tree leafs {}, cached above base {}",
+            "seal phase 1: sector_size {}, base tree size {}, base tree leafs {}, rows to discard {}",
             u64::from(porep_config.sector_size),
             base_tree_size,
             base_tree_leafs,
@@ -137,8 +150,10 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         )?;
         drop(data);
 
+        config.size = Some(data_tree.len());
         let comm_d_root: Fr = data_tree.root().into();
         let comm_d = commitment_from_fr(comm_d_root);
+
 
         //利用unsealed文件，生成unsealed.index文件
         let filename = format!("tree-{}.index",sector_id);
@@ -154,11 +169,8 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
             let treelen = std::mem::transmute::<u64, [u8; 8]>(lensize);
             outputfile.write(&treelen).unwrap();
         }
-
-        println!("seal_pre_commit_phase1_tree comm_d is {:?}", comm_d);
-
-
         config.size = Some(data_tree.len());
+        println!("seal_pre_commit_phase1_tree comm_d is {:?}", comm_d);
 
         drop(data_tree);
 
@@ -172,8 +184,13 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         "pieces and comm_d do not match"
     );
 
-    let replica_id =
-        generate_replica_id::<Tree::Hasher, _>(&prover_id, sector_id.into(), &ticket, comm_d);
+    let replica_id = generate_replica_id::<Tree::Hasher, _>(
+        &prover_id,
+        sector_id.into(),
+        &ticket,
+        comm_d,
+        &porep_config.porep_id,
+    );
 
     println!("seal_pre_commit_phase1_tree replica_id is {:?}", replica_id);
 
@@ -197,7 +214,7 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
     in_path: S,
-    out_path: T,
+    _out_path: T,
     prover_id: ProverId,
     sector_id: SectorId,
     ticket: Ticket,
@@ -210,13 +227,11 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
 {
     info!("seal_pre_commit_phase1_layer: start");
 
-    fs::metadata(&out_path)
-        .with_context(|| format!("could not read out_path={:?}", out_path.as_ref().display()))?;
-
     let compound_setup_params = compound_proof::SetupParams {
         vanilla_params: setup_params(
             PaddedBytesAmount::from(porep_config),
             usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
         )?,
         partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
         priority: false,
@@ -235,6 +250,7 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         CacheKey::CommDTree.to_string(),
         StoreConfig::default_rows_to_discard(base_tree_leafs, BINARY_ARITY),
     );
+
     /////////////////////////////////////////
     //从文件中读取treed生成的数据用于layer计算
     //config.size = Some(127);
@@ -264,9 +280,13 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         "pieces and comm_d do not match"
     );
 
-
-    let replica_id =
-        generate_replica_id::<Tree::Hasher, _>(&prover_id, sector_id.into(), &ticket, comm_d);
+    let replica_id = generate_replica_id::<Tree::Hasher, _>(
+        &prover_id,
+        sector_id.into(),
+        &ticket,
+        comm_d,
+        &porep_config.porep_id,
+    );
 
     println!("seal_pre_commit_phase1_layer replica_id is {:?}", replica_id);
 
@@ -282,8 +302,8 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         config,
         comm_d,
     })
-}
 
+}
 
 
 #[allow(clippy::too_many_arguments)]
