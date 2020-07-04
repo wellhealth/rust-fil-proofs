@@ -239,7 +239,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher>
 
             // exp parents
             let mut exp_parents = vec![0; graph.expansion_degree()];
-            graph.expanded_parents(challenge, &mut exp_parents);
+            graph.expanded_parents(challenge, &mut exp_parents)?;
 
             // Inclusion Proofs: expander parent node in comm_c
             for parent in exp_parents.into_iter() {
@@ -341,6 +341,7 @@ fn generate_inclusion_inputs<Tree: 'static + MerkleTreeTrait>(
 mod tests {
     use super::*;
 
+    use bellperson::util_cs::{metric_cs::MetricCS, test_cs::TestConstraintSystem};
     use ff::Field;
     use generic_array::typenum::{U0, U2, U4, U8};
     use merkletree::store::StoreConfig;
@@ -351,7 +352,6 @@ mod tests {
         compound_proof,
         drgraph::BASE_DEGREE,
         fr32::fr_into_bytes,
-        gadgets::{MetricCS, TestConstraintSystem},
         hasher::{Hasher, PedersenHasher, PoseidonHasher, Sha256Hasher},
         merkle::{get_base_tree_count, DiskTree, MerkleTreeTrait},
         proof::ProofScheme,
@@ -420,12 +420,13 @@ mod tests {
         let replica_path = cache_dir.path().join("replica-path");
         let mut mmapped_data = setup_replica(&data, &replica_path);
 
+        let arbitrary_porep_id = [44; 32];
         let sp = SetupParams {
             nodes,
             degree,
             expansion_degree,
-            porep_id: [32; 32],
-            layer_challenges: layer_challenges.clone(),
+            porep_id: arbitrary_porep_id,
+            layer_challenges,
         };
 
         let pp = StackedDrg::<Tree, Sha256Hasher>::setup(&sp).expect("setup failed");
@@ -444,13 +445,11 @@ mod tests {
         assert_ne!(data, copied, "replication did not change data");
 
         let seed = rng.gen();
-        let arbitrary_porep_id = [44; 32];
         let pub_inputs =
             PublicInputs::<<Tree::Hasher as Hasher>::Domain, <Sha256Hasher as Hasher>::Domain> {
                 replica_id: replica_id.into(),
-                porep_id: arbitrary_porep_id,
                 seed,
-                tau: Some(tau.into()),
+                tau: Some(tau),
                 k: None,
             };
 
@@ -459,13 +458,10 @@ mod tests {
 
         // Convert TemporaryAux to TemporaryAuxCache, which instantiates all
         // elements based on the configs stored in TemporaryAux.
-        let t_aux = TemporaryAuxCache::<Tree, Sha256Hasher>::new(&t_aux, replica_path.clone())
+        let t_aux = TemporaryAuxCache::<Tree, Sha256Hasher>::new(&t_aux, replica_path)
             .expect("failed to restore contents of t_aux");
 
-        let priv_inputs = PrivateInputs::<Tree, Sha256Hasher> {
-            p_aux: p_aux.into(),
-            t_aux: t_aux.into(),
-        };
+        let priv_inputs = PrivateInputs::<Tree, Sha256Hasher> { p_aux, t_aux };
 
         let proofs = StackedDrg::<Tree, Sha256Hasher>::prove_all_partitions(
             &pp,
@@ -488,16 +484,10 @@ mod tests {
             // Verify that MetricCS returns the same metrics as TestConstraintSystem.
             let mut cs = MetricCS::<Bls12>::new();
 
-            StackedCompound::<Tree, Sha256Hasher>::circuit(
-                &pub_inputs,
-                <StackedCircuit<Tree, Sha256Hasher> as CircuitComponent>::ComponentPrivateInputs::default(),
-                &proofs[0],
-                &pp,
-                None,
-            )
-            .expect("circuit failed")
-            .synthesize(&mut cs.namespace(|| "stacked drgporep"))
-            .expect("failed to synthesize circuit");
+            StackedCompound::<Tree, Sha256Hasher>::circuit(&pub_inputs, (), &proofs[0], &pp, None)
+                .expect("circuit failed")
+                .synthesize(&mut cs.namespace(|| "stacked drgporep"))
+                .expect("failed to synthesize circuit");
 
             assert_eq!(cs.num_inputs(), expected_inputs, "wrong number of inputs");
             assert_eq!(
@@ -508,16 +498,10 @@ mod tests {
         }
         let mut cs = TestConstraintSystem::<Bls12>::new();
 
-        StackedCompound::<Tree, Sha256Hasher>::circuit(
-            &pub_inputs,
-            <StackedCircuit<Tree, Sha256Hasher> as CircuitComponent>::ComponentPrivateInputs::default(),
-            &proofs[0],
-            &pp,
-            None,
-        )
-        .expect("circuit failed")
-        .synthesize(&mut cs.namespace(|| "stacked drgporep"))
-        .expect("failed to synthesize circuit");
+        StackedCompound::<Tree, Sha256Hasher>::circuit(&pub_inputs, (), &proofs[0], &pp, None)
+            .expect("circuit failed")
+            .synthesize(&mut cs.namespace(|| "stacked drgporep"))
+            .expect("failed to synthesize circuit");
 
         assert!(cs.is_satisfied(), "constraints not satisfied");
         assert_eq!(cs.num_inputs(), expected_inputs, "wrong number of inputs");
@@ -591,13 +575,14 @@ mod tests {
             .flat_map(|_| fr_into_bytes(&Fr::random(rng)))
             .collect();
 
+        let arbitrary_porep_id = [55; 32];
         let setup_params = compound_proof::SetupParams {
             vanilla_params: SetupParams {
                 nodes,
                 degree,
                 expansion_degree,
-                porep_id: [32; 32],
-                layer_challenges: layer_challenges.clone(),
+                porep_id: arbitrary_porep_id,
+                layer_challenges,
             },
             partitions: Some(partition_count),
             priority: false,
@@ -632,11 +617,9 @@ mod tests {
         assert_ne!(data, copied, "replication did not change data");
 
         let seed = rng.gen();
-        let arbitrary_porep_id = [55; 32];
         let public_inputs =
             PublicInputs::<<Tree::Hasher as Hasher>::Domain, <Sha256Hasher as Hasher>::Domain> {
                 replica_id: replica_id.into(),
-                porep_id: arbitrary_porep_id,
                 seed,
                 tau: Some(tau),
                 k: None,
@@ -647,7 +630,7 @@ mod tests {
 
         // Convert TemporaryAux to TemporaryAuxCache, which instantiates all
         // elements based on the configs stored in TemporaryAux.
-        let t_aux = TemporaryAuxCache::<Tree, _>::new(&t_aux, replica_path.clone())
+        let t_aux = TemporaryAuxCache::<Tree, _>::new(&t_aux, replica_path)
             .expect("failed to restore contents of t_aux");
 
         let private_inputs = PrivateInputs::<Tree, Sha256Hasher> { p_aux, t_aux };

@@ -217,9 +217,7 @@ impl<H: Hasher> Graph<H> for BucketGraph<H> {
             "The number of metagraph nodes must be precisely castable to `f64`"
         );
 
-        let mut drg_seed = [0; 28];
-        let raw_seed = derive_porep_domain_seed(DRSAMPLE_DST, porep_id);
-        drg_seed.copy_from_slice(&raw_seed[..28]);
+        let drg_seed = derive_drg_seed(porep_id);
 
         Ok(BucketGraph {
             nodes,
@@ -228,6 +226,13 @@ impl<H: Hasher> Graph<H> for BucketGraph<H> {
             _h: PhantomData,
         })
     }
+}
+
+pub fn derive_drg_seed(porep_id: [u8; 32]) -> [u8; 28] {
+    let mut drg_seed = [0; 28];
+    let raw_seed = derive_porep_domain_seed(DRSAMPLE_DST, porep_id);
+    drg_seed.copy_from_slice(&raw_seed[..28]);
+    drg_seed
 }
 
 #[cfg(test)]
@@ -259,7 +264,7 @@ mod tests {
         let degree = BASE_DEGREE;
         let porep_id = [123; 32];
 
-        for size in vec![4, 16, 256, 2048] {
+        for &size in &[4, 16, 256, 2048] {
             let g = BucketGraph::<H>::new(size, degree, 0, porep_id).unwrap();
 
             assert_eq!(g.size(), size, "wrong nodes count");

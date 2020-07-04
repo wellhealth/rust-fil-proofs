@@ -323,7 +323,7 @@ where
     S: AsRef<Path>,
     T: AsRef<Path>,
 {
-    info!("seal_pre_commit_phase1: start");
+    info!("seal_pre_commit_phase1:start");
 
     // Sanity check all input path types.
     ensure!(
@@ -445,11 +445,14 @@ where
         config.clone(),
     )?;
 
-    Ok(SealPreCommitPhase1Output {
+    let out = SealPreCommitPhase1Output {
         labels,
         config,
         comm_d,
-    })
+    };
+
+    info!("seal_pre_commit_phase1:finish");
+    Ok(out)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -463,7 +466,7 @@ where
     R: AsRef<Path>,
     S: AsRef<Path>,
 {
-    info!("seal_pre_commit_phase2: start");
+    info!("seal_pre_commit_phase2:start");
 
     // Sanity check all input path types.
     ensure!(
@@ -569,7 +572,10 @@ where
         .write_all(&t_aux_bytes)
         .with_context(|| format!("could not write to file t_aux={:?}", t_aux_path))?;
 
-    Ok(SealPreCommitOutput { comm_r, comm_d })
+    let out = SealPreCommitOutput { comm_r, comm_d };
+
+    info!("seal_pre_commit_phase2:finish");
+    Ok(out)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -644,7 +650,6 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
 
     let public_inputs = stacked::PublicInputs {
         replica_id,
-        porep_id: porep_config.porep_id,
         tau: Some(stacked::Tau {
             comm_d: comm_d_safe,
             comm_r: comm_r_safe,
@@ -687,16 +692,17 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     )?;
     ensure!(sanity_check, "Invalid vanilla proof generated");
 
-    info!("seal_commit_phase1:end");
-
-    Ok(SealCommitPhase1Output {
+    let out = SealCommitPhase1Output {
         vanilla_proofs,
         comm_r,
         comm_d,
         replica_id,
         seed,
         ticket,
-    })
+    };
+
+    info!("seal_commit_phase1:finish");
+    Ok(out)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -725,7 +731,6 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
 
     let public_inputs = stacked::PublicInputs {
         replica_id,
-        porep_id: porep_config.porep_id,
         tau: Some(stacked::Tau {
             comm_d: comm_d_safe,
             comm_r: comm_r_safe,
@@ -788,9 +793,10 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
     )
     .context("post-seal verification sanity check failed")?;
 
-    info!("seal_commit_phase2:end");
+    let out = SealCommitOutput { proof: buf };
 
-    Ok(SealCommitOutput { proof: buf })
+    info!("seal_commit_phase2:finish");
+    Ok(out)
 }
 
 /// Computes a sectors's `comm_d` given its pieces.
@@ -800,7 +806,12 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
 /// * `porep_config` - this sector's porep config that contains the number of bytes in the sector.
 /// * `piece_infos` - the piece info (commitment and byte length) for each piece in this sector.
 pub fn compute_comm_d(sector_size: SectorSize, piece_infos: &[PieceInfo]) -> Result<Commitment> {
-    pieces::compute_comm_d(sector_size, piece_infos)
+    info!("compute_comm_d:start");
+
+    let result = pieces::compute_comm_d(sector_size, piece_infos);
+
+    info!("compute_comm_d:finish");
+    result
 }
 
 /// Verifies the output of some previously-run seal operation.
@@ -826,6 +837,7 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     seed: Ticket,
     proof_vec: &[u8],
 ) -> Result<bool> {
+    info!("verify_seal:start");
     ensure!(comm_d_in != [0; 32], "Invalid all zero commitment (comm_d)");
     ensure!(comm_r_in != [0; 32], "Invalid all zero commitment (comm_r)");
 
@@ -859,7 +871,6 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     let public_inputs =
         stacked::PublicInputs::<<Tree::Hasher as Hasher>::Domain, DefaultPieceDomain> {
             replica_id,
-            porep_id: porep_config.porep_id,
             tau: Some(Tau { comm_r, comm_d }),
             seed,
             k: None,
@@ -878,7 +889,7 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
         &verifying_key,
     )?;
 
-    StackedCompound::verify(
+    let result = StackedCompound::verify(
         &compound_public_params,
         &public_inputs,
         &proof,
@@ -890,7 +901,10 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
                 .expect("unknown sector size") as usize,
         },
     )
-    .map_err(Into::into)
+    .map_err(Into::into);
+
+    info!("verify_seal:finish");
+    result
 }
 
 /// Verifies a batch of outputs of some previously-run seal operations.
@@ -916,6 +930,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
     seeds: &[Ticket],
     proof_vecs: &[&[u8]],
 ) -> Result<bool> {
+    info!("verify_batch_seal:start");
     ensure!(!comm_r_ins.is_empty(), "Cannot prove empty batch");
     let l = comm_r_ins.len();
     ensure!(l == comm_d_ins.len(), "Inconsistent inputs");
@@ -982,7 +997,6 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
             DefaultPieceDomain,
         > {
             replica_id,
-            porep_id: porep_config.porep_id,
             tau: Some(Tau { comm_r, comm_d }),
             seed: seeds[i],
             k: None,
@@ -994,7 +1008,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
         )?);
     }
 
-    StackedCompound::<Tree, DefaultPieceHasher>::batch_verify(
+    let result = StackedCompound::<Tree, DefaultPieceHasher>::batch_verify(
         &compound_public_params,
         &public_inputs,
         &proofs,
@@ -1006,5 +1020,57 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
                 .expect("unknown sector size") as usize,
         },
     )
-    .map_err(Into::into)
+    .map_err(Into::into);
+
+    info!("verify_batch_seal:finish");
+    result
+}
+
+pub fn fauxrep<R: AsRef<Path>, S: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
+    porep_config: PoRepConfig,
+    cache_path: R,
+    out_path: S,
+) -> Result<Commitment> {
+    let mut rng = rand::thread_rng();
+    fauxrep_aux::<_, R, S, Tree>(&mut rng, porep_config, cache_path, out_path)
+}
+
+pub fn fauxrep_aux<
+    Rng: rand::Rng,
+    R: AsRef<Path>,
+    S: AsRef<Path>,
+    Tree: 'static + MerkleTreeTrait,
+>(
+    mut rng: &mut Rng,
+    porep_config: PoRepConfig,
+    cache_path: R,
+    out_path: S,
+) -> Result<Commitment> {
+    let sector_bytes = PaddedBytesAmount::from(porep_config).0;
+
+    {
+        // Create a sector full of null bytes at `out_path`.
+        let file = File::create(&out_path)?;
+        file.set_len(sector_bytes)?;
+    }
+
+    let fake_comm_c = <Tree::Hasher as Hasher>::Domain::random(&mut rng);
+    let (comm_r, p_aux) = StackedDrg::<Tree, DefaultPieceHasher>::fake_replicate_phase2(
+        fake_comm_c,
+        out_path,
+        &cache_path,
+        sector_bytes as usize,
+    )?;
+
+    let p_aux_path = cache_path.as_ref().join(CacheKey::PAux.to_string());
+    let mut f_p_aux = File::create(&p_aux_path)
+        .with_context(|| format!("could not create file p_aux={:?}", p_aux_path))?;
+    let p_aux_bytes = serialize(&p_aux)?;
+    f_p_aux
+        .write_all(&p_aux_bytes)
+        .with_context(|| format!("could not write to file p_aux={:?}", p_aux_path))?;
+
+    let mut commitment = [0u8; 32];
+    commitment[..].copy_from_slice(&comm_r.into_bytes()[..]);
+    Ok(commitment)
 }
