@@ -180,8 +180,8 @@ mod tests {
     use super::*;
 
     use crate::fr32::fr_into_bytes;
-    use crate::gadgets::TestConstraintSystem;
     use bellperson::gadgets::num;
+    use bellperson::util_cs::test_cs::TestConstraintSystem;
     use ff::Field;
     use paired::bls12_381::*;
     use rand::{Rng, SeedableRng};
@@ -258,7 +258,7 @@ mod tests {
             let val_vec = fr_into_bytes(&val_fr);
 
             let val_num =
-                num::AllocatedNum::alloc(cs.namespace(|| "val_num"), || Ok(val_fr.into())).unwrap();
+                num::AllocatedNum::alloc(cs.namespace(|| "val_num"), || Ok(val_fr)).unwrap();
             let val_num_bits = val_num.to_bits_le(cs.namespace(|| "val_bits")).unwrap();
 
             let bits =

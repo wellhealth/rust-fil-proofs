@@ -305,6 +305,7 @@ mod tests {
 
     use super::*;
 
+    use bellperson::util_cs::test_cs::TestConstraintSystem;
     use ff::Field;
     use generic_array::typenum;
     use merkletree::store::StoreConfig;
@@ -316,7 +317,6 @@ mod tests {
         compound_proof,
         drgraph::{graph_height, BucketGraph, BASE_DEGREE},
         fr32::{bytes_into_fr, fr_into_bytes},
-        gadgets::TestConstraintSystem,
         hasher::PedersenHasher,
         merkle::MerkleProofTrait,
         proof::ProofScheme,
@@ -382,14 +382,14 @@ mod tests {
             (mmapped_data.as_mut()).into(),
             None,
             config,
-            replica_path.clone(),
+            replica_path,
         )
         .expect("failed to replicate");
 
         let pub_inputs = drg::PublicInputs {
             replica_id: Some(replica_id.into()),
             challenges: vec![challenge],
-            tau: Some(tau.into()),
+            tau: Some(tau),
         };
 
         let priv_inputs = drg::PrivateInputs::<PedersenHasher> {

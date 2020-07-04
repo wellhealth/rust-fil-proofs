@@ -10,22 +10,21 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use std::env;
 use std::fs::{self, create_dir_all, File};
 use std::io::{self, SeekFrom};
 use std::path::{Path, PathBuf};
 
+use super::settings;
+
 /// Bump this when circuits change to invalidate the cache.
 pub const VERSION: usize = 27;
 
-pub const PARAMETER_CACHE_ENV_VAR: &str = "FIL_PROOFS_PARAMETER_CACHE";
-pub const PARAMETER_CACHE_DIR: &str = "/var/tmp/filecoin-proof-parameters/";
 pub const GROTH_PARAMETER_EXT: &str = "params";
 pub const PARAMETER_METADATA_EXT: &str = "meta";
 pub const VERIFYING_KEY_EXT: &str = "vk";
 
 #[derive(Debug)]
-struct LockedFile(File);
+pub struct LockedFile(File);
 
 // TODO: use in memory lock as well, as file locks do not guarantee exclusive access across OSes.
 
@@ -46,6 +45,19 @@ impl LockedFile {
         f.lock_exclusive()?;
 
         Ok(LockedFile(f))
+    }
+
+    pub fn open_shared_read<P: AsRef<Path>>(p: P) -> io::Result<Self> {
+        let f = fs::OpenOptions::new().read(true).open(p)?;
+        f.lock_shared()?;
+
+        Ok(LockedFile(f))
+    }
+}
+
+impl AsRef<File> for LockedFile {
+    fn as_ref(&self) -> &File {
+        &self.0
     }
 }
 
@@ -79,11 +91,8 @@ impl Drop for LockedFile {
     }
 }
 
-fn parameter_cache_dir_name() -> String {
-    match env::var(PARAMETER_CACHE_ENV_VAR) {
-        Ok(dir) => dir,
-        Err(_) => String::from(PARAMETER_CACHE_DIR),
-    }
+pub fn parameter_cache_dir_name() -> String {
+    settings::SETTINGS.lock().unwrap().parameter_cache.clone()
 }
 
 pub fn parameter_cache_dir() -> PathBuf {
@@ -134,7 +143,7 @@ fn ensure_ancestor_dirs_exist(cache_entry_path: PathBuf) -> Result<PathBuf> {
     Ok(cache_entry_path)
 }
 
-pub trait ParameterSetMetadata: Clone {
+pub trait ParameterSetMetadata {
     fn identifier(&self) -> String;
     fn sector_size(&self) -> u64;
 }
@@ -328,21 +337,21 @@ fn write_cached_params(
     })
 }
 
-fn with_exclusive_lock<T>(
+pub fn with_exclusive_lock<T>(
     file_path: &PathBuf,
     f: impl FnOnce(&mut LockedFile) -> Result<T>,
 ) -> Result<T> {
     with_open_file(file_path, LockedFile::open_exclusive, f)
 }
 
-fn with_exclusive_read_lock<T>(
+pub fn with_exclusive_read_lock<T>(
     file_path: &PathBuf,
     f: impl FnOnce(&mut LockedFile) -> Result<T>,
 ) -> Result<T> {
     with_open_file(file_path, LockedFile::open_exclusive_read, f)
 }
 
-fn with_open_file<'a, T>(
+pub fn with_open_file<'a, T>(
     file_path: &'a PathBuf,
     open_file: impl FnOnce(&'a PathBuf) -> io::Result<LockedFile>,
     f: impl FnOnce(&mut LockedFile) -> Result<T>,

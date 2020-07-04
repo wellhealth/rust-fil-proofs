@@ -68,7 +68,7 @@ mod tests {
     use super::*;
 
     use bellperson::gadgets::boolean::Boolean;
-    use bellperson::ConstraintSystem;
+    use bellperson::util_cs::test_cs::TestConstraintSystem;
     use ff::Field;
     use paired::bls12_381::{Bls12, Fr};
     use rand::SeedableRng;
@@ -76,7 +76,6 @@ mod tests {
     use storage_proofs_core::{
         drgraph::{Graph, BASE_DEGREE},
         fr32::{bytes_into_fr, fr_into_bytes},
-        gadgets::TestConstraintSystem,
         hasher::Sha256Hasher,
         util::bytes_into_boolean_vec_be,
         util::{data_at_node, NODE_SIZE},
@@ -157,7 +156,7 @@ mod tests {
         let out = create_label_circuit(
             cs.namespace(|| "create_label"),
             &id_bits,
-            parents_bits.clone(),
+            parents_bits,
             layer_alloc,
             node_alloc,
         )
@@ -167,7 +166,7 @@ mod tests {
         assert_eq!(cs.num_constraints(), 532_025);
 
         let (l1, l2) = data.split_at_mut(size * NODE_SIZE);
-        create_label_exp(&graph, &id_fr.into(), &*l2, l1, layer, node).unwrap();
+        create_label_exp(&graph, None, &id_fr.into(), &*l2, l1, layer, node).unwrap();
         let expected_raw = data_at_node(&l1, node).unwrap();
         let expected = bytes_into_fr(expected_raw).unwrap();
 
