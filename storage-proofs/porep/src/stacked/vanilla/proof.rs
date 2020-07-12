@@ -32,7 +32,7 @@ use typenum::{U11, U2, U8};
 use super::{
     challenges::LayerChallenges,
     column::Column,
-    create_label, create_label_exp,
+    my_create_label,create_label, create_label_exp,
     graph::StackedBucketGraph,
     hash::hash_single_column,
     params::{
@@ -53,6 +53,7 @@ use crate::encode::{decode, encode};
 use crate::PoRep;
 
 pub const TOTAL_PARENTS: usize = 37;
+use super::graph::{DEGREE};
 
 #[derive(Debug)]
 pub struct StackedDrg<'a, Tree: 'a + MerkleTreeTrait, G: 'a + Hasher> {
@@ -261,7 +262,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         assert!(layers > 0);
 
         // generate labels
-        let (labels, _) = Self::generate_labels(graph, layer_challenges, replica_id, config)?;
+        let (labels, _) = Self::my_generate_labels(graph, layer_challenges, replica_id, config)?;
 
         let last_layer_labels = labels.labels_for_last_layer()?;
         let size = merkletree::store::Store::len(last_layer_labels);
@@ -281,6 +282,133 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         Ok(())
     }
+
+    #[allow(clippy::type_complexity)]
+    fn my_generate_labels(
+        graph: &StackedBucketGraph<Tree::Hasher>,
+        layer_challenges: &LayerChallenges,
+        replica_id: &<Tree::Hasher as Hasher>::Domain,
+        config: StoreConfig,
+    ) -> Result<(LabelsCache<Tree>, Labels<Tree>)> {
+        info!("generate labels");
+        //p1 需要计算的层数
+        let layers = layer_challenges.layers();
+        // For now, we require it due to changes in encodings structure.
+        //保存每一层labels的存储在磁盘中的结构数据
+        let mut labels: Vec<DiskStore<<Tree::Hasher as Hasher>::Domain>> =
+            Vec::with_capacity(layers);
+        //每一层lables的配置信息
+        let mut label_configs: Vec<StoreConfig> = Vec::with_capacity(layers);
+        //计算每一层数据大小，由节点个数 * 节点大小，32G 节点 1G 个graph
+        let layer_size = graph.size() * NODE_SIZE;
+        // NOTE: this means we currently keep 2x sector size around, to improve speed.
+        //此处用2倍的扇区大小作缓存，内存要求太高，作利用nvme作优化
+        //let mut labels_buffer = vec![0u8; 2 * layer_size];
+        let mut cache_node_size = settings::SETTINGS.lock().unwrap().max_labels_cache_node as usize;
+        //判断cache_node 是否大于graph.size() ，如果大于，则以graph.size() 为临时cache
+        if cache_node_size >=  graph.size() {
+            cache_node_size = graph.size()
+        }
+        //把计算依赖的数据从文件加载到内存，内存按照 BASE_DEGREE +  EXP_DEGREE  + 待计算的cache_node
+        //labels_buffer = cache_node * BASE_DEGREE * NODE_SIZE + cache_node * EXP_DEGREE * NODE_SIZE + cache_node * NODE_SIZE
+        let mut cache_node_buffer = vec![0u8; (DEGREE + 1) * cache_node_size * NODE_SIZE];
+
+        let labels_buffer= &mut cache_node_buffer[DEGREE*cache_node_size*NODE_SIZE..];
+
+        let use_cache = settings::SETTINGS.lock().unwrap().maximize_caching;
+        let mut cache = if use_cache {
+            Some(graph.parent_cache()?)
+        } else {
+            None
+        };
+        let zero_buffer = vec![0u8; 0];
+
+        for layer in 1..=layers {
+
+            info!("generating layer: {}", layer);
+            if let Some(ref mut cache) = cache {
+                cache.reset()?;
+            }
+
+            // Write the result to disk to avoid keeping it in memory all the time.
+            let layer_config = StoreConfig::from_config(&config, CacheKey::label_layer(layer), Some(graph.size()));
+
+            info!("create layer {} store file with path {:?}", layer,layer_config.path);
+            // Construct and persist the layer data.
+            //let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+            let mut tmpstore : DiskStore<<Tree::Hasher as Hasher>::Domain> =
+                DiskStore::new_with_config(
+                    graph.size(),
+                    Tree::Arity::to_usize(),
+                    layer_config.clone(),
+                )?;
+            //已经计算完成的节点个数
+            let mut has_calc_node = 0;
+            if layer == 1 {
+                ////////////////////////////////////////////////
+                //第一层只计算BASE_DEGREE的数据
+                while has_calc_node < graph.size() {
+                    //计算cache_node数据
+                    my_create_label(graph,tmpstore, cache.as_mut(), replica_id, labels_buffer, layer, has_calc_node,cache_node_size)?;
+
+
+                    tmpstore.store_copy_from_slice(has_calc_node,&labels_buffer);
+                    has_calc_node += cache_node_size;
+                }
+
+                let layer_labels = &mut labels_buffer[..layer_size];
+
+                for node in 0..graph.size(){
+
+                    create_label(graph, cache.as_mut(), replica_id, layer_labels, layer, node)?;
+                }
+
+            } else {
+                let (layer_labels, exp_labels) = labels_buffer.split_at_mut(layer_size);
+                for node in 0..graph.size() {
+                    create_label_exp(
+                        graph,
+                        cache.as_mut(),
+                        replica_id,
+                        exp_labels,
+                        layer_labels,
+                        layer,
+                        node,
+                    )?;
+                }
+            }
+
+            info!("  setting exp parents");
+            labels_buffer.copy_within(..layer_size, layer_size);
+
+            info!(
+                "  generated layer {} store with id {}",
+                layer, layer_config.id
+            );
+
+            let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+                DiskStore::new(0)?;
+
+            // Track the layer specific store and StoreConfig for later retrieval.
+            labels.push(layer_store);
+            label_configs.push(layer_config);
+        }
+
+        assert_eq!(
+            labels.len(),
+            layers,
+            "Invalid amount of layers encoded expected"
+        );
+
+        Ok((
+            LabelsCache::<Tree> { labels },
+            Labels::<Tree> {
+                labels: label_configs,
+                _h: PhantomData,
+            },
+        ))
+    }
+
 
     #[allow(clippy::type_complexity)]
     fn generate_labels(
@@ -357,8 +485,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             );
             drop(tmpstore);
 
+
+            let layer_config_tmp =
+                StoreConfig::from_config(&config, CacheKey::label_layer(99), Some(graph.size()));
             let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
-                DiskStore::new_empty(graph.size())?;
+                DiskStore::new(0)?;
 
                 // Track the layer specific store and StoreConfig for later retrieval.
             labels.push(layer_store);
@@ -937,7 +1068,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) -> Result<TransformedLayers<Tree, G>> {
         // Generate key layers.
         let (_, labels) = measure_op(EncodeWindowTimeAll, || {
-            Self::generate_labels(graph, layer_challenges, replica_id, config.clone())
+            Self::my_generate_labels(graph, layer_challenges, replica_id, config.clone())
         })?;
 
         Self::transform_and_replicate_layers_inner(
@@ -1132,7 +1263,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         info!("replicate_phase1");
 
         let (_, labels) = measure_op(EncodeWindowTimeAll, || {
-            Self::generate_labels(&pp.graph, &pp.layer_challenges, replica_id, config)
+            Self::my_generate_labels(&pp.graph, &pp.layer_challenges, replica_id, config)
         })?;
 
         Ok(labels)
