@@ -11,9 +11,8 @@ use storage_proofs_core::{
 };
 
 use super::{cache::ParentCache, graph::StackedBucketGraph};
-use merkletree::store::DiskStore;
 
-pub fn my_create_label<H: Hasher>(
+/*pub fn my_create_label<H: Hasher>(
     graph: &StackedBucketGraph<H>,
     store: DiskStore<<Tree::Hasher as Hasher>::Domain>,
     mut cache: Option<&mut ParentCache>,
@@ -73,7 +72,7 @@ pub fn my_create_label<H: Hasher>(
     }
 
     Ok(())
-}
+}*/
 
 pub fn create_label<H: Hasher>(
     graph: &StackedBucketGraph<H>,

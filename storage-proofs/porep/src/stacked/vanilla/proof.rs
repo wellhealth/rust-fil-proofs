@@ -32,7 +32,7 @@ use typenum::{U11, U2, U8};
 use super::{
     challenges::LayerChallenges,
     column::Column,
-    my_create_label,create_label, create_label_exp,
+    create_label, create_label_exp,
     graph::StackedBucketGraph,
     hash::hash_single_column,
     params::{
@@ -53,7 +53,6 @@ use crate::encode::{decode, encode};
 use crate::PoRep;
 
 pub const TOTAL_PARENTS: usize = 37;
-use super::graph::{DEGREE};
 
 #[derive(Debug)]
 pub struct StackedDrg<'a, Tree: 'a + MerkleTreeTrait, G: 'a + Hasher> {
@@ -262,7 +261,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         assert!(layers > 0);
 
         // generate labels
-        let (labels, _) = Self::my_generate_labels(graph, layer_challenges, replica_id, config)?;
+        let (labels, _) = Self::generate_labels(graph, layer_challenges, replica_id, config)?;
 
         let last_layer_labels = labels.labels_for_last_layer()?;
         let size = merkletree::store::Store::len(last_layer_labels);
@@ -282,7 +281,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         Ok(())
     }
-
+/*
     #[allow(clippy::type_complexity)]
     fn my_generate_labels(
         graph: &StackedBucketGraph<Tree::Hasher>,
@@ -407,7 +406,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 _h: PhantomData,
             },
         ))
-    }
+    }*/
 
 
     #[allow(clippy::type_complexity)]
@@ -486,8 +485,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             drop(tmpstore);
 
 
-            let layer_config_tmp =
-                StoreConfig::from_config(&config, CacheKey::label_layer(99), Some(graph.size()));
+/*            let layer_config_tmp =
+                StoreConfig::from_config(&config, CacheKey::label_layer(99), Some(graph.size()));*/
             let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
                 DiskStore::new(0)?;
 
@@ -1068,7 +1067,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) -> Result<TransformedLayers<Tree, G>> {
         // Generate key layers.
         let (_, labels) = measure_op(EncodeWindowTimeAll, || {
-            Self::my_generate_labels(graph, layer_challenges, replica_id, config.clone())
+            Self::generate_labels(graph, layer_challenges, replica_id, config.clone())
         })?;
 
         Self::transform_and_replicate_layers_inner(
@@ -1263,7 +1262,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         info!("replicate_phase1");
 
         let (_, labels) = measure_op(EncodeWindowTimeAll, || {
-            Self::my_generate_labels(&pp.graph, &pp.layer_challenges, replica_id, config)
+            Self::generate_labels(&pp.graph, &pp.layer_challenges, replica_id, config)
         })?;
 
         Ok(labels)

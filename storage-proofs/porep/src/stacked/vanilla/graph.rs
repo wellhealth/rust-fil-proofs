@@ -162,7 +162,7 @@ where
     }
     //////////////////////////////////////////////
     //根据layer文件，一次性得到node_size个节点的base_label数据
-    pub fn get_base_label_cache(
+ /*   pub fn get_base_label_cache(
         &self,
         mut cache: Option<&mut ParentCache>,
         layer_labels: & [u8], //从文件中得到layer数据
@@ -181,10 +181,10 @@ where
                 self.parents(node as usize, &mut cache_parents[..]).unwrap();
             }
             //一次性获取数据到内存，用于后续hasher计算
-            /*
+            *//*
                 let start = parents[i] as usize * NODE_SIZE;
                 let end = start + NODE_SIZE;
-                &data[start..end]*/
+                &data[start..end]*//*
             bufPos = node * DEGREE * NODE_SIZE;
             for i in 0..6 {
                 let mut layerPost = cache_parents[i] as usize * NODE_SIZE;
@@ -192,7 +192,7 @@ where
             }
         }
         Ok(())
-    }
+    }*/
 
 
     pub fn copy_parents_data(
@@ -252,7 +252,7 @@ where
         hasher.finish_with(&parents[8])
     }
 
-    fn my_copy_parents_data_inner(
+    /*fn my_copy_parents_data_inner(
         &self,
         cache_parents: &[u32],
         base_data: &[u8],
@@ -290,7 +290,7 @@ where
 
         // round 7 (37)
         hasher.finish_with(parents[0])
-    }
+    }*/
 
     fn copy_parents_data_inner(
         &self,
