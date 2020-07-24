@@ -426,7 +426,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         let layer_size = graph.size() * NODE_SIZE;
         // NOTE: this means we currently keep 2x sector size around, to improve speed.
-        let mut labels_buffer = vec![0u8; 2 * layer_size];
+        let mut layer_labels = vec![0u8; layer_size]; // Buffer for labels of the current layer
+        let mut exp_labels = vec![0u8; layer_size]; // Buffer for labels of the previous layer, needed for expander parents
 
         let use_cache = settings::SETTINGS.lock().unwrap().maximize_caching;
         let mut cache = if use_cache {
@@ -442,27 +443,29 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             }
 
             if layer == 1 {
-                let layer_labels = &mut labels_buffer[..layer_size];
                 for node in 0..graph.size() {
-                    create_label(graph, cache.as_mut(), replica_id, layer_labels, layer, node)?;
+                    create_label(
+                        graph,
+                        cache.as_mut(),
+                        replica_id,
+                        &mut layer_labels,
+                        layer,
+                        node,
+                    )?;
                 }
             } else {
-                let (layer_labels, exp_labels) = labels_buffer.split_at_mut(layer_size);
                 for node in 0..graph.size() {
                     create_label_exp(
                         graph,
                         cache.as_mut(),
                         replica_id,
-                        exp_labels,
-                        layer_labels,
+                        &exp_labels,
+                        &mut layer_labels,
                         layer,
                         node,
                     )?;
                 }
             }
-
-            info!("  setting exp parents");
-            labels_buffer.copy_within(..layer_size, layer_size);
 
             // Write the result to disk to avoid keeping it in memory all the time.
             let layer_config =
@@ -475,7 +478,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             DiskStore::new_from_slice_with_config(
                     graph.size(),
                     Tree::Arity::to_usize(),
-                    &labels_buffer[..layer_size],
+                    &layer_labels,
                     layer_config.clone(),
                 )?;
             info!(
@@ -485,12 +488,19 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             drop(tmpstore);
 
 
+
 /*            let layer_config_tmp =
                 StoreConfig::from_config(&config, CacheKey::label_layer(99), Some(graph.size()));*/
             let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
                 DiskStore::new(0)?;
 
                 // Track the layer specific store and StoreConfig for later retrieval.
+
+            info!("  setting exp parents");
+            std::mem::swap(&mut layer_labels, &mut exp_labels);
+
+            // Track the layer specific store and StoreConfig for later retrieval.
+
             labels.push(layer_store);
             label_configs.push(layer_config);
         }
@@ -594,9 +604,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
             // This channel will receive batches of columns and add them to the ColumnTreeBuilder.
             let (builder_tx, builder_rx) = mpsc::sync_channel(0);
-            mpsc::sync_channel::<(Vec<GenericArray<Fr, ColumnArity>>, bool)>(
-                max_gpu_column_batch_size * ColumnArity::to_usize() * 32,
-            );
 
             let config_count = configs.len(); // Don't move config into closure below.
             rayon::scope(|s| {
