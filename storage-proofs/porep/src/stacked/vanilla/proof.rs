@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, RwLock};
 
+use bincode::deserialize;
 use generic_array::typenum::{self, Unsigned};
 use log::{info, trace};
 use merkletree::merkle::{
@@ -301,6 +302,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         //计算每一层数据大小，由节点个数 * 节点大小，32G 节点 1G 个graph
         let layer_size = graph.size() * NODE_SIZE;
         // NOTE: this means we currently keep 2x sector size around, to improve speed.
+<<<<<<< HEAD
         //此处用2倍的扇区大小作缓存，内存要求太高，作利用nvme作优化
         //let mut labels_buffer = vec![0u8; 2 * layer_size];
         let mut cache_node_size = settings::SETTINGS.lock().unwrap().max_labels_cache_node as usize;
@@ -313,6 +315,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let mut cache_node_buffer = vec![0u8; (DEGREE + 1) * cache_node_size * NODE_SIZE];
 
         let labels_buffer= &mut cache_node_buffer[DEGREE*cache_node_size*NODE_SIZE..];
+=======
+        let mut layer_labels = vec![0u8; layer_size]; // Buffer for labels of the current layer
+        let mut exp_labels = vec![0u8; layer_size]; // Buffer for labels of the previous layer, needed for expander parents
+>>>>>>> 5e760a737ffb74267c119bc662b865b884f1aac3
 
         let use_cache = settings::SETTINGS.lock().unwrap().maximize_caching;
         let mut cache = if use_cache {
@@ -344,6 +350,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             //已经计算完成的节点个数
             let mut has_calc_node = 0;
             if layer == 1 {
+<<<<<<< HEAD
                 ////////////////////////////////////////////////
                 //第一层只计算BASE_DEGREE的数据
                 while has_calc_node < graph.size() {
@@ -360,23 +367,34 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 for node in 0..graph.size(){
 
                     create_label(graph, cache.as_mut(), replica_id, layer_labels, layer, node)?;
+=======
+                for node in 0..graph.size() {
+                    create_label(
+                        graph,
+                        cache.as_mut(),
+                        replica_id,
+                        &mut layer_labels,
+                        layer,
+                        node,
+                    )?;
+>>>>>>> 5e760a737ffb74267c119bc662b865b884f1aac3
                 }
 
             } else {
-                let (layer_labels, exp_labels) = labels_buffer.split_at_mut(layer_size);
                 for node in 0..graph.size() {
                     create_label_exp(
                         graph,
                         cache.as_mut(),
                         replica_id,
-                        exp_labels,
-                        layer_labels,
+                        &exp_labels,
+                        &mut layer_labels,
                         layer,
                         node,
                     )?;
                 }
             }
 
+<<<<<<< HEAD
             info!("  setting exp parents");
             labels_buffer.copy_within(..layer_size, layer_size);
 
@@ -467,6 +485,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 }
             }
 
+
             // Write the result to disk to avoid keeping it in memory all the time.
             let layer_config =
                 StoreConfig::from_config(&config, CacheKey::label_layer(layer), Some(graph.size()));
@@ -495,6 +514,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 DiskStore::new(0)?;
 
                 // Track the layer specific store and StoreConfig for later retrieval.
+
+            info!("  setting exp parents");
+            std::mem::swap(&mut layer_labels, &mut exp_labels);
 
             info!("  setting exp parents");
             std::mem::swap(&mut layer_labels, &mut exp_labels);
@@ -1143,7 +1165,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         // A default 'rows_to_discard' value will be chosen for tree_r_last, unless the user overrides this value via the
         // environment setting (FIL_PROOFS_ROWS_TO_DISCARD).  If this value is specified, no checking is done on it and it may
-        // result in a broken configuration.  Use with caution.
+        // result in a broken configuration.  Use with caution.  It must be noted that if/when this unchecked value is passed
+        // through merkle_light, merkle_light now does a check that does not allow us to discard more rows than is possible
+        // to discard.
         tree_r_last_config.rows_to_discard =
             default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
         trace!(
@@ -1461,6 +1485,33 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let p_aux = PersistentAux {
             comm_c: tree_c_root,
             comm_r_last: tree_r_last_root,
+        };
+
+        Ok((comm_r, p_aux))
+    }
+
+    pub fn fake_comm_r<R: AsRef<Path>>(
+        tree_c_root: <Tree::Hasher as Hasher>::Domain,
+        existing_p_aux_path: R,
+    ) -> Result<(
+        <Tree::Hasher as Hasher>::Domain,
+        PersistentAux<<Tree::Hasher as Hasher>::Domain>,
+    )> {
+        let existing_p_aux: PersistentAux<<Tree::Hasher as Hasher>::Domain> = {
+            let p_aux_bytes = std::fs::read(&existing_p_aux_path)?;
+
+            deserialize(&p_aux_bytes)
+        }?;
+
+        let existing_comm_r_last = existing_p_aux.comm_r_last;
+
+        // comm_r = H(comm_c || comm_r_last)
+        let comm_r: <Tree::Hasher as Hasher>::Domain =
+            <Tree::Hasher as Hasher>::Function::hash2(&tree_c_root, &existing_comm_r_last);
+
+        let p_aux = PersistentAux {
+            comm_c: tree_c_root,
+            comm_r_last: existing_comm_r_last,
         };
 
         Ok((comm_r, p_aux))

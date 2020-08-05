@@ -1,7 +1,8 @@
 [package]
+
 name = "storage-proofs"
 description = "Implementations of Proofs of Storage"
-version = "4.0.4"
+version = "4.0.5"
 authors = ["dignifiedquire <dignifiedquire@gmail.com>", "laser <l@s3r.com>", "porcuquine <porcuquine@users.noreply.github.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
@@ -20,5 +21,3 @@ asm = ["storage-proofs-core/asm"]
 gpu = ["storage-proofs-core/gpu"]
 measurements = ["storage-proofs-core/measurements"]
 profile = ["measurements"]
-
-
