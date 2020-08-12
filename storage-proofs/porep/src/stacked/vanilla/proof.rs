@@ -4,6 +4,7 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, RwLock};
 
+use bincode::deserialize;
 use generic_array::typenum::{self, Unsigned};
 use log::{info, trace};
 use merkletree::merkle::{
@@ -281,133 +282,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         Ok(())
     }
-/*
-    #[allow(clippy::type_complexity)]
-    fn my_generate_labels(
-        graph: &StackedBucketGraph<Tree::Hasher>,
-        layer_challenges: &LayerChallenges,
-        replica_id: &<Tree::Hasher as Hasher>::Domain,
-        config: StoreConfig,
-    ) -> Result<(LabelsCache<Tree>, Labels<Tree>)> {
-        info!("generate labels");
-        //p1 需要计算的层数
-        let layers = layer_challenges.layers();
-        // For now, we require it due to changes in encodings structure.
-        //保存每一层labels的存储在磁盘中的结构数据
-        let mut labels: Vec<DiskStore<<Tree::Hasher as Hasher>::Domain>> =
-            Vec::with_capacity(layers);
-        //每一层lables的配置信息
-        let mut label_configs: Vec<StoreConfig> = Vec::with_capacity(layers);
-        //计算每一层数据大小，由节点个数 * 节点大小，32G 节点 1G 个graph
-        let layer_size = graph.size() * NODE_SIZE;
-        // NOTE: this means we currently keep 2x sector size around, to improve speed.
-        //此处用2倍的扇区大小作缓存，内存要求太高，作利用nvme作优化
-        //let mut labels_buffer = vec![0u8; 2 * layer_size];
-        let mut cache_node_size = settings::SETTINGS.lock().unwrap().max_labels_cache_node as usize;
-        //判断cache_node 是否大于graph.size() ，如果大于，则以graph.size() 为临时cache
-        if cache_node_size >=  graph.size() {
-            cache_node_size = graph.size()
-        }
-        //把计算依赖的数据从文件加载到内存，内存按照 BASE_DEGREE +  EXP_DEGREE  + 待计算的cache_node
-        //labels_buffer = cache_node * BASE_DEGREE * NODE_SIZE + cache_node * EXP_DEGREE * NODE_SIZE + cache_node * NODE_SIZE
-        let mut cache_node_buffer = vec![0u8; (DEGREE + 1) * cache_node_size * NODE_SIZE];
-
-        let labels_buffer= &mut cache_node_buffer[DEGREE*cache_node_size*NODE_SIZE..];
-
-        let use_cache = settings::SETTINGS.lock().unwrap().maximize_caching;
-        let mut cache = if use_cache {
-            Some(graph.parent_cache()?)
-        } else {
-            None
-        };
-        let zero_buffer = vec![0u8; 0];
-
-        for layer in 1..=layers {
-
-            info!("generating layer: {}", layer);
-            if let Some(ref mut cache) = cache {
-                cache.reset()?;
-            }
-
-            // Write the result to disk to avoid keeping it in memory all the time.
-            let layer_config = StoreConfig::from_config(&config, CacheKey::label_layer(layer), Some(graph.size()));
-
-            info!("create layer {} store file with path {:?}", layer,layer_config.path);
-            // Construct and persist the layer data.
-            //let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
-            let mut tmpstore : DiskStore<<Tree::Hasher as Hasher>::Domain> =
-                DiskStore::new_with_config(
-                    graph.size(),
-                    Tree::Arity::to_usize(),
-                    layer_config.clone(),
-                )?;
-            //已经计算完成的节点个数
-            let mut has_calc_node = 0;
-            if layer == 1 {
-                ////////////////////////////////////////////////
-                //第一层只计算BASE_DEGREE的数据
-                while has_calc_node < graph.size() {
-                    //计算cache_node数据
-                    my_create_label(graph,tmpstore, cache.as_mut(), replica_id, labels_buffer, layer, has_calc_node,cache_node_size)?;
-
-
-                    tmpstore.store_copy_from_slice(has_calc_node,&labels_buffer);
-                    has_calc_node += cache_node_size;
-                }
-
-                let layer_labels = &mut labels_buffer[..layer_size];
-
-                for node in 0..graph.size(){
-
-                    create_label(graph, cache.as_mut(), replica_id, layer_labels, layer, node)?;
-                }
-
-            } else {
-                let (layer_labels, exp_labels) = labels_buffer.split_at_mut(layer_size);
-                for node in 0..graph.size() {
-                    create_label_exp(
-                        graph,
-                        cache.as_mut(),
-                        replica_id,
-                        exp_labels,
-                        layer_labels,
-                        layer,
-                        node,
-                    )?;
-                }
-            }
-
-            info!("  setting exp parents");
-            labels_buffer.copy_within(..layer_size, layer_size);
-
-            info!(
-                "  generated layer {} store with id {}",
-                layer, layer_config.id
-            );
-
-            let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
-                DiskStore::new(0)?;
-
-            // Track the layer specific store and StoreConfig for later retrieval.
-            labels.push(layer_store);
-            label_configs.push(layer_config);
-        }
-
-        assert_eq!(
-            labels.len(),
-            layers,
-            "Invalid amount of layers encoded expected"
-        );
-
-        Ok((
-            LabelsCache::<Tree> { labels },
-            Labels::<Tree> {
-                labels: label_configs,
-                _h: PhantomData,
-            },
-        ))
-    }*/
-
 
     #[allow(clippy::type_complexity)]
     fn generate_labels(
@@ -473,9 +347,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
             info!("  storing labels on disk");
             // Construct and persist the layer data.
-            //let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
-            let tmpstore : DiskStore<<Tree::Hasher as Hasher>::Domain> =
-            DiskStore::new_from_slice_with_config(
+            let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+                DiskStore::new_from_slice_with_config(
                     graph.size(),
                     Tree::Arity::to_usize(),
                     &layer_labels,
@@ -485,22 +358,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 "  generated layer {} store with id {}",
                 layer, layer_config.id
             );
-            drop(tmpstore);
-
-
-
-/*            let layer_config_tmp =
-                StoreConfig::from_config(&config, CacheKey::label_layer(99), Some(graph.size()));*/
-            let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
-                DiskStore::new(0)?;
-
-                // Track the layer specific store and StoreConfig for later retrieval.
 
             info!("  setting exp parents");
             std::mem::swap(&mut layer_labels, &mut exp_labels);
 
             // Track the layer specific store and StoreConfig for later retrieval.
-
             labels.push(layer_store);
             label_configs.push(layer_config);
         }
@@ -546,9 +408,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         configs: Vec<StoreConfig>,
         labels: &LabelsCache<Tree>,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
-    where
-        ColumnArity: 'static + PoseidonArity,
-        TreeArity: PoseidonArity,
+        where
+            ColumnArity: 'static + PoseidonArity,
+            TreeArity: PoseidonArity,
     {
         if settings::SETTINGS.lock().unwrap().use_gpu_column_builder {
             Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(
@@ -577,9 +439,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         configs: Vec<StoreConfig>,
         labels: &LabelsCache<Tree>,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
-    where
-        ColumnArity: 'static + PoseidonArity,
-        TreeArity: PoseidonArity,
+        where
+            ColumnArity: 'static + PoseidonArity,
+            TreeArity: PoseidonArity,
     {
         info!("generating tree c using the GPU");
         // Build the tree for CommC
@@ -636,7 +498,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                                 // gather all layer data in parallel.
                                 s.spawn(move |_| {
                                     for (layer_index, layer_elements) in
-                                        layer_data.iter_mut().enumerate()
+                                    layer_data.iter_mut().enumerate()
                                     {
                                         let store = labels.labels_for_layer(layer_index + 1);
                                         let start = (i * nodes_count) + node_index;
@@ -676,9 +538,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 let configs = &configs;
                 s.spawn(move |_| {
                     let mut column_tree_builder = ColumnTreeBuilder::<
-                            ColumnArity,
+                        ColumnArity,
                         TreeArity,
-                        >::new(
+                    >::new(
                         Some(BatcherType::GPU),
                         nodes_count,
                         max_gpu_column_batch_size,
@@ -785,9 +647,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         configs: Vec<StoreConfig>,
         labels: &LabelsCache<Tree>,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
-    where
-        ColumnArity: PoseidonArity,
-        TreeArity: PoseidonArity,
+        where
+            ColumnArity: PoseidonArity,
+            TreeArity: PoseidonArity,
     {
         info!("generating tree c using the CPU");
         measure_op(GenerateTreeC, || {
@@ -855,8 +717,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         replica_path: PathBuf,
         labels: &LabelsCache<Tree>,
     ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
-    where
-        TreeArity: PoseidonArity,
+        where
+            TreeArity: PoseidonArity,
     {
         let (configs, replica_config) = split_config_and_replica(
             tree_r_last_config.clone(),
@@ -910,7 +772,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                                         <Tree::Hasher as Hasher>::Domain::try_from_bytes(
                                             data_node_bytes,
                                         )
-                                        .expect("try_from_bytes failed");
+                                            .expect("try_from_bytes failed");
                                     let encoded_node =
                                         encode::<<Tree::Hasher as Hasher>::Domain>(key, data_node);
                                     data_node_bytes
@@ -947,7 +809,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                             max_gpu_tree_batch_size,
                             tree_r_last_config.rows_to_discard,
                         )
-                        .expect("failed to create TreeBuilder");
+                            .expect("failed to create TreeBuilder");
 
                         let mut i = 0;
                         let mut config = &configs[i];
@@ -980,11 +842,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                                     config.size.unwrap(),
                                     Tree::Arity::to_usize(),
                                 )
-                                .expect("failed to get merkle tree leaves"),
+                                    .expect("failed to get merkle tree leaves"),
                                 Tree::Arity::to_usize(),
                                 config.rows_to_discard,
                             )
-                            .expect("failed to get merkle tree cache size");
+                                .expect("failed to get merkle tree cache size");
                             assert_eq!(tree_data_len, cache_size);
 
                             let flat_tree_data: Vec<_> = tree_data
@@ -1143,7 +1005,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         // A default 'rows_to_discard' value will be chosen for tree_r_last, unless the user overrides this value via the
         // environment setting (FIL_PROOFS_ROWS_TO_DISCARD).  If this value is specified, no checking is done on it and it may
-        // result in a broken configuration.  Use with caution.
+        // result in a broken configuration.  Use with caution.  It must be noted that if/when this unchecked value is passed
+        // through merkle_light, merkle_light now does a check that does not allow us to discard more rows than is possible
+        // to discard.
         tree_r_last_config.rows_to_discard =
             default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
         trace!(
@@ -1313,8 +1177,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         tree_r_last_config: StoreConfig,
         replica_path: PathBuf,
     ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
-    where
-        TreeArity: PoseidonArity,
+        where
+            TreeArity: PoseidonArity,
     {
         let (configs, replica_config) = split_config_and_replica(
             tree_r_last_config.clone(),
@@ -1334,7 +1198,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 max_gpu_tree_batch_size,
                 tree_r_last_config.rows_to_discard,
             )
-            .expect("failed to create TreeBuilder");
+                .expect("failed to create TreeBuilder");
 
             // Allocate zeros once and reuse.
             let zero_leaves: Vec<Fr> = vec![Fr::zero(); max_gpu_tree_batch_size];
@@ -1369,7 +1233,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         Tree::Arity::to_usize(),
                         config.rows_to_discard,
                     )
-                    .expect("failed to get merkle tree cache size");
+                        .expect("failed to get merkle tree cache size");
                     assert_eq!(tree_data_len, cache_size);
 
                     let flat_tree_data: Vec<_> = tree_data
@@ -1461,6 +1325,33 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let p_aux = PersistentAux {
             comm_c: tree_c_root,
             comm_r_last: tree_r_last_root,
+        };
+
+        Ok((comm_r, p_aux))
+    }
+
+    pub fn fake_comm_r<R: AsRef<Path>>(
+        tree_c_root: <Tree::Hasher as Hasher>::Domain,
+        existing_p_aux_path: R,
+    ) -> Result<(
+        <Tree::Hasher as Hasher>::Domain,
+        PersistentAux<<Tree::Hasher as Hasher>::Domain>,
+    )> {
+        let existing_p_aux: PersistentAux<<Tree::Hasher as Hasher>::Domain> = {
+            let p_aux_bytes = std::fs::read(&existing_p_aux_path)?;
+
+            deserialize(&p_aux_bytes)
+        }?;
+
+        let existing_comm_r_last = existing_p_aux.comm_r_last;
+
+        // comm_r = H(comm_c || comm_r_last)
+        let comm_r: <Tree::Hasher as Hasher>::Domain =
+            <Tree::Hasher as Hasher>::Function::hash2(&tree_c_root, &existing_comm_r_last);
+
+        let p_aux = PersistentAux {
+            comm_c: tree_c_root,
+            comm_r_last: existing_comm_r_last,
         };
 
         Ok((comm_r, p_aux))
@@ -1610,7 +1501,7 @@ mod tests {
             config.clone(),
             replica_path,
         )
-        .expect("replication failed");
+            .expect("replication failed");
 
         let mut copied = vec![0; data.len()];
         copied.copy_from_slice(&mmapped_data);
@@ -1622,7 +1513,7 @@ mod tests {
             mmapped_data.as_mut(),
             Some(config),
         )
-        .expect("failed to extract data");
+            .expect("failed to extract data");
 
         assert_eq!(data, decoded_data);
 
@@ -1786,7 +1677,7 @@ mod tests {
             config,
             replica_path.clone(),
         )
-        .expect("replication failed");
+            .expect("replication failed");
 
         let mut copied = vec![0; data.len()];
         copied.copy_from_slice(&mmapped_data);
@@ -1817,14 +1708,14 @@ mod tests {
             &priv_inputs,
             partitions,
         )
-        .expect("failed to generate partition proofs");
+            .expect("failed to generate partition proofs");
 
         let proofs_are_valid = StackedDrg::<Tree, Blake2sHasher>::verify_all_partitions(
             &pp,
             &pub_inputs,
             all_partition_proofs,
         )
-        .expect("failed to verify partition proofs");
+            .expect("failed to verify partition proofs");
 
         // Discard cached MTs that are no longer needed.
         TemporaryAux::<Tree, Blake2sHasher>::clear_temp(t_aux_orig).expect("t_aux delete failed");
@@ -1862,6 +1753,6 @@ mod tests {
             DiskTree<PedersenHasher, typenum::U8, typenum::U0, typenum::U0>,
             Blake2sHasher,
         >::setup(&sp)
-        .expect("setup failed");
+            .expect("setup failed");
     }
 }

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use super::settings;
 
 /// Bump this when circuits change to invalidate the cache.
-pub const VERSION: usize = 27;
+pub const VERSION: usize = 28;
 
 pub const GROTH_PARAMETER_EXT: &str = "params";
 pub const PARAMETER_METADATA_EXT: &str = "meta";
@@ -170,8 +170,8 @@ where
         let param_identifier = pub_params.identifier();
         info!("parameter set identifier for cache: {}", param_identifier);
         let mut hasher = Sha256::default();
-        hasher.input(&param_identifier.into_bytes());
-        let circuit_hash = hasher.result();
+        hasher.update(&param_identifier.into_bytes());
+        let circuit_hash = hasher.finalize();
         format!(
             "{}-{:02x}",
             Self::cache_prefix(),
@@ -268,7 +268,7 @@ fn ensure_parent(path: &PathBuf) -> Result<()> {
 
 // Reads parameter mappings using mmap so that they can be lazily
 // loaded later.
-fn read_cached_params(cache_entry_path: &PathBuf) -> Result<groth16::MappedParameters<Bls12>> {
+pub fn read_cached_params(cache_entry_path: &PathBuf) -> Result<groth16::MappedParameters<Bls12>> {
     info!("checking cache_path: {:?} for parameters", cache_entry_path);
     with_exclusive_read_lock(cache_entry_path, |_| {
         let params = Parameters::build_mapped_parameters(cache_entry_path.to_path_buf(), false)?;
