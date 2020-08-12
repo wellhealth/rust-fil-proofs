@@ -18,15 +18,25 @@ There are currently several different crates:
      -   **DrgPoRep** (_Depth Robust Graph_ **_Proof-of-Replication_**)
      -   **StackedDrgPoRep**
 
+
 - [**Storage Proofs PoSt (`storage-proofs-post`)**](./storage-proofs/post)
     `storage-proofs-post` is intended to serve as a reference implementation for _**Proof-of-Space-time**_ (**PoSt**), for `filecoin-proofs`.
 
     Primary Components:
      -   **PoSt** (Proof-of-Spacetime)
 
+- [**Storage Proofs PoSt (`storage-proofs-post`)**](./storage-proofs/post)
+    `storage-proofs-post` is intended to serve as a reference implementation for _**Proof-of-Space-time**_ (**PoSt**), for `filecoin-proofs`.
+
 
 - [**Filecoin Proofs (`filecoin-proofs`)**](./filecoin-proofs)
   A wrapper around `storage-proofs`, providing an FFI-exported API callable from C (and in practice called by [lotus](https://github.com/filecoin-project/lotus) via cgo). Filecoin-specific values of setup parameters are included here.
+
+## Security Audits
+
+The `rust-fil-proofs` proofs code and the [Filecoin Spec](https://bafybeidxw5vxjdwsun2zc2illagf43v6w5r5w63vg455h7vjesbyqssg64.ipfs.dweb.link/algorithms/sdr/) has undergone a [proofs security audit](audits/Sigma-Prime-Protocol-Labs-Filecoin-Proofs-Security-Review-v2.1.pdf) performed by [Sigma Prime](https://sigmaprime.io/) and been deemed free of *critical* or *major* security issues.  In addition to the security review, the document provides the summary of findings, vulnerability classifications, and recommended resolutions.  All known issues have been resolved to date in both the code and the specification.
+
+`rust-fil-proofs` has also undergone a [SNARK proofs security audit performed by Dr. Jean-Philippe Aumasson and Antony Vennard](audits/protocolai-audit-20200728.pdf) and been deemed free of *critical* or *major* security issues.  In addition to the security analysis, the document provides the audit goals, methodology, functionality descriptions and finally observations on what could be improved.  All known issues have been resolved to date.
 
 ## Design Notes
 
@@ -65,10 +75,17 @@ Before building you will need OpenCL to be installed, on Ubuntu this can be achi
 The main benchmarking tool is called `benchy`.  `benchy` has several subcommands, including `merkleproofs`, `prodbench`, `winning_post` and `window_post`.  You can run them with various configuration options, but some examples are below:
 
 ```
+<<<<<<< HEAD
 > cargo run --release--bin benchy -- merkleproofs --size 2
 > cargo run --release--bin benchy -- winning-post --size 2
 > cargo run --release--bin benchy -- window-post --size 2
 > cargo run --release--bin benchy -- prodbench
+=======
+> cargo run --release --bin benchy -- merkleproofs --size 2
+> cargo run --release --bin benchy -- winning-post --size 2
+> cargo run --release --bin benchy -- window-post --size 2
+> cargo run --release --bin benchy -- prodbench
+>>>>>>> 6e38487293a2ec063688acb4a414600b1c0654f9
 ```
 
 There is also a bench called `gpu-cpu-test`:
@@ -245,6 +262,12 @@ View the docs by pointing your browser at: `…/rust-fil-proofs/target/doc/proof
 ## API Reference
 
 The **FPS** is accessed from [**lotus**](https://github.com/filecoin-project/lotus) via FFI calls to its API, which is the union of the APIs of its constituents:
+<<<<<<< HEAD
+
+ The source of truth defining the **FPS** APIs is a separate repository of Rust source code. View the source directly:
+
+- [**filecoin-proofs-api**](https://github.com/filecoin-project/rust-filecoin-proofs-api)
+=======
 
  The source of truth defining the **FPS** APIs is a separate repository of Rust source code. View the source directly:
 
@@ -256,7 +279,29 @@ To generate the API documentation locally, follow the instructions to generate d
 - **Filecoin Proofs API:** `…/rust-filecoin-proofs-api/target/doc/filecoin_proofs_api/index.html`
 
 - [Go implementation of filecoin-proofs sectorbuilder API](https://github.com/filecoin-project/go-sectorbuilder/blob/master/sectorbuilder.go) and [associated interface structures](https://github.com/filecoin-project/go-sectorbuilder/blob/master/interface.go).
+>>>>>>> 6e38487293a2ec063688acb4a414600b1c0654f9
 
+The above referenced repository contains the consumer facing API and it provides a versioned wrapper around the `rust-fil-proofs` repository's internal APIs.  End users should not be using the internal APIs of `rust-fil-proofs` directly, as they are subject to change outside of the formal API provided.
+
+<<<<<<< HEAD
+To generate the API documentation locally, follow the instructions to generate documentation above. Then navigate to:
+- **Filecoin Proofs API:** `…/rust-filecoin-proofs-api/target/doc/filecoin_proofs_api/index.html`
+
+- [Go implementation of filecoin-proofs sectorbuilder API](https://github.com/filecoin-project/go-sectorbuilder/blob/master/sectorbuilder.go) and [associated interface structures](https://github.com/filecoin-project/go-sectorbuilder/blob/master/interface.go).
+=======
+## Building for Arm64
+
+In order to build for arm64 the current requirements are
+>>>>>>> 6e38487293a2ec063688acb4a414600b1c0654f9
+
+- nightly rust compiler
+
+Example for building `filecoin-proofs`
+
+```
+$ rustup +nightly target add aarch64-unknown-linux-gnu
+$ cargo +nightly build -p filecoin-proofs --release --target aarch64-unknown-linux-gnu
+```
 
 ## Contributing
 
