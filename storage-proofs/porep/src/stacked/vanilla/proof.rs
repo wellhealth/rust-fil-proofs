@@ -344,10 +344,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             // Write the result to disk to avoid keeping it in memory all the time.
             let layer_config =
                 StoreConfig::from_config(&config, CacheKey::label_layer(layer), Some(graph.size()));
-
             info!("  storing labels on disk");
             // Construct and persist the layer data.
-            let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+            let tmpstore: DiskStore<<Tree::Hasher as Hasher>::Domain> =
                 DiskStore::new_from_slice_with_config(
                     graph.size(),
                     Tree::Arity::to_usize(),
@@ -358,11 +357,24 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 "  generated layer {} store with id {}",
                 layer, layer_config.id
             );
+            drop(tmpstore);
+
+            info!("  setting exp parents");
+            std::mem::swap(&mut layer_labels, &mut exp_labels);
+
+
+            let layer_config_tmp =
+                StoreConfig::from_config(&config, CacheKey::label_layer(99), Some(graph.size()));
+            let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+                DiskStore::new(0)?;
+
+            // Track the layer specific store and StoreConfig for later retrieval.
 
             info!("  setting exp parents");
             std::mem::swap(&mut layer_labels, &mut exp_labels);
 
             // Track the layer specific store and StoreConfig for later retrieval.
+
             labels.push(layer_store);
             label_configs.push(layer_config);
         }
