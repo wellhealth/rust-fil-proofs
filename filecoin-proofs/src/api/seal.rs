@@ -164,7 +164,7 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         let mut outputfile = OpenOptions::new().create(true).write(true).open(new_path).unwrap();
         //保存comm_d数据
         outputfile.write(&comm_d).unwrap();
-        //保存data_tree.len() 数据
+        //保存data_tree.len() 数据seal_pre_commit_phase1_tree
         unsafe {
             let lensize = data_tree.len() as u64;
             let treelen = std::mem::transmute::<u64, [u8; 8]>(lensize);
@@ -297,6 +297,7 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         &replica_id,
         config.clone(),
     )?;
+
 
     Ok(SealPreCommitPhase1Output {
         labels,
