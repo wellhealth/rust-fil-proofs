@@ -42,6 +42,7 @@ use crate::types::{
 use std::marker::PhantomData;
 use crate::Labels;
 
+
 #[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
@@ -200,13 +201,12 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
 
     println!("{:?}", config);
 
-
-
-    let labels = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase1(
-        &compound_public_params.vanilla_params,
-        &replica_id,
-        config.clone(),
-    )?;
+    //replica_id config
+    let label_configs: Vec<StoreConfig> = Vec::with_capacity(0);
+    let labels = Labels::<Tree> {
+        labels: label_configs,
+        _h: PhantomData,
+    };
 
     let out = SealPreCommitPhase1Output {
         labels,
