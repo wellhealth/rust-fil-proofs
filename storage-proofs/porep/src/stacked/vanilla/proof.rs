@@ -389,7 +389,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         layer_challenges: &LayerChallenges,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
-    ) -> Result<Labels<Tree>> {
+    ) -> Result<(Labels<Tree>)> {
         info!("generate labels");
 
         let layers = layer_challenges.layers();
@@ -461,6 +461,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             drop(layer_store);
             info!("  setting exp parents");
             std::mem::swap(&mut layer_labels, &mut exp_labels);
+
 
             label_configs.push(layer_config);
         }

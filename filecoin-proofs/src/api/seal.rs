@@ -169,7 +169,12 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
             outputfile.write(&treelen).unwrap();
         }
         config.size = Some(data_tree.len());
-        println!("seal_pre_commit_phase1_tree comm_d is {:?}", comm_d);
+
+        println!("write seal_pre_commit_phase1_tree comm_d is {:?}", comm_d);
+
+
+
+        println!("config is {:?}", config);
 
         drop(data_tree);
 
@@ -289,7 +294,7 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         let lensize  = std::mem::transmute::<[u8; 8],u64>(treelen);
         config.size = Some(lensize as usize) ;
     }
-    println!("seal_pre_commit_phase1_layer comm_d is {:?}", comm_d);
+    println!("read seal_pre_commit_phase1_layer comm_d is {:?}", comm_d);
     println!("{:?}", config);
 
     info!("verifying pieces");
