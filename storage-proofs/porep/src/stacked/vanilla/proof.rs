@@ -389,7 +389,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         layer_challenges: &LayerChallenges,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
-    ) -> Result<(Labels<Tree>)> {
+    ) -> Result<(LabelsCache<Tree>, Labels<Tree>)> {
         info!("generate labels");
 
         let layers = layer_challenges.layers();
@@ -462,12 +462,21 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             info!("  setting exp parents");
             std::mem::swap(&mut layer_labels, &mut exp_labels);
 
-
+            let tmp_layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+                DiskStore::new(0)?;
+            // Track the layer specific store and StoreConfig for later retrieval.
+            labels.push(tmp_layer_store);
             label_configs.push(layer_config);
         }
 
+        assert_eq!(
+            labels.len(),
+            layers,
+            "Invalid amount of layers encoded expected"
+        );
 
         Ok((
+            LabelsCache::<Tree> { labels },
             Labels::<Tree> {
                 labels: label_configs,
                 _h: PhantomData,
@@ -1225,9 +1234,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) -> Result<Labels<Tree>> {
         info!("replicate_phase1");
 
-        let labels = measure_op(EncodeWindowTimeAll, || {
+        let (_, labels) = measure_op(EncodeWindowTimeAll, || {
             Self::my_generate_labels(&pp.graph, &pp.layer_challenges, replica_id, config)
         })?;
+
         Ok(labels)
     }
 
