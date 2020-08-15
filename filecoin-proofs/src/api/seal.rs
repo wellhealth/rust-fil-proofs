@@ -234,10 +234,10 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         S: AsRef<Path>,
         T: AsRef<Path>,
 {
-    info!("seal_pre_commit_phase1_layer:start");
+    info!("seal_pre_commit_phase1_layer:start(rust)");
 
     // Sanity check all input path types.
-    ensure!(
+/*    ensure!(
         metadata(in_path.as_ref())?.is_file(),
         "in_path must be a file"
     );
@@ -248,7 +248,7 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
     ensure!(
         metadata(cache_path.as_ref())?.is_dir(),
         "cache_path must be a directory"
-    );
+    );*/
 
 
     let compound_setup_params = compound_proof::SetupParams {
@@ -324,7 +324,7 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         comm_d,
     };
 
-    info!("seal_pre_commit_phase1:finish");
+    info!("seal_pre_commit_phase1_layer:finish(rust)");
     Ok(out)
 }
 
