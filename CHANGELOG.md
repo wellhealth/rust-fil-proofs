@@ -7,8 +7,24 @@ and this project adheres to [Semantic Versioning](https://book.async.rs/overview
 
 ## Unreleased
 
-<<<<<<< HEAD
-=======
+
+## 5.1.4 - 2020-09-08
+
+- Add FaultySectors error to Fallback PoSt [#1274](https://github.com/filecoin-project/rust-fil-proofs/pull/1274)
+
+## 5.1.3 - 2020-09-07
+
+- Make fil-blst usage in Window PoSt possible [#1272](https://github.com/filecoin-project/rust-fil-proofs/pull/1272)
+
+## 5.1.2 - 2020-09-03
+
+- Accelerate SNARK verification [#1271](https://github.com/filecoin-project/rust-fil-proofs/pull/1271)
+- Decompress proofs in parallel [#1268](https://github.com/filecoin-project/rust-fil-proofs/pull/1268)
+- Eliminate wasteful public-input conversions [#1267](https://github.com/filecoin-project/rust-fil-proofs/pull/1267)
+- Remove usage of unwrap [#1260](https://github.com/filecoin-project/rust-fil-proofs/pull/1260)
+- Pin params to the filecoin collab cluster [#1263](https://github.com/filecoin-project/rust-fil-proofs/pull/1263)
+
+>>>>>>> 451397902ef6b669098dee85dbe866b42490cb91
 ## 5.1.1 - 2020-08-12
 
 - Only perform subgroup check on 'after' params [#1258](https://github.com/filecoin-project/rust-fil-proofs/pull/1258)
@@ -111,13 +127,12 @@ and this project adheres to [Semantic Versioning](https://book.async.rs/overview
 
 - Initial stable release
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-[Unreleased]: https://github.com/filecoin-project/rust-fil-proofs/compare/v4.0.4...HEAD
-=======
-[Unreleased]: https://github.com/filecoin-project/rust-fil-proofs/compare/v5.0.0...HEAD
-=======
-[Unreleased]: https://github.com/filecoin-project/rust-fil-proofs/compare/v5.1.1...HEAD
+
+[Unreleased]: https://github.com/filecoin-project/rust-fil-proofs/compare/v5.1.4...HEAD
+[5.1.4]: https://github.com/filecoin-project/rust-fil-proofs/tree/releases/v5.1.4
+[5.1.3]: https://github.com/filecoin-project/rust-fil-proofs/tree/releases/v5.1.3
+[5.1.2]: https://github.com/filecoin-project/rust-fil-proofs/tree/releases/v5.1.2
+>>>>>>> 451397902ef6b669098dee85dbe866b42490cb91
 [5.1.1]: https://github.com/filecoin-project/rust-fil-proofs/tree/releases/v5.1.1
 [5.1.0]: https://github.com/filecoin-project/rust-fil-proofs/tree/releases/v5.1.0
 >>>>>>> a700f68cb97493c110add88a9baeb94d6f30a514
