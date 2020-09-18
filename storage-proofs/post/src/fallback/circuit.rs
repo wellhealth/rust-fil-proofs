@@ -316,7 +316,6 @@ mod tests {
         };
 
         let temp_dir = tempfile::tempdir().expect("tempdir failure");
-
         let temp_path = temp_dir.path();
 
         let mut pub_sectors = Vec::new();

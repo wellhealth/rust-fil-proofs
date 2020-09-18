@@ -160,40 +160,6 @@ where
             Ok(self.copy_parents_data_inner_exp(&cache_parents, base_data, exp_data, hasher))
         }
     }
-    //////////////////////////////////////////////
-    //根据layer文件，一次性得到node_size个节点的base_label数据
- /*   pub fn get_base_label_cache(
-        &self,
-        mut cache: Option<&mut ParentCache>,
-        layer_labels: & [u8], //从文件中得到layer数据
-        layer_buffer: &mut [u8], //根据参数表获取的结果数据
-        layer_index: usize, //layer计算的开始位置
-        node_size: usize, //总共node个数
-    ) -> Result<()> {
-        let mut bufPos = 0;
-        for node in 0..node_size {
-
-            //let layer_labels= &layer_buffer[node*DEGREE..];
-            let mut cache_parents = [0u32; DEGREE];
-            if let Some(ref mut cache) = cache {
-                cache_parents = cache.read(node as u32)?;
-            } else {
-                self.parents(node as usize, &mut cache_parents[..]).unwrap();
-            }
-            //一次性获取数据到内存，用于后续hasher计算
-            *//*
-                let start = parents[i] as usize * NODE_SIZE;
-                let end = start + NODE_SIZE;
-                &data[start..end]*//*
-            bufPos = node * DEGREE * NODE_SIZE;
-            for i in 0..6 {
-                let mut layerPost = cache_parents[i] as usize * NODE_SIZE;
-                layer_buffer[bufPos..bufPos + NODE_SIZE].copy_from_slice(&layer_labels[layerPost..layerPost + NODE_SIZE]);
-            }
-        }
-        Ok(())
-    }*/
-
 
     pub fn copy_parents_data(
         &self,
@@ -252,46 +218,6 @@ where
         hasher.input(&parents[..8]);
         hasher.finish_with(&parents[8])
     }
-
-    /*fn my_copy_parents_data_inner(
-        &self,
-        cache_parents: &[u32],
-        base_data: &[u8],
-        mut hasher: Sha256,
-    ) -> [u8; 32] {
-        prefetch(&cache_parents[..BASE_DEGREE], base_data);
-
-        // fill buffer
-        let parents = [
-            read_node(0, cache_parents, base_data),
-            read_node(1, cache_parents, base_data),
-            read_node(2, cache_parents, base_data),
-            read_node(3, cache_parents, base_data),
-            read_node(4, cache_parents, base_data),
-            read_node(5, cache_parents, base_data),
-        ];
-
-        // round 1 (0..6)
-        hasher.input(&parents);
-
-        // round 2 (6..12)
-        hasher.input(&parents);
-
-        // round 3 (12..18)
-        hasher.input(&parents);
-
-        // round 4 (18..24)
-        hasher.input(&parents);
-
-        // round 5 (24..30)
-        hasher.input(&parents);
-
-        // round 6 (30..36)
-        hasher.input(&parents);
-
-        // round 7 (37)
-        hasher.finish_with(parents[0])
-    }*/
 
     fn copy_parents_data_inner(
         &self,

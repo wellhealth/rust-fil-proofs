@@ -24,9 +24,6 @@ git clone -b $1 --single-branch https://github.com/filecoin-project/rust-fil-pro
 
 cd \$_metrics_dir
 
-cargo update
-cargo fetch
-
 ./fil-proofs-tooling/scripts/retry.sh 42 10 60000 \
     ./fil-proofs-tooling/scripts/with-lock.sh 42 /tmp/metrics.lock \
     ./fil-proofs-tooling/scripts/with-dots.sh \

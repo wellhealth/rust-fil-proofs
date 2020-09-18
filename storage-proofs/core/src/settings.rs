@@ -16,9 +16,6 @@ const PREFIX: &str = "FIL_PROOFS";
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    ///////////////////////////////
-    //自定义参数设置
-    pub max_labels_cache_node:u32,
     pub maximize_caching: bool,
     pub pedersen_hash_exp_window_size: u32,
     pub use_gpu_column_builder: bool,
@@ -37,7 +34,6 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            max_labels_cache_node: 2048,//1_048_576, //初始建议1M个节点
             maximize_caching: true,
             pedersen_hash_exp_window_size: 16,
             use_gpu_column_builder: false,

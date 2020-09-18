@@ -26,7 +26,6 @@ fn generate_proofs<R: Rng, Tree: MerkleTreeTrait>(
     proofs_count: usize,
     validate: bool,
 ) -> Result<()> {
-
     let proofs_count = if proofs_count >= nodes {
         info!(
             "requested {} proofs, but instead challenging all {} nodes sequentially",

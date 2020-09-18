@@ -477,7 +477,6 @@ mod tests {
         let mut sectors: Vec<SectorId> = Vec::new();
         let mut trees = BTreeMap::new();
 
-
         let temp_dir = tempfile::tempdir().expect("tempdir failure");
         let temp_path = temp_dir.path();
 
