@@ -3,6 +3,9 @@ use std::hash::{Hash, Hasher as StdHasher};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
+use std::time::{Duration, Instant};
+
+
 use anyhow::{ensure, Context, Result};
 use bincode::deserialize;
 use generic_array::typenum::Unsigned;
@@ -474,6 +477,10 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
         "invalid post config type"
     );
 
+    let now = Instant::now();
+
+    info!("generate_window_post0:{:?} {:?}", prover_id, now.elapsed().as_secs());
+
     let randomness_safe = as_safe_commitment(randomness, "randomness")?;
     let prover_id_safe = as_safe_commitment(&prover_id, "prover_id")?;
 
@@ -490,15 +497,26 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     let pub_params: compound_proof::PublicParams<fallback::FallbackPoSt<Tree>> =
         fallback::FallbackPoStCompound::setup(&setup_params)?;
     let groth_params = get_post_params::<Tree>(&post_config)?;
+    info!("generate_window_post: pub_sectors & priv_sectors (begin)");
+
+    info!("generate_window_post1:{:?} {:?}", prover_id, now.elapsed().as_secs());
+    /*let trees: Vec<_> = replicas
+        .iter()
+        .map(|(_id, replica)| replica.merkle_tree(post_config.sector_size))
+        .collect::<Result<_>>()?;*/
+
+    use rayon::prelude::*;
 
     let trees: Vec<_> = replicas
-        .iter()
+        .par_iter()
         .map(|(_id, replica)| replica.merkle_tree(post_config.sector_size))
         .collect::<Result<_>>()?;
 
+    info!("generate_window_post2:{:?} {:?}", prover_id, now.elapsed().as_secs());
     let mut pub_sectors = Vec::with_capacity(sector_count);
     let mut priv_sectors = Vec::with_capacity(sector_count);
 
+    info!("generate_window_post: pub_sectors & priv_sectors (begin)");
     for ((sector_id, replica), tree) in replicas.iter().zip(trees.iter()) {
         let comm_r = replica.safe_comm_r()?;
         let comm_c = replica.safe_comm_c()?;
@@ -514,6 +532,9 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
             comm_r_last,
         });
     }
+    info!("generate_window_post: pub_sectors & priv_sectors (end)");
+
+    info!("generate_window_post3:{:?} {:?}", prover_id, now.elapsed().as_secs());
 
     let pub_inputs = fallback::PublicInputs {
         randomness: randomness_safe,
@@ -522,16 +543,21 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
         k: None,
     };
 
+    info!("generate_window_post:fallback::PrivateInputs(begin)");
     let priv_inputs = fallback::PrivateInputs::<Tree> {
         sectors: &priv_sectors,
     };
 
+    info!("generate_window_post4:{:?} {:?}", prover_id, now.elapsed().as_secs());
+    info!("generate_window_post:fallback::FallbackPoStCompound(begin)");
     let proof = fallback::FallbackPoStCompound::prove(
         &pub_params,
         &pub_inputs,
         &priv_inputs,
         &groth_params,
     )?;
+
+    info!("generate_window_post5:{:?} {:?}", prover_id, now.elapsed().as_secs());
 
     info!("generate_window_post:finish");
 
