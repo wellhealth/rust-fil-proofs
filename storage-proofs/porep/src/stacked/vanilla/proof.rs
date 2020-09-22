@@ -563,18 +563,18 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         // Override these values with care using environment variables:
         // FIL_PROOFS_MAX_GPU_COLUMN_BATCH_SIZE, FIL_PROOFS_MAX_GPU_TREE_BATCH_SIZE, and
         // FIL_PROOFS_COLUMN_WRITE_BATCH_SIZE respectively.
-        let max_gpu_column_batch_size = settings::SETTINGS
-            .lock()
-            .expect("max_gpu_column_batch_size settings lock failure")
-            .max_gpu_column_batch_size as usize;
-        let max_gpu_tree_batch_size = settings::SETTINGS
-            .lock()
-            .expect("max_gpu_tree_batch_size settings lock failure")
-            .max_gpu_tree_batch_size as usize;
-        let column_write_batch_size = settings::SETTINGS
-            .lock()
-            .expect("column_write_batch_size settings lock failure")
-            .column_write_batch_size as usize;
+
+        let (max_gpu_column_batch_size, max_gpu_tree_batch_size, column_write_batch_size) = {
+            let settings_lock = settings::SETTINGS
+                .lock()
+                .expect("max_gpu_column_batch_size settings lock failure");
+
+            (
+                settings_lock.max_gpu_column_batch_size as usize,
+                settings_lock.max_gpu_tree_batch_size as usize,
+                settings_lock.column_write_batch_size as usize,
+            )
+        };
 
         // This channel will receive batches of columns and add them to the ColumnTreeBuilder.
         let (builder_tx, builder_rx) = mpsc::sync_channel(0);
