@@ -1136,11 +1136,11 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         config.clone(),
     )?;
 
-    let labels = StackedDrg::<Tree, DefaultPieceHasher>::my_replicate_phase1(
+/*    let labels = StackedDrg::<Tree, DefaultPieceHasher>::my_replicate_phase1(
         &compound_public_params.vanilla_params,
         &replica_id,
         config.clone(),
-    )?;
+    )?;*/
 
     let out = SealPreCommitPhase1Output {
         labels,
