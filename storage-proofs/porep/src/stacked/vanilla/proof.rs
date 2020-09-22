@@ -388,7 +388,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         ))
     }
 
-
     #[allow(clippy::type_complexity)]
     fn my_generate_labels(
         graph: &StackedBucketGraph<Tree::Hasher>,
@@ -468,8 +467,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             info!("  setting exp parents");
             std::mem::swap(&mut layer_labels, &mut exp_labels);
 
-            let tmp_layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
-                DiskStore::new(0)?;
+            let tmp_layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> = DiskStore::new(0)?;
             // Track the layer specific store and StoreConfig for later retrieval.
             labels.push(tmp_layer_store);
             label_configs.push(layer_config);
@@ -543,8 +541,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         }
     }
 
-    #[allow(clippy::needless_range_loop)]
-    fn generate_tree_c_gpu<ColumnArity, TreeArity>(
+    fn generate_tree_c_gpu_impl<ColumnArity, TreeArity>(
         layers: usize,
         nodes_count: usize,
         tree_count: usize,
@@ -555,106 +552,103 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
     {
-        info!("generating tree c using the GPU");
-        // Build the tree for CommC
-        measure_op(GenerateTreeC, || {
-            info!("Building column hashes");
+        info!("Building column hashes");
 
-            // NOTE: The max number of columns we recommend sending to the GPU at once is
-            // 400000 for columns and 700000 for trees (conservative soft-limits discussed).
-            //
-            // 'column_write_batch_size' is how many nodes to chunk the base layer of data
-            // into when persisting to disk.
-            //
-            // Override these values with care using environment variables:
-            // FIL_PROOFS_MAX_GPU_COLUMN_BATCH_SIZE, FIL_PROOFS_MAX_GPU_TREE_BATCH_SIZE, and
-            // FIL_PROOFS_COLUMN_WRITE_BATCH_SIZE respectively.
-            let max_gpu_column_batch_size = settings::SETTINGS
-                .lock()
-                .expect("max_gpu_column_batch_size settings lock failure")
-                .max_gpu_column_batch_size as usize;
-            let max_gpu_tree_batch_size = settings::SETTINGS
-                .lock()
-                .expect("max_gpu_tree_batch_size settings lock failure")
-                .max_gpu_tree_batch_size as usize;
-            let column_write_batch_size = settings::SETTINGS
-                .lock()
-                .expect("column_write_batch_size settings lock failure")
-                .column_write_batch_size as usize;
+        // NOTE: The max number of columns we recommend sending to the GPU at once is
+        // 400000 for columns and 700000 for trees (conservative soft-limits discussed).
+        //
+        // 'column_write_batch_size' is how many nodes to chunk the base layer of data
+        // into when persisting to disk.
+        //
+        // Override these values with care using environment variables:
+        // FIL_PROOFS_MAX_GPU_COLUMN_BATCH_SIZE, FIL_PROOFS_MAX_GPU_TREE_BATCH_SIZE, and
+        // FIL_PROOFS_COLUMN_WRITE_BATCH_SIZE respectively.
+        let max_gpu_column_batch_size = settings::SETTINGS
+            .lock()
+            .expect("max_gpu_column_batch_size settings lock failure")
+            .max_gpu_column_batch_size as usize;
+        let max_gpu_tree_batch_size = settings::SETTINGS
+            .lock()
+            .expect("max_gpu_tree_batch_size settings lock failure")
+            .max_gpu_tree_batch_size as usize;
+        let column_write_batch_size = settings::SETTINGS
+            .lock()
+            .expect("column_write_batch_size settings lock failure")
+            .column_write_batch_size as usize;
 
-            // This channel will receive batches of columns and add them to the ColumnTreeBuilder.
-            let (builder_tx, builder_rx) = mpsc::sync_channel(0);
+        // This channel will receive batches of columns and add them to the ColumnTreeBuilder.
+        let (builder_tx, builder_rx) = mpsc::sync_channel(0);
 
-            let config_count = configs.len(); // Don't move config into closure below.
-            rayon::scope(|s| {
-                s.spawn(move |_| {
-                    for i in 0..config_count {
-                        let mut node_index = 0;
-                        let builder_tx = builder_tx.clone();
-                        while node_index != nodes_count {
-                            let chunked_nodes_count =
-                                std::cmp::min(nodes_count - node_index, max_gpu_column_batch_size);
-                            trace!(
-                                "processing config {}/{} with column nodes {}",
-                                i + 1,
-                                tree_count,
-                                chunked_nodes_count,
-                            );
-                            let mut columns: Vec<GenericArray<Fr, ColumnArity>> = vec![
+        let config_count = configs.len(); // Don't move config into closure below.
+        rayon::scope(|s| {
+            s.spawn(move |_| {
+                for i in 0..config_count {
+                    let mut node_index = 0;
+                    let builder_tx = builder_tx.clone();
+                    while node_index != nodes_count {
+                        let chunked_nodes_count =
+                            std::cmp::min(nodes_count - node_index, max_gpu_column_batch_size);
+                        trace!(
+                            "processing config {}/{} with column nodes {}",
+                            i + 1,
+                            tree_count,
+                            chunked_nodes_count,
+                        );
+                        let mut columns: Vec<GenericArray<Fr, ColumnArity>> = vec![
                                 GenericArray::<Fr, ColumnArity>::generate(|_i: usize| Fr::zero());
                                 chunked_nodes_count
                             ];
 
-                            // Allocate layer data array and insert a placeholder for each layer.
-                            let mut layer_data: Vec<Vec<Fr>> =
-                                vec![Vec::with_capacity(chunked_nodes_count); layers];
+                        // Allocate layer data array and insert a placeholder for each layer.
+                        let mut layer_data: Vec<Vec<Fr>> =
+                            vec![Vec::with_capacity(chunked_nodes_count); layers];
 
-                            rayon::scope(|s| {
-                                // capture a shadowed version of layer_data.
-                                let layer_data: &mut Vec<_> = &mut layer_data;
+                        rayon::scope(|s| {
+                            // capture a shadowed version of layer_data.
+                            let layer_data: &mut Vec<_> = &mut layer_data;
 
-                                // gather all layer data in parallel.
-                                s.spawn(move |_| {
-                                    for (layer_index, layer_elements) in
-                                        layer_data.iter_mut().enumerate()
-                                    {
-                                        let store = labels.labels_for_layer(layer_index + 1);
-                                        let start = (i * nodes_count) + node_index;
-                                        let end = start + chunked_nodes_count;
-                                        let elements: Vec<<Tree::Hasher as Hasher>::Domain> = store
-                                            .read_range(std::ops::Range { start, end })
-                                            .expect("failed to read store range");
-                                        layer_elements.extend(elements.into_iter().map(Into::into));
-                                    }
-                                });
-                            });
-
-                            // Copy out all layer data arranged into columns.
-                            for layer_index in 0..layers {
-                                for index in 0..chunked_nodes_count {
-                                    columns[index][layer_index] = layer_data[layer_index][index];
+                            // gather all layer data in parallel.
+                            s.spawn(move |_| {
+                                for (layer_index, layer_elements) in
+                                    layer_data.iter_mut().enumerate()
+                                {
+                                    let store = labels.labels_for_layer(layer_index + 1);
+                                    let start = (i * nodes_count) + node_index;
+                                    let end = start + chunked_nodes_count;
+                                    let elements: Vec<<Tree::Hasher as Hasher>::Domain> = store
+                                        .read_range(std::ops::Range { start, end })
+                                        .expect("failed to read store range");
+                                    layer_elements.extend(elements.into_iter().map(Into::into));
                                 }
+                            });
+                        });
+
+                        // Copy out all layer data arranged into columns.
+                        for layer_index in 0..layers {
+                            for index in 0..chunked_nodes_count {
+                                columns[index][layer_index] = layer_data[layer_index][index];
                             }
-
-                            drop(layer_data);
-
-                            node_index += chunked_nodes_count;
-                            trace!(
-                                "node index {}/{}/{}",
-                                node_index,
-                                chunked_nodes_count,
-                                nodes_count,
-                            );
-
-                            let is_final = node_index == nodes_count;
-                            builder_tx
-                                .send((columns, is_final))
-                                .expect("failed to send columns");
                         }
+
+                        drop(layer_data);
+
+                        node_index += chunked_nodes_count;
+                        trace!(
+                            "node index {}/{}/{}",
+                            node_index,
+                            chunked_nodes_count,
+                            nodes_count,
+                        );
+
+                        let is_final = node_index == nodes_count;
+                        builder_tx
+                            .send((columns, is_final))
+                            .expect("failed to send columns");
                     }
-                });
-                let configs = &configs;
-                s.spawn(move |_| {
+                }
+            });
+            let configs = &configs;
+            s.spawn(move |_| {
                     let mut column_tree_builder = ColumnTreeBuilder::<
                             ColumnArity,
                         TreeArity,
@@ -750,11 +744,35 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         config = &configs[i];
                     }
                 });
-            });
+        });
 
-            create_disk_tree::<
-                DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>,
-            >(configs[0].size.expect("config size failure"), &configs)
+        create_disk_tree::<
+            DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>,
+        >(configs[0].size.expect("config size failure"), &configs)
+    }
+
+    #[allow(clippy::needless_range_loop)]
+    fn generate_tree_c_gpu<ColumnArity, TreeArity>(
+        layers: usize,
+        nodes_count: usize,
+        tree_count: usize,
+        configs: Vec<StoreConfig>,
+        labels: &LabelsCache<Tree>,
+    ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
+    where
+        ColumnArity: 'static + PoseidonArity,
+        TreeArity: PoseidonArity,
+    {
+        info!("generating tree c using the GPU");
+        // Build the tree for CommC
+        measure_op(GenerateTreeC, || {
+            Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity>(
+                layers,
+                nodes_count,
+                tree_count,
+                configs,
+                labels,
+            )
         })
     }
 
