@@ -1040,7 +1040,6 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
     in_path: S,
-    out_path: T,
     prover_id: ProverId,
     sector_id: SectorId,
     ticket: Ticket,
@@ -1129,12 +1128,6 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         &porep_config.porep_id,
     );
     println!("seal_pre_commit_phase1_layer replica_id is {:?}", replica_id);
-
-    let labels = StackedDrg::<Tree, DefaultPieceHasher>::my_replicate_phase1(
-        &compound_public_params.vanilla_params,
-        &replica_id,
-        config.clone(),
-    )?;
 
     let labels = StackedDrg::<Tree, DefaultPieceHasher>::my_replicate_phase1(
         &compound_public_params.vanilla_params,

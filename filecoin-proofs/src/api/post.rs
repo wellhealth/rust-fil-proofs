@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher as StdHasher};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 
 use anyhow::{ensure, Context, Result};

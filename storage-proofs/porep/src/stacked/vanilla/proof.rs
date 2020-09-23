@@ -553,8 +553,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) where
         ColumnArity: 'static + PoseidonArity,
     {
+		dbg!(layers);
         let config_count = configs.len();
         for i in 0..config_count {
+			dbg!(i);
             let mut node_index = 0;
             let builder_tx = builder_tx.clone();
             while node_index != nodes_count {
@@ -577,15 +579,19 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
                 // capture a shadowed version of layer_data.
 
-                for (layer_index, layer_elements) in layer_data.iter_mut().enumerate() {
-                    let store = labels.labels_for_layer(layer_index + 1);
-                    let start = (i * nodes_count) + node_index;
-                    let end = start + chunked_nodes_count;
-                    let elements: Vec<<Tree::Hasher as Hasher>::Domain> = store
-                        .read_range(std::ops::Range { start, end })
-                        .expect("failed to read store range");
-                    layer_elements.extend(elements.into_iter().map(Into::into));
-                }
+                //for (layer_index, layer_elements) in
+                layer_data
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(layer_index, layer_elements)| {
+                        let store = labels.labels_for_layer(layer_index + 1);
+                        let start = (i * nodes_count) + node_index;
+                        let end = start + chunked_nodes_count;
+                        let elements: Vec<<Tree::Hasher as Hasher>::Domain> = store
+                            .read_range(std::ops::Range { start, end })
+                            .expect("failed to read store range");
+                        layer_elements.extend(elements.into_iter().map(Into::into));
+                    });
 
                 // Copy out all layer data arranged into columns.
                 for layer_index in 0..layers {
