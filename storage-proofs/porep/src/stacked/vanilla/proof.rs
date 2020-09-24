@@ -894,14 +894,14 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         })
     }
 
-    fn generate_tree_r_last<TreeArity>(
-        data: &mut Data,
+    fn generate_tree_r_last<'b, TreeArity>(
+        mut data: Data<'b>,
         nodes_count: usize,
         tree_count: usize,
         tree_r_last_config: StoreConfig,
         replica_path: PathBuf,
-        labels: &LabelsCache<Tree>,
-    ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
+        labels: &'a LabelsCache<Tree>,
+    ) -> Result<(LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>, Data<'b>)>
     where
         TreeArity: PoseidonArity,
     {
@@ -930,7 +930,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let (builder_tx, builder_rx) = mpsc::sync_channel::<(Vec<Fr>, bool)>(0);
             let config_count = configs.len(); // Don't move config into closure below.
             let configs = &configs;
+
             rayon::scope(|s| {
+				let data = &mut data;
                 s.spawn(move |_| {
                     for i in 0..config_count {
                         let mut node_index = 0;
@@ -1113,7 +1115,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             tree_r_last_config.size.expect("config size failure"),
             &configs,
             &replica_config,
-        )
+        ).map(|x| (x, data))
     }
 
     pub(crate) fn transform_and_replicate_layers(
@@ -1141,6 +1143,18 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         )
     }
 
+    fn replicate_inner_tree_c(config: &StoreConfig, nodes_count: usize) -> Result<()> {
+        let tree_c_config = {
+            let mut cfg = StoreConfig::from_config(
+                &config,
+                CacheKey::CommCTree.to_string(),
+                Some(get_merkle_tree_len(nodes_count, Tree::Arity::to_usize())?),
+            );
+            cfg.rows_to_discard = default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
+            cfg
+        };
+		Ok(())
+    }
     pub(crate) fn transform_and_replicate_layers_inner(
         graph: &StackedBucketGraph<Tree::Hasher>,
         layer_challenges: &LayerChallenges,
@@ -1181,38 +1195,44 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         // Generate all store configs that we need based on the
         // cache_path in the specified config.
-        let mut tree_d_config = StoreConfig::from_config(
-            &config,
-            CacheKey::CommDTree.to_string(),
-            Some(get_merkle_tree_len(nodes_count, BINARY_ARITY)?),
-        );
-        tree_d_config.rows_to_discard = default_rows_to_discard(nodes_count, BINARY_ARITY);
-
-        let mut tree_r_last_config = StoreConfig::from_config(
-            &config,
-            CacheKey::CommRLastTree.to_string(),
-            Some(get_merkle_tree_len(nodes_count, Tree::Arity::to_usize())?),
-        );
-
+        let tree_d_config = {
+            let mut cfg = StoreConfig::from_config(
+                &config,
+                CacheKey::CommDTree.to_string(),
+                Some(get_merkle_tree_len(nodes_count, BINARY_ARITY)?),
+            );
+            cfg.rows_to_discard = default_rows_to_discard(nodes_count, BINARY_ARITY);
+            cfg
+        };
         // A default 'rows_to_discard' value will be chosen for tree_r_last, unless the user overrides this value via the
         // environment setting (FIL_PROOFS_ROWS_TO_DISCARD).  If this value is specified, no checking is done on it and it may
         // result in a broken configuration.  Use with caution.  It must be noted that if/when this unchecked value is passed
         // through merkle_light, merkle_light now does a check that does not allow us to discard more rows than is possible
         // to discard.
-        tree_r_last_config.rows_to_discard =
-            default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
+        let tree_r_last_config = {
+            let mut cfg = StoreConfig::from_config(
+                &config,
+                CacheKey::CommRLastTree.to_string(),
+                Some(get_merkle_tree_len(nodes_count, Tree::Arity::to_usize())?),
+            );
+            cfg.rows_to_discard = default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
+            cfg
+        };
+
         trace!(
             "tree_r_last using rows_to_discard={}",
             tree_r_last_config.rows_to_discard
         );
 
-        let mut tree_c_config = StoreConfig::from_config(
-            &config,
-            CacheKey::CommCTree.to_string(),
-            Some(get_merkle_tree_len(nodes_count, Tree::Arity::to_usize())?),
-        );
-        tree_c_config.rows_to_discard =
-            default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
+        let tree_c_config = {
+            let mut cfg = StoreConfig::from_config(
+                &config,
+                CacheKey::CommCTree.to_string(),
+                Some(get_merkle_tree_len(nodes_count, Tree::Arity::to_usize())?),
+            );
+            cfg.rows_to_discard = default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
+            cfg
+        };
 
         let labels = LabelsCache::<Tree>::new(&label_configs)?;
         let configs = split_config(tree_c_config.clone(), tree_count)?;
@@ -1268,7 +1288,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 })?
             }
         };
-        tree_d_config.size = Some(tree_d.len());
+        let tree_d_config = StoreConfig {
+            size: Some(tree_d.len()),
+            ..tree_d_config
+        };
+        // tree_d_config.size = Some(tree_d.len());
         assert_eq!(
             tree_d_config.size.expect("config size failure"),
             tree_d.len()
@@ -1278,9 +1302,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         // Encode original data into the last layer.
         info!("building tree_r_last");
-        let tree_r_last = measure_op(GenerateTreeRLast, || {
+        let (tree_r_last, data) = measure_op(GenerateTreeRLast, || {
             Self::generate_tree_r_last::<Tree::Arity>(
-                &mut data,
+                data,
                 nodes_count,
                 tree_count,
                 tree_r_last_config.clone(),
@@ -1293,7 +1317,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let tree_r_last_root = tree_r_last.root();
         drop(tree_r_last);
 
-        data.drop_data();
+		drop(data);
+        // data.drop_data();
 
         // comm_r = H(comm_c || comm_r_last)
         let comm_r: <Tree::Hasher as Hasher>::Domain =
