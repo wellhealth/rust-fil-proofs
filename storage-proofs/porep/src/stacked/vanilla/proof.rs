@@ -578,23 +578,20 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 // capture a shadowed version of layer_data.
 
                 //for (layer_index, layer_elements) in
-                layer_data
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(layer_index, layer_elements)| {
-                        let store = labels.labels_for_layer(layer_index + 1);
-                        let start = (i * nodes_count) + node_index;
-                        let end = start + chunked_nodes_count;
-                        let elements: Vec<<Tree::Hasher as Hasher>::Domain> = store
-                            .read_range(std::ops::Range { start, end })
-                            .expect("failed to read store range");
-                        layer_elements.extend(elements.into_iter().map(Into::into));
-                    });
+                for (layer_index, layer_elements) in layer_data.iter_mut().enumerate() {
+                    let store = labels.labels_for_layer(layer_index + 1);
+                    let start = (i * nodes_count) + node_index;
+                    let end = start + chunked_nodes_count;
+                    let elements: Vec<<Tree::Hasher as Hasher>::Domain> = store
+                        .read_range(start..end)
+                        .expect("failed to read store range");
+                    layer_elements.extend(elements.into_iter().map(Into::into));
+                }
 
                 // Copy out all layer data arranged into columns.
                 for layer_index in 0..layers {
-                    for index in 0..chunked_nodes_count {
-                        columns[index][layer_index] = layer_data[layer_index][index];
+                    for (index, column) in columns.iter_mut().enumerate() {
+                        column[layer_index] = layer_data[layer_index][index];
                     }
                 }
 
@@ -1232,6 +1229,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         Ok(tree_r_last.0)
     }
 
+    #[allow(dead_code)]
     fn transform_and_replicate_layers_inner_alt(
         graph: &StackedBucketGraph<Tree::Hasher>,
         layer_challenges: &LayerChallenges,
@@ -1245,8 +1243,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         assert_eq!(data.len(), nodes_count * NODE_SIZE);
         trace!("nodes count {}, data len {}", nodes_count, data.len());
         // Ensure that the node count will work for binary and oct arities.
-        let binary_arity_valid = is_merkle_tree_size_valid(nodes_count, BINARY_ARITY);
-        let other_arity_valid = is_merkle_tree_size_valid(nodes_count, Tree::Arity::to_usize());
 
         let labels = LabelsCache::<Tree>::new(&label_configs)?;
         let layers = layer_challenges.layers();
@@ -1407,7 +1403,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let configs = split_config(tree_c_config.clone(), tree_count)?;
 
         let (c_tx, c_rx) = mpsc::sync_channel(5);
-		let (r_tx, r_rx) = mpsc::sync_channel(5);
+        let (r_tx, r_rx) = mpsc::sync_channel(5);
 
         rayon::scope(|s| {
             s.spawn(|_| {
@@ -1486,13 +1482,13 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .unwrap();
             info!("tree_r_last done");
 
-			r_tx.send((tree_r_last, tree_d_root, data, tree_d_config)).unwrap();
+            r_tx.send((tree_r_last, tree_d_root, data, tree_d_config))
+                .unwrap();
         });
 
         let tree_c = c_rx.recv().unwrap();
-		let (tree_r_last, tree_d_root, data, tree_d_config) = r_rx.recv().unwrap();
-		let tree_c_root = tree_c?.root();
-
+        let (tree_r_last, tree_d_root, data, tree_d_config) = r_rx.recv().unwrap();
+        let tree_c_root = tree_c?.root();
 
         let tree_r_last_root = tree_r_last.root();
         drop(tree_r_last);
@@ -1605,7 +1601,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let labels = LabelsCache::<Tree>::new(&label_configs)?;
         let configs = split_config(tree_c_config.clone(), tree_count)?;
 
-        rayon::scope(|s| {});
         let tree_c_root = match layers {
             2 => {
                 let tree_c = Self::generate_tree_c::<U2, Tree::Arity>(
