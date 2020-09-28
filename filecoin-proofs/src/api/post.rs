@@ -3,6 +3,8 @@ use std::hash::{Hash, Hasher as StdHasher};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
+use std::time::Instant;
+
 use anyhow::{anyhow, ensure, Context, Result};
 use bincode::deserialize;
 use generic_array::typenum::Unsigned;
