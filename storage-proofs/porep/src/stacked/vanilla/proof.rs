@@ -33,7 +33,7 @@ use typenum::{U11, U2, U8};
 use super::{
     challenges::LayerChallenges,
     column::Column,
-    create_label, create_label_exp,
+    create_label,
     graph::StackedBucketGraph,
     hash::hash_single_column,
     params::{
@@ -286,106 +286,37 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         Ok(())
     }
 
-    #[allow(clippy::type_complexity)]
     fn generate_labels(
         graph: &StackedBucketGraph<Tree::Hasher>,
         layer_challenges: &LayerChallenges,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
     ) -> Result<(LabelsCache<Tree>, Labels<Tree>)> {
-        info!("generate labels");
+        let mut parent_cache = graph.parent_cache()?;
 
-        let layers = layer_challenges.layers();
-        // For now, we require it due to changes in encodings structure.
-        let mut labels: Vec<DiskStore<<Tree::Hasher as Hasher>::Domain>> =
-            Vec::with_capacity(layers);
-        let mut label_configs: Vec<StoreConfig> = Vec::with_capacity(layers);
-
-        let layer_size = graph.size() * NODE_SIZE;
-        // NOTE: this means we currently keep 2x sector size around, to improve speed.
-        let mut layer_labels = vec![0u8; layer_size]; // Buffer for labels of the current layer
-        let mut exp_labels = vec![0u8; layer_size]; // Buffer for labels of the previous layer, needed for expander parents
-
-        let use_cache = settings::SETTINGS
+        if settings::SETTINGS
             .lock()
-            .expect("maximize caching settings lock failure")
-            .maximize_caching;
-        let mut cache = if use_cache {
-            Some(graph.parent_cache()?)
+            .expect("use_multicore_sdr settings lock failure")
+            .use_multicore_sdr
+        {
+            info!("multi core replication");
+            create_label::multi::create_labels(
+                graph,
+                &parent_cache,
+                layer_challenges.layers(),
+                replica_id,
+                config,
+            )
         } else {
-            None
-        };
-
-        for layer in 1..=layers {
-            info!("generating layer: {}", layer);
-            if let Some(ref mut cache) = cache {
-                cache.reset()?;
-            }
-
-            if layer == 1 {
-                for node in 0..graph.size() {
-                    create_label(
-                        graph,
-                        cache.as_mut(),
-                        replica_id,
-                        &mut layer_labels,
-                        layer,
-                        node,
-                    )?;
-                }
-            } else {
-                for node in 0..graph.size() {
-                    create_label_exp(
-                        graph,
-                        cache.as_mut(),
-                        replica_id,
-                        &exp_labels,
-                        &mut layer_labels,
-                        layer,
-                        node,
-                    )?;
-                }
-            }
-
-            // Write the result to disk to avoid keeping it in memory all the time.
-            let layer_config =
-                StoreConfig::from_config(&config, CacheKey::label_layer(layer), Some(graph.size()));
-
-            info!("  storing labels on disk");
-            // Construct and persist the layer data.
-            let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
-                DiskStore::new_from_slice_with_config(
-                    graph.size(),
-                    Tree::Arity::to_usize(),
-                    &layer_labels,
-                    layer_config.clone(),
-                )?;
-            info!(
-                "  generated layer {} store with id {}",
-                layer, layer_config.id
-            );
-
-            info!("  setting exp parents");
-            std::mem::swap(&mut layer_labels, &mut exp_labels);
-
-            // Track the layer specific store and StoreConfig for later retrieval.
-            labels.push(layer_store);
-            label_configs.push(layer_config);
+            info!("single core replication");
+            create_label::single::create_labels(
+                graph,
+                &mut parent_cache,
+                layer_challenges.layers(),
+                replica_id,
+                config,
+            )
         }
-
-        assert_eq!(
-            labels.len(),
-            layers,
-            "Invalid amount of layers encoded expected"
-        );
-
-        Ok((
-            LabelsCache::<Tree> { labels },
-            Labels::<Tree> {
-                labels: label_configs,
-                _h: PhantomData,
-            },
-        ))
     }
 
 
@@ -1513,14 +1444,15 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 mod tests {
     use super::*;
 
-    use ff::Field;
-    use paired::bls12_381::Fr;
+    use ff::{Field, PrimeField};
+    use paired::bls12_381::{Fr, FrRepr};
     use rand::{Rng, SeedableRng};
     use rand_xorshift::XorShiftRng;
+    use storage_proofs_core::hasher::poseidon::PoseidonHasher;
     use storage_proofs_core::{
         drgraph::BASE_DEGREE,
         fr32::fr_into_bytes,
-        hasher::{Blake2sHasher, PedersenHasher, PoseidonHasher, Sha256Hasher},
+        hasher::{Blake2sHasher, PedersenHasher, Sha256Hasher},
         merkle::MerkleTreeTrait,
         proof::ProofScheme,
         table_tests,
@@ -1905,5 +1837,87 @@ mod tests {
             Blake2sHasher,
         >::setup(&sp)
         .expect("setup failed");
+    }
+
+    #[test]
+    fn test_generate_labels() {
+        let layers = 11;
+        let nodes_2k = 1 << 11;
+        let nodes_4k = 1 << 12;
+        let replica_id = [9u8; 32];
+        let porep_id = [123; 32];
+        test_generate_labels_aux(
+            nodes_2k,
+            layers,
+            replica_id,
+            porep_id,
+            Fr::from_repr(FrRepr([
+                0x1a4017052cbe1c4a,
+                0x446354db91e96d8e,
+                0xbc864a95454eba0c,
+                0x094cf219d72cad06,
+            ]))
+            .unwrap(),
+        );
+
+        test_generate_labels_aux(
+            nodes_4k,
+            layers,
+            replica_id,
+            porep_id,
+            Fr::from_repr(FrRepr([
+                0x0a6917a59c51198b,
+                0xd2edc96e3717044a,
+                0xf438a1131f907206,
+                0x084f42888ca2342c,
+            ]))
+            .unwrap(),
+        );
+    }
+
+    fn test_generate_labels_aux(
+        sector_size: usize,
+        layers: usize,
+        replica_id: [u8; 32],
+        porep_id: [u8; 32],
+        expected_last_label: Fr,
+    ) {
+        let nodes = sector_size / NODE_SIZE;
+
+        let cache_dir = tempfile::tempdir().expect("tempdir failure");
+        let config = StoreConfig::new(
+            cache_dir.path(),
+            CacheKey::CommDTree.to_string(),
+            nodes.trailing_zeros() as usize,
+        );
+
+        let graph = StackedBucketGraph::<PoseidonHasher>::new(
+            None,
+            nodes,
+            BASE_DEGREE,
+            EXP_DEGREE,
+            porep_id,
+        )
+        .unwrap();
+
+        let unused_layer_challenges = LayerChallenges::new(layers, 0);
+
+        let (labels, _) = StackedDrg::<
+            // Although not generally correct for every size, the hasher shape is not used,
+            // so for purposes of testing label creation, it is safe to supply a dummy.
+            DiskTree<PoseidonHasher, typenum::U8, typenum::U8, typenum::U2>,
+            Sha256Hasher,
+        >::generate_labels(
+            &graph,
+            &unused_layer_challenges,
+            &<PoseidonHasher as Hasher>::Domain::try_from_bytes(&replica_id).unwrap(),
+            config,
+        )
+        .unwrap();
+
+        let final_labels = labels.labels_for_last_layer().unwrap();
+        let last_label = final_labels.read_at(nodes - 1).unwrap();
+
+        assert_eq!(expected_last_label.into_repr(), last_label.0);
     }
 }

@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use anyhow::ensure;
 use byteorder::{ByteOrder, LittleEndian};
 use generic_array::typenum::Unsigned;
-use log::trace;
+use log::{error, trace};
 use paired::bls12_381::Fr;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -109,7 +109,7 @@ pub struct SectorProof<Proof: MerkleProofTrait> {
         serialize = "MerkleProof<Proof::Hasher, Proof::Arity, Proof::SubTreeArity, Proof::TopTreeArity>: Serialize",
         deserialize = "MerkleProof<Proof::Hasher, Proof::Arity, Proof::SubTreeArity, Proof::TopTreeArity>: serde::de::DeserializeOwned"
     ))]
-    inclusion_proofs:
+    pub inclusion_proofs:
         Vec<MerkleProof<Proof::Hasher, Proof::Arity, Proof::SubTreeArity, Proof::TopTreeArity>>,
     pub comm_c: <Proof::Hasher as Hasher>::Domain,
     pub comm_r_last: <Proof::Hasher as Hasher>::Domain,
@@ -147,6 +147,13 @@ impl<P: MerkleProofTrait> SectorProof<P> {
             .iter()
             .map(MerkleProofTrait::as_options)
             .collect()
+    }
+
+    // Returns a read-only reference.
+    pub fn inclusion_proofs(
+        &self,
+    ) -> &Vec<MerkleProof<P::Hasher, P::Arity, P::SubTreeArity, P::TopTreeArity>> {
+        &self.inclusion_proofs
     }
 }
 
@@ -195,7 +202,7 @@ pub fn generate_leaf_challenges<T: Domain>(
     randomness: T,
     sector_id: u64,
     challenge_count: usize,
-) -> Result<Vec<u64>> {
+) -> Vec<u64> {
     let mut challenges = Vec::with_capacity(challenge_count);
 
     for leaf_challenge_index in 0..challenge_count {
@@ -204,11 +211,11 @@ pub fn generate_leaf_challenges<T: Domain>(
             randomness,
             sector_id,
             leaf_challenge_index as u64,
-        )?;
+        );
         challenges.push(challenge)
     }
 
-    Ok(challenges)
+    challenges
 }
 
 /// Generates challenge, such that the range fits into the sector.
@@ -217,7 +224,7 @@ pub fn generate_leaf_challenge<T: Domain>(
     randomness: T,
     sector_id: u64,
     leaf_challenge_index: u64,
-) -> Result<u64> {
+) -> u64 {
     let mut hasher = Sha256::new();
     hasher.update(AsRef::<[u8]>::as_ref(&randomness));
     hasher.update(&sector_id.to_le_bytes()[..]);
@@ -226,14 +233,62 @@ pub fn generate_leaf_challenge<T: Domain>(
 
     let leaf_challenge = LittleEndian::read_u64(&hash[..8]);
 
-    let challenged_range_index = leaf_challenge % (pub_params.sector_size / NODE_SIZE as u64);
-
-    Ok(challenged_range_index)
+    leaf_challenge % (pub_params.sector_size / NODE_SIZE as u64)
 }
 
 enum ProofOrFault<T> {
     Proof(T),
     Fault(SectorId),
+}
+
+// Generates a single vanilla proof, given the private inputs and sector challenges.
+pub fn vanilla_proof<Tree: MerkleTreeTrait>(
+    sector_id: SectorId,
+    priv_inputs: &PrivateInputs<Tree>,
+    challenges: &[u64],
+) -> Result<Proof<Tree::Proof>> {
+    ensure!(
+        priv_inputs.sectors.len() == 1,
+        "vanilla_proof called with multiple sector proofs"
+    );
+
+    let priv_sector = &priv_inputs.sectors[0];
+    let comm_c = priv_sector.comm_c;
+    let comm_r_last = priv_sector.comm_r_last;
+    let tree = priv_sector.tree;
+
+    let tree_leafs = tree.leafs();
+    let rows_to_discard = default_rows_to_discard(tree_leafs, Tree::Arity::to_usize());
+
+    trace!(
+        "Generating proof for tree leafs {} and arity {}",
+        tree_leafs,
+        Tree::Arity::to_usize(),
+    );
+
+    let inclusion_proofs = (0..challenges.len())
+        .into_par_iter()
+        .map(|challenged_leaf_index| {
+            let challenged_leaf = challenges[challenged_leaf_index];
+            let proof = tree.gen_cached_proof(challenged_leaf as usize, Some(rows_to_discard))?;
+
+            ensure!(
+                proof.validate(challenged_leaf as usize) && proof.root() == priv_sector.comm_r_last,
+                "Generated vanilla proof for sector {} is invalid",
+                sector_id
+            );
+
+            Ok(proof)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(Proof {
+        sectors: vec![SectorProof {
+            inclusion_proofs,
+            comm_c,
+            comm_r_last,
+        }],
+    })
 }
 
 impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> {
@@ -340,7 +395,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                             pub_inputs.randomness,
                             sector_id.into(),
                             challenge_index,
-                        )?;
+                        );
 
                         let proof = tree.gen_cached_proof(
                             challenged_leaf_start as usize,
@@ -366,6 +421,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                             inclusion_proofs.push(proof);
                         }
                         ProofOrFault::Fault(sector_id) => {
+                            error!("faulty sector: {:?}", sector_id);
                             faulty_sectors.insert(sector_id);
                         }
                     }
@@ -450,12 +506,13 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                     &comm_r_last,
                 )) != AsRef::<[u8]>::as_ref(comm_r)
                 {
+                    error!("comm_c != comm_r_last: {:?}", sector_id);
                     return Ok(false);
                 }
 
                 ensure!(
                     challenge_count == inclusion_proofs.len(),
-                    "unexpected umber of inclusion proofs: {} != {}",
+                    "unexpected number of inclusion proofs: {} != {}",
                     challenge_count,
                     inclusion_proofs.len()
                 );
@@ -468,10 +525,11 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                         pub_inputs.randomness,
                         sector_id.into(),
                         challenge_index,
-                    )?;
+                    );
 
                     // validate all comm_r_lasts match
                     if inclusion_proof.root() != comm_r_last {
+                        error!("inclusion proof root != comm_r_last: {:?}", sector_id);
                         return Ok(false);
                     }
 
@@ -480,10 +538,12 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                         inclusion_proof.expected_len(pub_params.sector_size as usize / NODE_SIZE);
 
                     if expected_path_length != inclusion_proof.path().len() {
+                        error!("wrong path length: {:?}", sector_id);
                         return Ok(false);
                     }
 
                     if !inclusion_proof.validate(challenged_leaf_start as usize) {
+                        error!("invalid inclusion proof: {:?}", sector_id);
                         return Ok(false);
                     }
                 }
