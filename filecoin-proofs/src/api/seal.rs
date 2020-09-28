@@ -972,7 +972,7 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         let comm_d = commitment_from_fr(comm_d_root);
 
         //利用unsealed文件，生成unsealed.index文件
-        let filename = format!("tree-{}.index",sector_id);
+        let filename = format!("tree.index");
         let new_path = in_path.as_ref().with_file_name(filename);
         println!("newPath is {:?}", new_path);
         //创建文件并保存中间结果
