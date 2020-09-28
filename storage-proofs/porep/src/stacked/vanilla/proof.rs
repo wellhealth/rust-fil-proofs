@@ -643,7 +643,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
 
             let data = files
-                .iter_mut()
+                .par_iter_mut()
                 .map(|x| {
                     let mut buf = vec![Fr::zero(); chunked_nodes_count];
                     {
