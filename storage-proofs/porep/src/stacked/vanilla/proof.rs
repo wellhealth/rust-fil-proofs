@@ -1,3 +1,4 @@
+use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::marker::PhantomData;
@@ -12,7 +13,7 @@ use merkletree::merkle::{
     is_merkle_tree_size_valid,
 };
 use merkletree::store::{DiskStore, StoreConfig};
-use mpsc::{Receiver, SyncSender};
+use mpsc::{Receiver, Sender, SyncSender};
 use paired::bls12_381::Fr;
 use rayon::prelude::*;
 use storage_proofs_core::{
@@ -55,6 +56,19 @@ use crate::encode::{decode, encode};
 use crate::PoRep;
 
 pub const TOTAL_PARENTS: usize = 37;
+
+// pub fn join3<O1, O2, O3, R1, R2, R3>(oper_1: O1, oper_2: O2, oper_3: O3) -> (R1, R2, R3)
+// where
+//     O1: FnOnce() -> R1 + Send,
+//     O2: FnOnce() -> R2 + Send,
+//     O3: FnOnce() -> R3 + Send,
+//     R1: Send,
+//     R2: Send,
+//     R3: Send,
+// {
+//     let (r1, (r2, r3)) = rayon::join(oper_1, || (oper_2(), oper_3()));
+//     (r1, r2, r3)
+// }
 
 #[derive(Debug)]
 pub struct StackedDrg<'a, Tree: 'a + MerkleTreeTrait, G: 'a + Hasher> {
@@ -542,6 +556,119 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         }
     }
 
+    fn fast_create_batch<ColumnArity>(
+        nodes_count: usize,
+        config_counts: usize,
+        batch_size: usize,
+        mut builder_tx: SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
+    ) where
+        ColumnArity: 'static + PoseidonArity,
+    {
+        let mut files = (0..11)
+            .map(|x| x + 1)
+            .map(|x| format!("p2/cache/sc-02-data-layer-{}.dat", x))
+            .inspect(|s|println!("file name: {}", s))
+            .map(|x| File::open(x).unwrap())
+            .collect::<Vec<_>>();
+
+        for _ in 0..config_counts {
+            Self::fast_create_batch_for_config(
+                nodes_count,
+                batch_size,
+                &mut builder_tx,
+                &mut files,
+            );
+        }
+    }
+
+    fn fast_create_batch_for_config<ColumnArity>(
+        nodes_count: usize,
+        batch_size: usize,
+        builder_tx: &mut SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
+        files: &mut [File],
+    ) where
+        ColumnArity: 'static + PoseidonArity,
+    {
+        let (tx, rx) = mpsc::channel();
+
+        rayon::join(
+            || Self::read_column_batch_from_file(files, nodes_count, batch_size, tx),
+            || {
+                Self::create_column_in_memory::<ColumnArity>(
+                    rx,
+                    nodes_count,
+                    batch_size,
+                    builder_tx,
+                )
+            },
+        );
+
+        // for node_index in (0..nodes_count).step_by(batch_size) {
+        //     let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
+        //     let mut layer_data: Vec<Vec<Fr>> =
+        //         vec![Vec::with_capacity(chunked_nodes_count); layers];
+        // }
+    }
+
+    fn create_column_in_memory<ColumnArity>(
+        rx: Receiver<Vec<Vec<Fr>>>,
+        nodes_count: usize,
+        batch_size: usize,
+        builder_tx: &mut SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
+    ) where
+        ColumnArity: 'static + PoseidonArity,
+    {
+        let layers = ColumnArity::to_usize();
+        for node_index in (0..nodes_count).step_by(batch_size) {
+            let data = rx.recv().unwrap();
+            let mut columns: Vec<GenericArray<Fr, ColumnArity>> = vec![
+                    GenericArray::<Fr, ColumnArity>::generate(|_i: usize| Fr::zero());
+                    data[0].len()
+                ];
+
+            let is_final = node_index + batch_size >= nodes_count;
+            for layer_index in 0..layers {
+                for (index, column) in columns.iter_mut().enumerate() {
+                    column[layer_index] = data[layer_index][index];
+                }
+            }
+
+            builder_tx.send((columns, is_final)).unwrap();
+        }
+    }
+
+    fn read_column_batch_from_file(
+        files: &mut [File],
+        nodes_count: usize,
+        batch_size: usize,
+        tx: Sender<Vec<Vec<Fr>>>,
+    ) {
+        use std::io::Read;
+
+        for node_index in (0..nodes_count).step_by(batch_size) {
+            let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
+            let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
+
+            let data = files
+                .iter_mut()
+                .map(|x| {
+                    let mut buf = vec![Fr::zero(); chunked_nodes_count];
+                    {
+                        let buf = unsafe {
+                            std::slice::from_raw_parts_mut(
+                                buf.as_mut_ptr() as *mut u8,
+                                chunk_byte_count,
+                            )
+                        };
+                        x.read_exact(buf).unwrap();
+                    }
+                    buf
+                })
+                .collect::<Vec<Vec<Fr>>>();
+
+            tx.send(data).unwrap();
+        }
+    }
     fn create_batch_gpu<ColumnArity>(
         layers: usize,
         nodes_count: usize,
@@ -553,64 +680,70 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) where
         ColumnArity: 'static + PoseidonArity,
     {
-        let config_count = configs.len();
-        for i in 0..config_count {
-            let mut node_index = 0;
-            let builder_tx = builder_tx.clone();
-            while node_index != nodes_count {
-                let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
-                trace!(
-                    "processing config {}/{} with column nodes {}",
-                    i + 1,
-                    tree_count,
-                    chunked_nodes_count,
-                );
-                let mut columns: Vec<GenericArray<Fr, ColumnArity>> =
-                    vec![
-                        GenericArray::<Fr, ColumnArity>::generate(|_i: usize| Fr::zero());
-                        chunked_nodes_count
-                    ];
-
-                // Allocate layer data array and insert a placeholder for each layer.
-                let mut layer_data: Vec<Vec<Fr>> =
-                    vec![Vec::with_capacity(chunked_nodes_count); layers];
-
-                // capture a shadowed version of layer_data.
-
-                //for (layer_index, layer_elements) in
-                for (layer_index, layer_elements) in layer_data.iter_mut().enumerate() {
-                    let store = labels.labels_for_layer(layer_index + 1);
-                    let start = (i * nodes_count) + node_index;
-                    let end = start + chunked_nodes_count;
-                    let elements: Vec<<Tree::Hasher as Hasher>::Domain> = store
-                        .read_range(start..end)
-                        .expect("failed to read store range");
-                    layer_elements.extend(elements.into_iter().map(Into::into));
-                }
-
-                // Copy out all layer data arranged into columns.
-                for layer_index in 0..layers {
-                    for (index, column) in columns.iter_mut().enumerate() {
-                        column[layer_index] = layer_data[layer_index][index];
-                    }
-                }
-
-                drop(layer_data);
-
-                node_index += chunked_nodes_count;
-                trace!(
-                    "node index {}/{}/{}",
-                    node_index,
-                    chunked_nodes_count,
-                    nodes_count,
-                );
-
-                let is_final = node_index == nodes_count;
-                builder_tx
-                    .send((columns, is_final))
-                    .expect("failed to send columns");
-            }
-        }
+        // nodes_count: usize,
+        // config_counts: usize,
+        // batch_size: usize,
+        // mut builder_tx: SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
+        Self::fast_create_batch::<ColumnArity>(nodes_count, configs.len(), batch_size, builder_tx);
+        return;
+        //         let config_count = configs.len();
+        //         for i in 0..config_count {
+        //             let mut node_index = 0;
+        //             let builder_tx = builder_tx.clone();
+        //             while node_index != nodes_count {
+        //                 let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
+        //                 trace!(
+        //                     "processing config {}/{} with column nodes {}",
+        //                     i + 1,
+        //                     tree_count,
+        //                     chunked_nodes_count,
+        //                 );
+        //                 let mut columns: Vec<GenericArray<Fr, ColumnArity>> =
+        //                     vec![
+        //                         GenericArray::<Fr, ColumnArity>::generate(|_i: usize| Fr::zero());
+        //                         chunked_nodes_count
+        //                     ];
+        //
+        //                 // Allocate layer data array and insert a placeholder for each layer.
+        //                 let mut layer_data: Vec<Vec<Fr>> =
+        //                     vec![Vec::with_capacity(chunked_nodes_count); layers];
+        //
+        //                 // capture a shadowed version of layer_data.
+        //
+        //                 //for (layer_index, layer_elements) in
+        //                 for (layer_index, layer_elements) in layer_data.iter_mut().enumerate() {
+        //                     let store = labels.labels_for_layer(layer_index + 1);
+        //                     let start = (i * nodes_count) + node_index;
+        //                     let end = start + chunked_nodes_count;
+        //                     let elements: Vec<<Tree::Hasher as Hasher>::Domain> = store
+        //                         .read_range(start..end)
+        //                         .expect("failed to read store range");
+        //                     layer_elements.extend(elements.into_iter().map(Into::into));
+        //                 }
+        //
+        // Copy out all layer data arranged into columns.
+        //                 for layer_index in 0..layers {
+        //                     for (index, column) in columns.iter_mut().enumerate() {
+        //                         column[layer_index] = layer_data[layer_index][index];
+        //                     }
+        //                 }
+        //
+        //                 drop(layer_data);
+        //
+        //                 node_index += chunked_nodes_count;
+        //                 trace!(
+        //                     "node index {}/{}/{}",
+        //                     node_index,
+        //                     chunked_nodes_count,
+        //                     nodes_count,
+        //                 );
+        //
+        //                 let is_final = node_index == nodes_count;
+        //                 builder_tx
+        //                     .send((columns, is_final))
+        //                     .expect("failed to send columns");
+        //             }
+        //         }
     }
 
     fn receive_and_generate_tree_c<ColumnArity, TreeArity>(
@@ -638,7 +771,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         // Loop until all trees for all configs have been built.
         while i < configs.len() {
+			let a = std::time::Instant::now();
             let (columns, is_final) = builder_rx.recv().expect("failed to recv columns");
+			let b = std::time::Instant::now();
+			info!("recv time: {:?}", b - a);
 
             // Just add non-final column batches.
             if !is_final {
