@@ -579,3 +579,108 @@ mod tests {
         assert_eq!(expected_last_label.into_repr(), last_label.0);
     }
 }
+
+
+
+#[allow(clippy::type_complexity)]
+pub fn my_create_labels<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]>>(
+    graph: &StackedBucketGraph<Tree::Hasher>,
+    parents_cache: &ParentCache,
+    layers: usize,
+    replica_id: T,
+    config: StoreConfig,
+) -> Result<(LabelsCache<Tree>, Labels<Tree>)> {
+    info!("create labels");
+
+    // For now, we require it due to changes in encodings structure.
+    let mut labels: Vec<DiskStore<<Tree::Hasher as Hasher>::Domain>> = Vec::with_capacity(layers);
+    let mut label_configs: Vec<StoreConfig> = Vec::with_capacity(layers);
+
+    let sector_size = graph.size() * NODE_SIZE;
+    let node_count = graph.size() as u64;
+    let cache_window_nodes = (settings::SETTINGS
+        .lock()
+        .expect("sdr_parents_cache_window_nodes settings lock failure")
+        .sdr_parents_cache_size
+        / 2) as usize;
+
+    let default_cache_size = DEGREE * 4 * cache_window_nodes;
+
+    // NOTE: this means we currently keep 2x sector size around, to improve speed
+    let (parents_cache, mut layer_labels, mut exp_labels) = setup_create_label_memory(
+        sector_size,
+        DEGREE,
+        Some(default_cache_size as usize),
+        &parents_cache.path,
+    )?;
+
+    for layer in 1..=layers {
+        info!("Layer {}", layer);
+
+        // Cache reset happens in two parts.
+        // The second part (the finish) happens before each layer but the first.
+        if layers != 1 {
+            parents_cache.finish_reset()?;
+        }
+        create_layer_labels(
+            &parents_cache,
+            &replica_id.as_ref(),
+            &mut layer_labels,
+            if layer == 1 {
+                None
+            } else {
+                Some(&mut exp_labels)
+            },
+            node_count,
+            layer as u32,
+        )?;
+
+        // Cache reset happens in two parts.
+        // The first part (the start) happens after each layer but the last.
+        if layer != layers {
+            parents_cache.start_reset()?;
+        }
+
+        {
+            let layer_config =
+                StoreConfig::from_config(&config, CacheKey::label_layer(layer), Some(graph.size()));
+
+            info!("  storing labels on disk");
+            // Construct and persist the layer data.
+            let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+                DiskStore::new_from_slice_with_config(
+                    graph.size(),
+                    Tree::Arity::to_usize(),
+                    &layer_labels,
+                    layer_config.clone(),
+                )?;
+            info!(
+                "  generated layer {} store with id {}",
+                layer, layer_config.id
+            );
+
+            drop(layer_store);
+
+            std::mem::swap(&mut layer_labels, &mut exp_labels);
+
+            let tmp_layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+                DiskStore::new(0)?;
+            // Track the layer specific store and StoreConfig for later retrieval.
+            labels.push(tmp_layer_store);
+            label_configs.push(layer_config);
+        }
+    }
+    assert_eq!(
+        labels.len(),
+        layers,
+        "Invalid amount of layers encoded expected"
+    );
+
+    Ok((
+        LabelsCache::<Tree> { labels },
+        Labels::<Tree> {
+            labels: label_configs,
+            _h: PhantomData,
+        },
+    ))
+}

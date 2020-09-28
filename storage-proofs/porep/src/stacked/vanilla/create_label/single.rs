@@ -15,6 +15,7 @@ use storage_proofs_core::{
 
 use super::super::{cache::ParentCache, Labels, LabelsCache, StackedBucketGraph};
 
+
 #[allow(clippy::type_complexity)]
 pub fn create_labels<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]>>(
     graph: &StackedBucketGraph<Tree::Hasher>,
@@ -177,4 +178,96 @@ pub fn create_label_exp<H: Hasher, T: AsRef<[u8]>>(
     layer_labels[end - 1] &= 0b0011_1111;
 
     Ok(())
+}
+
+#[allow(clippy::type_complexity)]
+pub fn my_create_labels<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]>>(
+    graph: &StackedBucketGraph<Tree::Hasher>,
+    parents_cache: &mut ParentCache,
+    layers: usize,
+    replica_id: T,
+    config: StoreConfig,
+) -> Result<(LabelsCache<Tree>, Labels<Tree>)> {
+    info!("generate my_create_labels");
+
+    // For now, we require it due to changes in encodings structure.
+    let mut labels: Vec<DiskStore<<Tree::Hasher as Hasher>::Domain>> = Vec::with_capacity(layers);
+    let mut label_configs: Vec<StoreConfig> = Vec::with_capacity(layers);
+
+    let layer_size = graph.size() * NODE_SIZE;
+    // NOTE: this means we currently keep 2x sector size around, to improve speed.
+    let mut layer_labels = vec![0u8; layer_size]; // Buffer for labels of the current layer
+    let mut exp_labels = vec![0u8; layer_size]; // Buffer for labels of the previous layer, needed for expander parents
+
+    for layer in 1..=layers {
+        info!("generating layer: {}", layer);
+        parents_cache.reset()?;
+
+        if layer == 1 {
+            for node in 0..graph.size() {
+                create_label(
+                    graph,
+                    Some(parents_cache),
+                    &replica_id,
+                    &mut layer_labels,
+                    layer,
+                    node,
+                )?;
+            }
+        } else {
+            for node in 0..graph.size() {
+                create_label_exp(
+                    graph,
+                    Some(parents_cache),
+                    &replica_id,
+                    &exp_labels,
+                    &mut layer_labels,
+                    layer,
+                    node,
+                )?;
+            }
+        }
+
+        // Write the result to disk to avoid keeping it in memory all the time.
+        let layer_config =
+            StoreConfig::from_config(&config, CacheKey::label_layer(layer), Some(graph.size()));
+
+        info!("  storing labels on disk");
+        // Construct and persist the layer data.
+        let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+            DiskStore::new_from_slice_with_config(
+                graph.size(),
+                Tree::Arity::to_usize(),
+                &layer_labels,
+                layer_config.clone(),
+            )?;
+        info!(
+            "  generated layer {} store with id {}",
+            layer, layer_config.id
+        );
+        drop(layer_store);
+        info!("  setting exp parents");
+        std::mem::swap(&mut layer_labels, &mut exp_labels);
+
+        let tmp_layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
+            DiskStore::new(0)?;
+        // Track the layer specific store and StoreConfig for later retrieval.
+        labels.push(tmp_layer_store);
+        label_configs.push(layer_config);
+
+    }
+
+    assert_eq!(
+        labels.len(),
+        layers,
+        "Invalid amount of layers encoded expected"
+    );
+
+    Ok((
+        LabelsCache::<Tree> { labels },
+        Labels::<Tree> {
+            labels: label_configs,
+            _h: PhantomData,
+        },
+    ))
 }
