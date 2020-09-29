@@ -876,8 +876,7 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         S: AsRef<Path>,
         T: AsRef<Path>,
 {
-    info!("seal_pre_commit_phase1_tree:start");
-
+    info!("seal_pre_commit_phase1_tree:start: {:?}", sector_id);
     // Sanity check all input path types.
     ensure!(
         metadata(in_path.as_ref())?.is_file(),
@@ -973,7 +972,7 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         let comm_d = commitment_from_fr(comm_d_root);
 
         //利用unsealed文件，生成unsealed.index文件
-        let filename = format!("tree-{}.index",sector_id);
+        let filename = format!("tree.index");
         let new_path = in_path.as_ref().with_file_name(filename);
         println!("newPath is {:?}", new_path);
         //创建文件并保存中间结果
@@ -1030,8 +1029,8 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         config,
         comm_d,
     };
+    info!("seal_pre_commit_phase1_tree:finish: {:?}", sector_id);
 
-    info!("seal_pre_commit_phase1:finish");
     Ok(out)
 }
 
@@ -1050,8 +1049,7 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         S: AsRef<Path>,
         T: AsRef<Path>,
 {
-    info!("seal_pre_commit_phase1_layer:start(rust)");
-
+    info!("seal_pre_commit_phase1_layer:start: {:?}", sector_id);
     // Sanity check all input path types.
 /*    ensure!(
         metadata(in_path.as_ref())?.is_file(),
@@ -1095,7 +1093,7 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
     //从文件中读取treed生成的数据用于layer计算
     //config.size = Some(127);
     //利用unsealed文件，生成unsealed.index文件
-    let filename = format!("tree-{}.index",sector_id);
+    let filename = format!("tree.index");
     let new_path = in_path.as_ref().with_file_name(filename);
     println!("newPath is {:?}", new_path);
 
@@ -1140,8 +1138,7 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         config,
         comm_d,
     };
-
-    info!("seal_pre_commit_phase1_layer:finish(rust)");
+    info!("seal_pre_commit_phase1_layer:finish: {:?}", sector_id);
     Ok(out)
 }
 
