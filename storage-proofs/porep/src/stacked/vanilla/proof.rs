@@ -417,7 +417,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let mut files = paths
             .iter()
             .map(|x| StoreConfig::data_path(&x.0, &x.1))
-            .inspect(|x| println!("{:?}", x))
             .map(|x| File::open(x).context("cannot open layer file for tree-c"))
             .collect::<Result<Vec<_>>>()
             .unwrap();
