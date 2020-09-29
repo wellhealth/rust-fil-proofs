@@ -1039,6 +1039,7 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
     in_path: S,
+	_out_path: T,
     prover_id: ProverId,
     sector_id: SectorId,
     ticket: Ticket,
