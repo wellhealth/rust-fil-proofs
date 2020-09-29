@@ -16,6 +16,7 @@ use merkletree::store::{DiskStore, StoreConfig};
 use mpsc::{Receiver, Sender, SyncSender};
 use paired::bls12_381::Fr;
 use rayon::prelude::*;
+use anyhow::Context;
 use storage_proofs_core::{
     cache_key::CacheKey,
     data::Data,
@@ -523,52 +524,40 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     }
 
     fn generate_tree_c<ColumnArity, TreeArity>(
-        layers: usize,
         nodes_count: usize,
-        tree_count: usize,
         configs: Vec<StoreConfig>,
-        labels: &LabelsCache<Tree>,
+        labels: &[(PathBuf, String)],
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
     {
-        if settings::SETTINGS
-            .lock()
-            .expect("use_gpu_column_builder settings lock failure")
-            .use_gpu_column_builder
-        {
-            Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(
-                layers,
-                nodes_count,
-                tree_count,
-                configs,
-                labels,
-            )
-        } else {
-            Self::generate_tree_c_cpu::<ColumnArity, TreeArity>(
-                layers,
-                nodes_count,
-                tree_count,
-                configs,
-                labels,
-            )
-        }
+        Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(
+            nodes_count,
+            configs,
+            labels,
+        )
     }
 
     fn fast_create_batch<ColumnArity>(
         nodes_count: usize,
         config_counts: usize,
         batch_size: usize,
+        paths: &[(PathBuf, String)],
         mut builder_tx: SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
     ) where
         ColumnArity: 'static + PoseidonArity,
     {
-        let mut files = (0..11)
-            .map(|x| x + 1)
-            .map(|x| format!("p2/cache/sc-02-data-layer-{}.dat", x))
-            .map(|x| File::open(x).unwrap())
-            .collect::<Vec<_>>();
+        // Path::new(&path).join(format!(
+        //     "sc-{:0>2}-data-{}.dat",
+        //     DEFAULT_STORE_CONFIG_DATA_VERSION, id
+        // ))
+        let mut files = paths
+            .iter()
+            .map(|x| StoreConfig::data_path(&x.0, &x.1))
+            .inspect(|x|println!("{:?}", x))
+            .map(|x| File::open(x).context("cannot open layer file for tree-c"))
+            .collect::<Result<Vec<_>>>().unwrap();
 
         for _ in 0..config_counts {
             Self::fast_create_batch_for_config(
@@ -663,23 +652,25 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         }
     }
     fn create_batch_gpu<ColumnArity>(
-        layers: usize,
         nodes_count: usize,
-        tree_count: usize,
         configs: &[StoreConfig],
-        labels: &LabelsCache<Tree>,
+        paths: &[(PathBuf, String)],
         builder_tx: SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
         batch_size: usize,
     ) where
         ColumnArity: 'static + PoseidonArity,
     {
-        Self::fast_create_batch::<ColumnArity>(nodes_count, configs.len(), batch_size, builder_tx);
-        return;
+        Self::fast_create_batch::<ColumnArity>(
+            nodes_count,
+            configs.len(),
+            batch_size,
+            paths,
+            builder_tx,
+        );
     }
 
     fn receive_and_generate_tree_c<ColumnArity, TreeArity>(
         nodes_count: usize,
-        tree_count: usize,
         configs: &[StoreConfig],
         builder_rx: Receiver<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
         max_gpu_tree_batch_size: usize,
@@ -700,11 +691,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let mut i = 0;
         let mut config = &configs[i];
 
-		let (tx, rx) = mpsc::sync_channel(0);
+        let (tx, rx) = mpsc::sync_channel(0);
         // Loop until all trees for all configs have been built.
         while i < configs.len() {
             let (columns, is_final) = builder_rx.recv().expect("failed to recv columns");
-			info!("column received");
+            info!("column received");
 
             // Just add non-final column batches.
             if !is_final {
@@ -720,13 +711,12 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 .expect("failed to add final columns");
 
             assert_eq!(base_data.len(), nodes_count);
-			info!("persist tree-c: {}/{}", i + 1, configs.len());
-            std::thread::spawn({
-				let config = config.clone();
-				let config_len = configs.len();
-				let tx = tx.clone();
+            info!("persist tree-c: {}/{}", i + 1, configs.len());
+            rayon::spawn({
+                let config = config.clone();
+                let config_len = configs.len();
+                let tx = tx.clone();
                 move || {
-					
                     let tree_len = base_data.len() + tree_data.len();
                     assert_eq!(tree_len, config.size.expect("config size failure"));
 
@@ -764,10 +754,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     let base_offset = base_data.len();
                     flatten_and_write_store(&tree_data, base_offset)
                         .expect("failed to flatten and write store");
-					
-					if i + 1 == config_len {
-						tx.send(()).unwrap();
-					}
+
+                    if i + 1 == config_len {
+                        tx.send(()).unwrap();
+                    }
                 }
             });
 
@@ -779,15 +769,12 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             config = &configs[i];
         }
 
-		rx.recv().unwrap();
-
+        rx.recv().unwrap();
     }
     fn generate_tree_c_gpu_impl<ColumnArity, TreeArity>(
-        layers: usize,
         nodes_count: usize,
-        tree_count: usize,
         configs: Vec<StoreConfig>,
-        labels: &LabelsCache<Tree>,
+        labels: &[(PathBuf, String)],
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
@@ -824,9 +811,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         rayon::join(
             move || {
                 Self::create_batch_gpu::<ColumnArity>(
-                    layers,
                     nodes_count,
-                    tree_count,
                     configs,
                     labels,
                     builder_tx,
@@ -836,7 +821,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             move || {
                 Self::receive_and_generate_tree_c::<ColumnArity, TreeArity>(
                     nodes_count,
-                    tree_count,
                     configs,
                     builder_rx,
                     max_gpu_tree_batch_size,
@@ -852,11 +836,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
     #[allow(clippy::needless_range_loop)]
     fn generate_tree_c_gpu<ColumnArity, TreeArity>(
-        layers: usize,
         nodes_count: usize,
-        tree_count: usize,
         configs: Vec<StoreConfig>,
-        labels: &LabelsCache<Tree>,
+        labels: &[(PathBuf, String)],
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
@@ -866,15 +848,14 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         // Build the tree for CommC
         measure_op(GenerateTreeC, || {
             Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity>(
-                layers,
                 nodes_count,
-                tree_count,
                 configs,
                 labels,
             )
         })
     }
 
+	#[allow(dead_code)]
     fn generate_tree_c_cpu<ColumnArity, TreeArity>(
         layers: usize,
         nodes_count: usize,
@@ -1198,44 +1179,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     }
 
     #[allow(dead_code)]
-    fn replicate_inner_tree_c(
-        tree_c_config: &StoreConfig,
-        nodes_count: usize,
-        layers: usize,
-        labels: &LabelsCache<Tree>,
-    ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>> {
-        let tree_count = get_base_tree_count::<Tree>();
-        let configs = split_config(tree_c_config.clone(), tree_count)?;
-
-        let tree_c = match layers {
-            2 => Self::generate_tree_c::<U2, Tree::Arity>(
-                layers,
-                nodes_count,
-                tree_count,
-                configs,
-                labels,
-            )?,
-            8 => Self::generate_tree_c::<U8, Tree::Arity>(
-                layers,
-                nodes_count,
-                tree_count,
-                configs,
-                labels,
-            )?,
-            11 => Self::generate_tree_c::<U11, Tree::Arity>(
-                layers,
-                nodes_count,
-                tree_count,
-                configs,
-                labels,
-            )?,
-            _ => panic!("Unsupported column arity"),
-        };
-
-        Ok(tree_c)
-    }
-
-    #[allow(dead_code)]
     fn replicate_inner_tree_d<'b>(
         tree_d_config: &StoreConfig,
         data_tree: Option<BinaryMerkleTree<G>>,
@@ -1280,97 +1223,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         })?;
 
         Ok(tree_r_last.0)
-    }
-
-    #[allow(dead_code)]
-    fn transform_and_replicate_layers_inner_alt(
-        graph: &StackedBucketGraph<Tree::Hasher>,
-        layer_challenges: &LayerChallenges,
-        data: Data,
-        data_tree: Option<BinaryMerkleTree<G>>,
-        config: StoreConfig,
-        replica_path: PathBuf,
-        label_configs: Labels<Tree>,
-    ) -> Result<TransformedLayers<Tree, G>> {
-        let nodes_count = graph.size();
-        assert_eq!(data.len(), nodes_count * NODE_SIZE);
-        trace!("nodes count {}, data len {}", nodes_count, data.len());
-        // Ensure that the node count will work for binary and oct arities.
-
-        let labels = LabelsCache::<Tree>::new(&label_configs)?;
-        let layers = layer_challenges.layers();
-        let tree_c_config = {
-            let mut cfg = StoreConfig::from_config(
-                &config,
-                CacheKey::CommCTree.to_string(),
-                Some(get_merkle_tree_len(nodes_count, Tree::Arity::to_usize())?),
-            );
-            cfg.rows_to_discard = default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
-            cfg
-        };
-
-        let tree_d_config = {
-            let mut cfg = StoreConfig::from_config(
-                &config,
-                CacheKey::CommDTree.to_string(),
-                Some(get_merkle_tree_len(nodes_count, BINARY_ARITY)?),
-            );
-            cfg.rows_to_discard = default_rows_to_discard(nodes_count, BINARY_ARITY);
-            cfg
-        };
-
-        let tree_r_last_config = {
-            let mut cfg = StoreConfig::from_config(
-                &config,
-                CacheKey::CommRLastTree.to_string(),
-                Some(get_merkle_tree_len(nodes_count, Tree::Arity::to_usize())?),
-            );
-            cfg.rows_to_discard = default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
-            cfg
-        };
-
-        let (tree_c, packed) = rayon::join(
-            || Self::replicate_inner_tree_c(&tree_c_config, nodes_count, layers, &labels),
-            || -> Result<_> {
-                let (tree_d, data) = Self::replicate_inner_tree_d(&tree_d_config, data_tree, data)?;
-
-                let tree_r = Self::replicate_inner_tree_r(
-                    &tree_r_last_config,
-                    data,
-                    nodes_count,
-                    get_base_tree_count::<Tree>(),
-                    replica_path,
-                    &labels,
-                )?;
-                Ok((tree_d, tree_r))
-            },
-        );
-
-        let tree_c_root = tree_c?.root();
-        let (tree_d, tree_r) = packed?;
-        let tree_d_root = tree_d.root();
-        let tree_r_root = tree_r.root();
-
-        let comm_r: <Tree::Hasher as Hasher>::Domain =
-            <Tree::Hasher as Hasher>::Function::hash2(&tree_c_root, &tree_r_root);
-
-        Ok((
-            Tau {
-                comm_d: tree_d_root,
-                comm_r,
-            },
-            PersistentAux {
-                comm_c: tree_c_root,
-                comm_r_last: tree_r_root,
-            },
-            TemporaryAux {
-                labels: label_configs,
-                tree_d_config,
-                tree_r_last_config,
-                tree_c_config,
-                _g: PhantomData,
-            },
-        ))
     }
 
     pub(crate) fn transform_and_replicate_layers_inner(
@@ -1452,6 +1304,12 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             cfg
         };
 
+        let paths = label_configs
+            .labels
+            .iter()
+            .map(|x| (x.path.clone(), x.id.clone()))
+            .collect::<Vec<(PathBuf, String)>>();
+
         let labels = LabelsCache::<Tree>::new(&label_configs)?;
         let configs = split_config(tree_c_config.clone(), tree_count)?;
 
@@ -1462,25 +1320,19 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             s.spawn(|_| {
                 let tree_c = match layers {
                     2 => Self::generate_tree_c::<U2, Tree::Arity>(
-                        layers,
                         nodes_count,
-                        tree_count,
                         configs,
-                        &labels,
+                        &paths,
                     ),
                     8 => Self::generate_tree_c::<U8, Tree::Arity>(
-                        layers,
                         nodes_count,
-                        tree_count,
                         configs,
-                        &labels,
+                        &paths,
                     ),
                     11 => Self::generate_tree_c::<U11, Tree::Arity>(
-                        layers,
                         nodes_count,
-                        tree_count,
                         configs,
-                        &labels,
+                        &paths,
                     ),
                     _ => panic!("Unsupported column arity"),
                 };
@@ -1542,198 +1394,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let tree_c = c_rx.recv().unwrap();
         let (tree_r_last, tree_d_root, data, tree_d_config) = r_rx.recv().unwrap();
         let tree_c_root = tree_c?.root();
-
-        let tree_r_last_root = tree_r_last.root();
-        drop(tree_r_last);
-
-        drop(data);
-
-        // comm_r = H(comm_c || comm_r_last)
-        let comm_r: <Tree::Hasher as Hasher>::Domain =
-            <Tree::Hasher as Hasher>::Function::hash2(&tree_c_root, &tree_r_last_root);
-
-        Ok((
-            Tau {
-                comm_d: tree_d_root,
-                comm_r,
-            },
-            PersistentAux {
-                comm_c: tree_c_root,
-                comm_r_last: tree_r_last_root,
-            },
-            TemporaryAux {
-                labels: label_configs,
-                tree_d_config,
-                tree_r_last_config,
-                tree_c_config,
-                _g: PhantomData,
-            },
-        ))
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn transform_and_replicate_layers_inner_incr(
-        graph: &StackedBucketGraph<Tree::Hasher>,
-        layer_challenges: &LayerChallenges,
-        data: Data,
-        data_tree: Option<BinaryMerkleTree<G>>,
-        config: StoreConfig,
-        replica_path: PathBuf,
-        label_configs: Labels<Tree>,
-    ) -> Result<TransformedLayers<Tree, G>> {
-        trace!("transform_and_replicate_layers");
-        let nodes_count = graph.size();
-
-        assert_eq!(data.len(), nodes_count * NODE_SIZE);
-        trace!("nodes count {}, data len {}", nodes_count, data.len());
-
-        let tree_count = get_base_tree_count::<Tree>();
-        let nodes_count = graph.size() / tree_count;
-
-        // Ensure that the node count will work for binary and oct arities.
-        let binary_arity_valid = is_merkle_tree_size_valid(nodes_count, BINARY_ARITY);
-        let other_arity_valid = is_merkle_tree_size_valid(nodes_count, Tree::Arity::to_usize());
-        trace!(
-            "is_merkle_tree_size_valid({}, BINARY_ARITY) = {}",
-            nodes_count,
-            binary_arity_valid
-        );
-        trace!(
-            "is_merkle_tree_size_valid({}, {}) = {}",
-            nodes_count,
-            Tree::Arity::to_usize(),
-            other_arity_valid
-        );
-        assert!(binary_arity_valid);
-        assert!(other_arity_valid);
-
-        let layers = layer_challenges.layers();
-        assert!(layers > 0);
-
-        // Generate all store configs that we need based on the
-        // cache_path in the specified config.
-        let tree_d_config = {
-            let mut cfg = StoreConfig::from_config(
-                &config,
-                CacheKey::CommDTree.to_string(),
-                Some(get_merkle_tree_len(nodes_count, BINARY_ARITY)?),
-            );
-            cfg.rows_to_discard = default_rows_to_discard(nodes_count, BINARY_ARITY);
-            cfg
-        };
-        // A default 'rows_to_discard' value will be chosen for tree_r_last, unless the user overrides this value via the
-        // environment setting (FIL_PROOFS_ROWS_TO_DISCARD).  If this value is specified, no checking is done on it and it may
-        // result in a broken configuration.  Use with caution.  It must be noted that if/when this unchecked value is passed
-        // through merkle_light, merkle_light now does a check that does not allow us to discard more rows than is possible
-        // to discard.
-        let tree_r_last_config = {
-            let mut cfg = StoreConfig::from_config(
-                &config,
-                CacheKey::CommRLastTree.to_string(),
-                Some(get_merkle_tree_len(nodes_count, Tree::Arity::to_usize())?),
-            );
-            cfg.rows_to_discard = default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
-            cfg
-        };
-
-        trace!(
-            "tree_r_last using rows_to_discard={}",
-            tree_r_last_config.rows_to_discard
-        );
-
-        let tree_c_config = {
-            let mut cfg = StoreConfig::from_config(
-                &config,
-                CacheKey::CommCTree.to_string(),
-                Some(get_merkle_tree_len(nodes_count, Tree::Arity::to_usize())?),
-            );
-            cfg.rows_to_discard = default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
-            cfg
-        };
-
-        let labels = LabelsCache::<Tree>::new(&label_configs)?;
-        let configs = split_config(tree_c_config.clone(), tree_count)?;
-
-        let tree_c_root = match layers {
-            2 => {
-                let tree_c = Self::generate_tree_c::<U2, Tree::Arity>(
-                    layers,
-                    nodes_count,
-                    tree_count,
-                    configs,
-                    &labels,
-                )?;
-                tree_c.root()
-            }
-            8 => {
-                let tree_c = Self::generate_tree_c::<U8, Tree::Arity>(
-                    layers,
-                    nodes_count,
-                    tree_count,
-                    configs,
-                    &labels,
-                )?;
-                tree_c.root()
-            }
-            11 => {
-                let tree_c = Self::generate_tree_c::<U11, Tree::Arity>(
-                    layers,
-                    nodes_count,
-                    tree_count,
-                    configs,
-                    &labels,
-                )?;
-                tree_c.root()
-            }
-            _ => panic!("Unsupported column arity"),
-        };
-        info!("tree_c done");
-
-        // Build the MerkleTree over the original data (if needed).
-        let (tree_d, data) = match data_tree {
-            Some(t) => {
-                trace!("using existing original data merkle tree");
-                assert_eq!(t.len(), 2 * (data.len() / NODE_SIZE) - 1);
-
-                (t, data)
-            }
-            None => {
-                let mut data = data;
-                trace!("building merkle tree for the original data");
-                data.ensure_data()?;
-                (
-                    measure_op(CommD, || {
-                        Self::build_binary_tree::<G>(data.as_ref(), tree_d_config.clone())
-                    })?,
-                    data,
-                )
-            }
-        };
-        let tree_d_config = StoreConfig {
-            size: Some(tree_d.len()),
-            ..tree_d_config
-        };
-        // tree_d_config.size = Some(tree_d.len());
-        assert_eq!(
-            tree_d_config.size.expect("config size failure"),
-            tree_d.len()
-        );
-        let tree_d_root = tree_d.root();
-        drop(tree_d);
-
-        // Encode original data into the last layer.
-        info!("building tree_r_last");
-        let (tree_r_last, data) = measure_op(GenerateTreeRLast, || {
-            Self::generate_tree_r_last::<Tree::Arity>(
-                data,
-                nodes_count,
-                tree_count,
-                tree_r_last_config.clone(),
-                replica_path.clone(),
-                &labels,
-            )
-        })?;
-        info!("tree_r_last done");
 
         let tree_r_last_root = tree_r_last.root();
         drop(tree_r_last);
