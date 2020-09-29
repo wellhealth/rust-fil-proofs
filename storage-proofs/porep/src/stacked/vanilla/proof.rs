@@ -410,10 +410,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) where
         ColumnArity: 'static + PoseidonArity,
     {
-        // Path::new(&path).join(format!(
-        //     "sc-{:0>2}-data-{}.dat",
-        //     DEFAULT_STORE_CONFIG_DATA_VERSION, id
-        // ))
         let mut files = paths
             .iter()
             .map(|x| StoreConfig::data_path(&x.0, &x.1))
