@@ -408,7 +408,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(nodes_count, configs, labels)
         } else {
             Self::generate_tree_c_cpu::<ColumnArity, TreeArity>(
-                TreeArity::to_usize(),
+                ColumnArity::to_usize(),
                 nodes_count,
                 tree_count,
                 configs,
