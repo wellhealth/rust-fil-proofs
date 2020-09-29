@@ -5,6 +5,7 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, RwLock};
 
+use anyhow::Context;
 use bincode::deserialize;
 use generic_array::typenum::{self, Unsigned};
 use log::{info, trace};
@@ -16,7 +17,6 @@ use merkletree::store::{DiskStore, StoreConfig};
 use mpsc::{Receiver, Sender, SyncSender};
 use paired::bls12_381::Fr;
 use rayon::prelude::*;
-use anyhow::Context;
 use storage_proofs_core::{
     cache_key::CacheKey,
     data::Data,
@@ -398,11 +398,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
     {
-        Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(
-            nodes_count,
-            configs,
-            labels,
-        )
+        Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(nodes_count, configs, labels)
     }
 
     fn fast_create_batch<ColumnArity>(
@@ -421,9 +417,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let mut files = paths
             .iter()
             .map(|x| StoreConfig::data_path(&x.0, &x.1))
-            .inspect(|x|println!("{:?}", x))
+            .inspect(|x| println!("{:?}", x))
             .map(|x| File::open(x).context("cannot open layer file for tree-c"))
-            .collect::<Result<Vec<_>>>().unwrap();
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
 
         for _ in 0..config_counts {
             Self::fast_create_batch_for_config(
@@ -491,6 +488,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         batch_size: usize,
         tx: Sender<Vec<Vec<Fr>>>,
     ) {
+        use merkletree::merkle::Element;
         use std::io::Read;
 
         for node_index in (0..nodes_count).step_by(batch_size) {
@@ -500,17 +498,14 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let data = files
                 .par_iter_mut()
                 .map(|x| {
-                    let mut buf = vec![Fr::zero(); chunked_nodes_count];
-                    {
-                        let buf = unsafe {
-                            std::slice::from_raw_parts_mut(
-                                buf.as_mut_ptr() as *mut u8,
-                                chunk_byte_count,
-                            )
-                        };
-                        x.read_exact(buf).unwrap();
-                    }
-                    buf
+                    let mut buf_bytes = vec![0u8; chunk_byte_count];
+					x.read_exact(&mut buf_bytes).unwrap();
+                    let size = std::mem::size_of::<<Tree::Hasher as Hasher>::Domain>();
+                    buf_bytes
+                        .chunks(size)
+                        .map(|x| <<Tree::Hasher as Hasher>::Domain>::from_slice(x))
+                        .map(Into::into)
+                        .collect()
                 })
                 .collect::<Vec<Vec<Fr>>>();
 
@@ -713,15 +708,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         info!("generating tree c using the GPU");
         // Build the tree for CommC
         measure_op(GenerateTreeC, || {
-            Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity>(
-                nodes_count,
-                configs,
-                labels,
-            )
+            Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity>(nodes_count, configs, labels)
         })
     }
 
-	#[allow(dead_code)]
+    #[allow(dead_code)]
     fn generate_tree_c_cpu<ColumnArity, TreeArity>(
         layers: usize,
         nodes_count: usize,
@@ -1185,21 +1176,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         rayon::scope(|s| {
             s.spawn(|_| {
                 let tree_c = match layers {
-                    2 => Self::generate_tree_c::<U2, Tree::Arity>(
-                        nodes_count,
-                        configs,
-                        &paths,
-                    ),
-                    8 => Self::generate_tree_c::<U8, Tree::Arity>(
-                        nodes_count,
-                        configs,
-                        &paths,
-                    ),
-                    11 => Self::generate_tree_c::<U11, Tree::Arity>(
-                        nodes_count,
-                        configs,
-                        &paths,
-                    ),
+                    2 => Self::generate_tree_c::<U2, Tree::Arity>(nodes_count, configs, &paths),
+                    8 => Self::generate_tree_c::<U8, Tree::Arity>(nodes_count, configs, &paths),
+                    11 => Self::generate_tree_c::<U11, Tree::Arity>(nodes_count, configs, &paths),
                     _ => panic!("Unsupported column arity"),
                 };
                 info!("tree_c done");
