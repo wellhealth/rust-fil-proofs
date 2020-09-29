@@ -392,13 +392,30 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     fn generate_tree_c<ColumnArity, TreeArity>(
         nodes_count: usize,
         configs: Vec<StoreConfig>,
+        tree_count: usize,
         labels: &[(PathBuf, String)],
+        old_labels: &LabelsCache<Tree>,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
     {
-        Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(nodes_count, configs, labels)
+        if settings::SETTINGS
+            .lock()
+            .expect("use_gpu_column_builder settings lock failure")
+            .use_gpu_column_builder
+        {
+            Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(nodes_count, configs, labels)
+        } else {
+            Self::generate_tree_c_cpu::<ColumnArity, TreeArity>(
+                TreeArity::to_usize(),
+                nodes_count,
+                tree_count,
+                configs,
+                old_labels,
+            )
+        }
+        // Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(nodes_count, configs, labels)
     }
 
     fn fast_create_batch<ColumnArity>(
@@ -494,7 +511,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 .par_iter_mut()
                 .map(|x| {
                     let mut buf_bytes = vec![0u8; chunk_byte_count];
-					x.read_exact(&mut buf_bytes).unwrap();
+                    x.read_exact(&mut buf_bytes).unwrap();
                     let size = std::mem::size_of::<<Tree::Hasher as Hasher>::Domain>();
                     buf_bytes
                         .chunks(size)
@@ -1171,9 +1188,27 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         rayon::scope(|s| {
             s.spawn(|_| {
                 let tree_c = match layers {
-                    2 => Self::generate_tree_c::<U2, Tree::Arity>(nodes_count, configs, &paths),
-                    8 => Self::generate_tree_c::<U8, Tree::Arity>(nodes_count, configs, &paths),
-                    11 => Self::generate_tree_c::<U11, Tree::Arity>(nodes_count, configs, &paths),
+                    2 => Self::generate_tree_c::<U2, Tree::Arity>(
+                        nodes_count,
+                        configs,
+                        tree_count,
+                        &paths,
+                        &labels,
+                    ),
+                    8 => Self::generate_tree_c::<U8, Tree::Arity>(
+                        nodes_count,
+                        configs,
+                        tree_count,
+                        &paths,
+                        &labels,
+                    ),
+                    11 => Self::generate_tree_c::<U11, Tree::Arity>(
+                        nodes_count,
+                        configs,
+                        tree_count,
+                        &paths,
+                        &labels,
+                    ),
                     _ => panic!("Unsupported column arity"),
                 };
                 info!("tree_c done");
