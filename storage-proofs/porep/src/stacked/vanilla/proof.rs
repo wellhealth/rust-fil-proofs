@@ -839,6 +839,17 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let config_count = configs.len(); // Don't move config into closure below.
             let configs = &configs;
 
+            for config in configs {
+                let path = StoreConfig::data_path(&config.path, &config.id);
+                if path.exists() {
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        info!(
+                            "cannot delete tree-r file: {:?}, error: {}",
+                            path, e
+                        );
+                    }
+                }
+            }
             rayon::scope(|s| {
                 let data = &mut data;
                 s.spawn(move |_| {
@@ -966,9 +977,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                             let mut f = OpenOptions::new()
                                 .create(true)
                                 .write(true)
-                                .truncate(true)
                                 .open(&tree_r_last_path)
                                 .expect("failed to open file for tree_r_last");
+
                             f.write_all(&flat_tree_data)
                                 .expect("failed to wrote tree_r_last data");
 
