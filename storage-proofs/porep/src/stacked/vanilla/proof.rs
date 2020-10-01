@@ -568,7 +568,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         // Loop until all trees for all configs have been built.
         while i < configs.len() {
             let (columns, is_final) = builder_rx.recv().expect("failed to recv columns");
-            info!("column received");
 
             // Just add non-final column batches.
             if !is_final {
