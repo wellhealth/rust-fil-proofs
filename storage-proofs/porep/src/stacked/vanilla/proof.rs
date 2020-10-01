@@ -592,12 +592,14 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     let tree_len = base_data.len() + tree_data.len();
                     assert_eq!(tree_len, config.size.expect("config size failure"));
 
-                    // Persist the base and tree data to disk based using the current store config.
-                    if config.path.exists() {
-                        if let Err(e) = std::fs::remove_file(&config.path) {
-                            info!("cannot delete file: {:?}, erro: {}", config.path, e);
+                    let path = StoreConfig::data_path(&config.path, &config.id);
+                    if path.exists() {
+                        if let Err(e) = std::fs::remove_file(&path) {
+                            info!("cannot delete file: {:?}, erro: {}", path, e);
                         }
                     }
+
+                    // Persist the base and tree data to disk based using the current store config.
                     let tree_c_store =
                         DiskStore::<<Tree::Hasher as Hasher>::Domain>::new_with_config(
                             tree_len,
