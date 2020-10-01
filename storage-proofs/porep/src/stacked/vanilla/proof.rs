@@ -966,6 +966,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                             let mut f = OpenOptions::new()
                                 .create(true)
                                 .write(true)
+                                .truncate(true)
                                 .open(&tree_r_last_path)
                                 .expect("failed to open file for tree_r_last");
                             f.write_all(&flat_tree_data)
