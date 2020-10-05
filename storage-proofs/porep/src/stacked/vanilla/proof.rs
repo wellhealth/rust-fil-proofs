@@ -814,14 +814,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     where
         TreeArity: PoseidonArity,
     {
-        // for config in configs {
-        //     let path = StoreConfig::data_path(&config.path, &config.id);
-        //     if path.exists() {
-        //         if let Err(e) = std::fs::remove_file(&path) {
-        //             info!("cannot delete tree-r file: {:?}, error: {}", path, e);
-        //         }
-        //     }
-        // }
         let (configs, replica_config) = split_config_and_replica(
             tree_r_last_config.clone(),
             replica_path,
