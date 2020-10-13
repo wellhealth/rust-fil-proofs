@@ -3,18 +3,27 @@ use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
+use bellperson::groth16;
+use bellperson::groth16::MappedParameters;
 use bincode::{deserialize, serialize};
 use log::{info, trace};
 use memmap::MmapOptions;
 use merkletree::store::{DiskStore, Store, StoreConfig};
+use paired::bls12_381::Bls12;
 use paired::bls12_381::Fr;
+use rand::rngs::OsRng;
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
 use storage_proofs::cache_key::CacheKey;
+use storage_proofs::compound_proof::CircuitComponent;
 use storage_proofs::compound_proof::{self, CompoundProof};
 use storage_proofs::drgraph::Graph;
 use storage_proofs::hasher::{Domain, Hasher};
 use storage_proofs::measurements::{measure_op, Operation::CommD};
 use storage_proofs::merkle::{create_base_merkle_tree, BinaryMerkleTree, MerkleTreeTrait};
 use storage_proofs::multi_proof::MultiProof;
+use storage_proofs::porep::stacked::StackedCircuit;
 use storage_proofs::porep::stacked::{
     self, generate_replica_id, ChallengeRequirements, StackedCompound, StackedDrg, Tau,
     TemporaryAux, TemporaryAuxCache,
@@ -40,10 +49,8 @@ use crate::types::{
     SealCommitOutput, SealCommitPhase1Output, SealPreCommitOutput, SealPreCommitPhase1Output,
     SectorSize, Ticket, BINARY_ARITY,
 };
-use std::marker::PhantomData;
 use crate::Labels;
-
-
+use std::marker::PhantomData;
 
 #[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1<R, S, T, Tree: 'static + MerkleTreeTrait>(
@@ -443,8 +450,134 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     Ok(out)
 }
 
-#[allow(clippy::too_many_arguments)]
+pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
+    porep_config: PoRepConfig,
+    phase1_output: SealCommitPhase1Output<Tree>,
+    prover_id: ProverId,
+    sector_id: SectorId,
+) -> Result<SealCommitOutput> {
+    info!("seal_commit_phase2:start: {:?}", sector_id);
+    let SealCommitPhase1Output {
+        vanilla_proofs,
+        comm_d,
+        comm_r,
+        replica_id,
+        seed,
+        ticket,
+    } = phase1_output;
+    ensure!(comm_d != [0; 32], "Invalid all zero commitment (comm_d)");
+    ensure!(comm_r != [0; 32], "Invalid all zero commitment (comm_r)");
+    let comm_r_safe = as_safe_commitment(&comm_r, "comm_r")?;
+    let comm_d_safe = DefaultPieceDomain::try_from_bytes(&comm_d)?;
+
+    let public_inputs = stacked::PublicInputs {
+        replica_id,
+        tau: Some(stacked::Tau {
+            comm_d: comm_d_safe,
+            comm_r: comm_r_safe,
+        }),
+        k: None,
+        seed,
+    };
+
+
+    info!(
+        "got groth params ({}) while sealing",
+        u64::from(PaddedBytesAmount::from(porep_config))
+    );
+
+    let compound_setup_params = compound_proof::SetupParams {
+        vanilla_params: setup_params(
+            PaddedBytesAmount::from(porep_config),
+            usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
+        )?,
+        partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
+        priority: false,
+    };
+
+    let params = <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
+        StackedDrg<Tree, DefaultPieceHasher>,
+        _,
+    >>::setup(&compound_setup_params)?
+    .vanilla_params;
+
+    info!("snark_proof:start");
+
+    ensure!(
+        !vanilla_proofs.is_empty(),
+        "cannot create a circuit proof over missing vanilla proofs"
+    );
+
+    let circuits = vanilla_proofs
+        .into_par_iter()
+        .enumerate()
+        .map(|(k, vanilla_proof)| {
+            StackedCompound::<Tree, DefaultPieceHasher>::circuit(
+                &public_inputs,
+                <StackedCircuit::<Tree, DefaultPieceHasher> as CircuitComponent>::ComponentPrivateInputs::default(),
+                &vanilla_proof,
+                &params,
+                Some(k),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let groth_params = get_stacked_params::<Tree>(porep_config)?;
+    let p: &MappedParameters<paired::bls12_381::Bls12> = &groth_params;
+    let mut rng = OsRng;
+    let groth_proofs: Vec<groth16::Proof<Bls12>> =
+        groth16::create_random_proof_batch(circuits, p, &mut rng)?;
+
+    let groth_proofs = groth_proofs
+        .into_iter()
+        .map(|groth_proof| {
+            let mut proof_vec = vec![];
+            groth_proof.write(&mut proof_vec)?;
+            groth16::Proof::<Bls12>::read(&proof_vec[..]).map_err(|e| anyhow::Error::from(e))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    info!("snark_proof:finish");
+
+    let proof = MultiProof::new(groth_proofs, &groth_params.vk);
+
+    let mut buf = Vec::with_capacity(
+        SINGLE_PARTITION_PROOF_LEN * usize::from(PoRepProofPartitions::from(porep_config)),
+    );
+
+    proof.write(&mut buf)?;
+
+    // Verification is cheap when parameters are cached,
+    // and it is never correct to return a proof which does not verify.
+    verify_seal::<Tree>(
+        porep_config,
+        comm_r,
+        comm_d,
+        prover_id,
+        sector_id,
+        ticket,
+        seed,
+        &buf,
+    )
+    .context("post-seal verification sanity check failed")?;
+
+    let out = SealCommitOutput { proof: buf };
+
+    info!("seal_commit_phase2:finish: {:?}", sector_id);
+    Ok(out)
+}
+
 pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
+    porep_config: PoRepConfig,
+    phase1_output: SealCommitPhase1Output<Tree>,
+    prover_id: ProverId,
+    sector_id: SectorId,
+) -> Result<SealCommitOutput> {
+    custom_c2::<Tree>(porep_config, phase1_output, prover_id, sector_id)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn official_c2<Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     phase1_output: SealCommitPhase1Output<Tree>,
     prover_id: ProverId,
@@ -871,10 +1004,10 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
     ticket: Ticket,
     piece_infos: &[PieceInfo],
 ) -> Result<SealPreCommitPhase1Output<Tree>>
-    where
-        R: AsRef<Path>,
-        S: AsRef<Path>,
-        T: AsRef<Path>,
+where
+    R: AsRef<Path>,
+    S: AsRef<Path>,
+    T: AsRef<Path>,
 {
     info!("seal_pre_commit_phase1_tree:start: {:?}", sector_id);
     // Sanity check all input path types.
@@ -976,7 +1109,11 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         let new_path = in_path.as_ref().with_file_name(filename);
         println!("newPath is {:?}", new_path);
         //创建文件并保存中间结果
-        let mut outputfile = OpenOptions::new().create(true).write(true).open(new_path).unwrap();
+        let mut outputfile = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(new_path)
+            .unwrap();
         //保存comm_d数据
         outputfile.write(&comm_d).unwrap();
         //保存data_tree.len() 数据
@@ -988,8 +1125,6 @@ pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
         config.size = Some(data_tree.len());
 
         println!("write seal_pre_commit_phase1_tree comm_d is {:?}", comm_d);
-
-
 
         println!("config is {:?}", config);
 
@@ -1039,20 +1174,20 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
     in_path: S,
-	_out_path: T,
+    _out_path: T,
     prover_id: ProverId,
     sector_id: SectorId,
     ticket: Ticket,
     piece_infos: &[PieceInfo],
 ) -> Result<SealPreCommitPhase1Output<Tree>>
-    where
-        R: AsRef<Path>,
-        S: AsRef<Path>,
-        T: AsRef<Path>,
+where
+    R: AsRef<Path>,
+    S: AsRef<Path>,
+    T: AsRef<Path>,
 {
     info!("seal_pre_commit_phase1_layer:start: {:?}", sector_id);
     // Sanity check all input path types.
-/*    ensure!(
+    /*    ensure!(
         metadata(in_path.as_ref())?.is_file(),
         "in_path must be a file"
     );
@@ -1064,7 +1199,6 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         metadata(cache_path.as_ref())?.is_dir(),
         "cache_path must be a directory"
     );*/
-
 
     let compound_setup_params = compound_proof::SetupParams {
         vanilla_params: setup_params(
@@ -1098,16 +1232,16 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
     let new_path = in_path.as_ref().with_file_name(filename);
     println!("newPath is {:?}", new_path);
 
-    let mut comm_d:[u8;32] = [0; 32];
+    let mut comm_d: [u8; 32] = [0; 32];
     unsafe {
         let mut outputfile = OpenOptions::new().read(true).open(new_path).unwrap();
         outputfile.read(&mut comm_d).unwrap();
         //读取data_tree.len 数据
 
-        let mut treelen:[u8;8] = [0; 8];
+        let mut treelen: [u8; 8] = [0; 8];
         outputfile.read(&mut treelen).unwrap();
-        let lensize  = std::mem::transmute::<[u8; 8],u64>(treelen);
-        config.size = Some(lensize as usize) ;
+        let lensize = std::mem::transmute::<[u8; 8], u64>(treelen);
+        config.size = Some(lensize as usize);
     }
     println!("read seal_pre_commit_phase1_layer comm_d is {:?}", comm_d);
     println!("{:?}", config);
@@ -1126,7 +1260,10 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
         comm_d,
         &porep_config.porep_id,
     );
-    println!("seal_pre_commit_phase1_layer replica_id is {:?}", replica_id);
+    println!(
+        "seal_pre_commit_phase1_layer replica_id is {:?}",
+        replica_id
+    );
 
     let labels = StackedDrg::<Tree, DefaultPieceHasher>::my_replicate_phase1(
         &compound_public_params.vanilla_params,
@@ -1142,4 +1279,3 @@ pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
     info!("seal_pre_commit_phase1_layer:finish: {:?}", sector_id);
     Ok(out)
 }
-
