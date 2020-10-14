@@ -1,16 +1,31 @@
+use bellperson::domain::EvaluationDomain;
+use bellperson::gpu::LockedFFTKernel;
+use bellperson::groth16::ParameterSource;
+use bellperson::multicore::Worker;
+use bellperson::SynthesisError;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, metadata, File, OpenOptions};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{ensure, Context, Result};
+use bellperson::domain::Scalar;
 use bellperson::groth16;
 use bellperson::groth16::MappedParameters;
+use bellperson::groth16::ProvingAssignment;
+use bellperson::multiexp::DensityTracker;
+use bellperson::Circuit;
+use bellperson::ConstraintSystem;
+use bellperson::Index;
+use bellperson::Variable;
 use bincode::{deserialize, serialize};
 use log::{info, trace};
 use memmap::MmapOptions;
 use merkletree::store::{DiskStore, Store, StoreConfig};
 use paired::bls12_381::Bls12;
 use paired::bls12_381::Fr;
+
 use rand::rngs::OsRng;
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelIterator;
@@ -450,6 +465,262 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     Ok(out)
 }
 
+pub struct C2DataStage1<Tree>
+where
+    Tree: 'static + MerkleTreeTrait,
+{
+    pub porep_config: PoRepConfig,
+    pub ticket: Ticket,
+    pub circuits: Vec<StackedCircuit<'static, Tree, DefaultPieceHasher>>,
+    pub groth_params: Arc<MappedParameters<Bls12>>,
+    pub prover_id: ProverId,
+}
+
+pub struct C2DataStage2 {
+    pub porep_config: PoRepConfig,
+    pub ticket: Ticket,
+    pub groth_params: Arc<MappedParameters<Bls12>>,
+    pub prover_id: ProverId,
+    pub fft: Vec<Arc<Vec<Fr>>>,
+}
+
+pub fn stage1_2<Tree: 'static + MerkleTreeTrait>(
+    porep_config: PoRepConfig,
+    phase1_output: SealCommitPhase1Output<Tree>,
+    prover_id: ProverId,
+    sector_id: SectorId,
+) -> Result<()> {
+
+    let stage1_data = prepare_c2::<Tree>(porep_config, phase1_output, prover_id, sector_id)?;
+    let C2DataStage1 {
+        porep_config,
+        ticket,
+        circuits,
+        groth_params,
+        prover_id,
+    } = stage1_data;
+
+	use ff::Field;
+
+	let mut rng = OsRng;
+    let r_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
+    let s_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
+
+    let provers = c2_stage1::<Tree>(circuits)?;
+	let _ = c2_stage2_fft(provers, &groth_params, r_s, s_s);
+    Ok(())
+}
+
+pub fn prepare_c2<Tree: 'static + MerkleTreeTrait>(
+    porep_config: PoRepConfig,
+    phase1_output: SealCommitPhase1Output<Tree>,
+    prover_id: ProverId,
+    sector_id: SectorId,
+) -> Result<C2DataStage1<Tree>> {
+    info!("seal_commit_phase2:start: {:?}", sector_id);
+    let SealCommitPhase1Output {
+        vanilla_proofs,
+        comm_r,
+        comm_d,
+        replica_id,
+        seed,
+        ticket,
+    } = phase1_output;
+    ensure!(comm_d != [0; 32], "Invalid all zero commitment (comm_d)");
+    ensure!(comm_r != [0; 32], "Invalid all zero commitment (comm_r)");
+    let comm_r_safe = as_safe_commitment(&comm_r, "comm_r")?;
+    let comm_d_safe = DefaultPieceDomain::try_from_bytes(&comm_d)?;
+
+    let public_inputs = stacked::PublicInputs {
+        replica_id,
+        tau: Some(stacked::Tau {
+            comm_d: comm_d_safe,
+            comm_r: comm_r_safe,
+        }),
+        k: None,
+        seed,
+    };
+
+    info!(
+        "got groth params ({}) while sealing",
+        u64::from(PaddedBytesAmount::from(porep_config))
+    );
+
+    let compound_setup_params = compound_proof::SetupParams {
+        vanilla_params: setup_params(
+            PaddedBytesAmount::from(porep_config),
+            usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
+        )?,
+        partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
+        priority: false,
+    };
+
+    let params = <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
+        StackedDrg<Tree, DefaultPieceHasher>,
+        _,
+    >>::setup(&compound_setup_params)?
+    .vanilla_params;
+
+    info!("snark_proof:start");
+
+    ensure!(
+        !vanilla_proofs.is_empty(),
+        "cannot create a circuit proof over missing vanilla proofs"
+    );
+
+    let circuits: Vec<StackedCircuit<Tree, DefaultPieceHasher>> = vanilla_proofs
+        .into_par_iter()
+        .enumerate()
+        .map(|(k, vanilla_proof)| {
+            StackedCompound::<Tree, DefaultPieceHasher>::circuit(
+                &public_inputs,
+                <StackedCircuit::<Tree, DefaultPieceHasher> as CircuitComponent>::ComponentPrivateInputs::default(),
+                &vanilla_proof,
+                &params,
+                Some(k),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let groth_params = get_stacked_params::<Tree>(porep_config)?;
+    // let p: MappedParameters<Bls12> = groth_params;
+    Ok(C2DataStage1 {
+        porep_config,
+        ticket,
+        circuits,
+        groth_params,
+        prover_id,
+    })
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ConcreteProvingAssignment {
+    // Density of queries
+    pub a_aux_density: DensityTracker,
+    pub b_input_density: DensityTracker,
+    pub b_aux_density: DensityTracker,
+
+    // Evaluations of A, B, C polynomials
+    pub a: Vec<Scalar<Bls12>>,
+    pub b: Vec<Scalar<Bls12>>,
+    pub c: Vec<Scalar<Bls12>>,
+
+    // Assignments of variables
+    pub input_assignment: Vec<Fr>,
+    pub aux_assignment: Vec<Fr>,
+}
+
+impl From<ProvingAssignment<Bls12>> for ConcreteProvingAssignment {
+    fn from(input: ProvingAssignment<Bls12>) -> Self {
+        ConcreteProvingAssignment {
+            a_aux_density: input.a_aux_density,
+            b_input_density: input.b_input_density,
+            b_aux_density: input.b_aux_density,
+            a: input.a,
+            b: input.b,
+            c: input.c,
+            input_assignment: input.input_assignment,
+            aux_assignment: input.aux_assignment,
+        }
+    }
+}
+
+pub fn c2_stage1<Tree: 'static + MerkleTreeTrait>(
+    circuits: Vec<StackedCircuit<Tree, DefaultPieceHasher>>,
+) -> Result<Vec<ConcreteProvingAssignment>> {
+    circuits
+        .into_par_iter()
+        .map(|circuit| {
+            let mut prover = ProvingAssignment::new();
+
+            use ff::Field;
+            prover.alloc_input(|| "", || Ok(Fr::one()))?;
+            circuit
+                .synthesize(&mut prover)
+                .map_err(|e| anyhow::Error::from(e))?;
+
+            for i in 0..prover.input_assignment.len() {
+                prover.enforce(|| "", |lc| lc + Variable(Index::Input(i)), |lc| lc, |lc| lc);
+            }
+
+            Ok(prover.into())
+        })
+        .collect::<Result<Vec<ConcreteProvingAssignment>, _>>()
+}
+
+pub fn c2_stage2_fft(
+    provers: Vec<ConcreteProvingAssignment>,
+    params: &MappedParameters<paired::bls12_381::Bls12>,
+    r_s: Vec<Fr>,
+    s_s: Vec<Fr>,
+) -> Result<Vec<Arc<Vec<Fr>>>> {
+    let worker = Worker::new();
+    let input_len = provers[0].input_assignment.len();
+    let vk = params.get_vk(input_len)?;
+    let n = provers[0].a.len();
+
+    // Make sure all circuits have the same input len.
+    for prover in &provers {
+        assert_eq!(
+            prover.a.len(),
+            n,
+            "only equaly sized circuits are supported"
+        );
+    }
+
+    let mut log_d = 0;
+    while (1 << log_d) < n {
+        log_d += 1;
+    }
+
+    let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false));
+
+    let mut provers = provers;
+    let a_s = provers
+        .iter_mut()
+        .map(|prover| {
+            let mut a =
+                EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.a, Vec::new()))?;
+            let mut b =
+                EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.b, Vec::new()))?;
+            let mut c =
+                EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.c, Vec::new()))?;
+
+            a.ifft(&worker, &mut fft_kern)?;
+            a.coset_fft(&worker, &mut fft_kern)?;
+
+            b.ifft(&worker, &mut fft_kern)?;
+            b.coset_fft(&worker, &mut fft_kern)?;
+
+            c.ifft(&worker, &mut fft_kern)?;
+            c.coset_fft(&worker, &mut fft_kern)?;
+
+            a.mul_assign(&worker, &b);
+            drop(b);
+            a.sub_assign(&worker, &c);
+            drop(c);
+            a.divide_by_z_on_coset(&worker);
+            a.icoset_fft(&worker, &mut fft_kern)?;
+            let mut a = a.into_coeffs();
+            let a_len = a.len() - 1;
+            a.truncate(a_len);
+
+            Ok({
+                let start = std::time::Instant::now();
+                let ret = Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<Fr>>());
+                info!(
+                    "time measured for object construction: {:?}",
+                    std::time::Instant::now() - start
+                );
+                ret
+            })
+        })
+        .collect::<Result<Vec<Arc<Vec<Fr>>>, SynthesisError>>()?;
+
+    Ok(a_s)
+}
+
 pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     phase1_output: SealCommitPhase1Output<Tree>,
@@ -479,7 +750,6 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
         k: None,
         seed,
     };
-
 
     info!(
         "got groth params ({}) while sealing",
