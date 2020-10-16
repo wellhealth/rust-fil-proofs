@@ -3,6 +3,7 @@ use bellperson::gpu::LockedFFTKernel;
 use bellperson::groth16::ParameterSource;
 use bellperson::multicore::Worker;
 use bellperson::SynthesisError;
+use rayon::iter::IntoParallelRefMutIterator;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, metadata, File, OpenOptions};
 use std::io::prelude::*;
@@ -490,7 +491,6 @@ pub fn stage1_2<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     sector_id: SectorId,
 ) -> Result<()> {
-
     let stage1_data = prepare_c2::<Tree>(porep_config, phase1_output, prover_id, sector_id)?;
     let C2DataStage1 {
         porep_config,
@@ -500,14 +500,14 @@ pub fn stage1_2<Tree: 'static + MerkleTreeTrait>(
         prover_id,
     } = stage1_data;
 
-	use ff::Field;
+    use ff::Field;
 
-	let mut rng = OsRng;
+    let mut rng = OsRng;
     let r_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
     let s_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
 
     let provers = c2_stage1::<Tree>(circuits)?;
-	let _ = c2_stage2_fft(provers, &groth_params, r_s, s_s);
+    let _ = c2_stage2_fft(provers, &groth_params, r_s, s_s);
     Ok(())
 }
 
@@ -584,7 +584,6 @@ pub fn prepare_c2<Tree: 'static + MerkleTreeTrait>(
         .collect::<Result<Vec<_>>>()?;
 
     let groth_params = get_stacked_params::<Tree>(porep_config)?;
-    // let p: MappedParameters<Bls12> = groth_params;
     Ok(C2DataStage1 {
         porep_config,
         ticket,
@@ -592,6 +591,15 @@ pub fn prepare_c2<Tree: 'static + MerkleTreeTrait>(
         groth_params,
         prover_id,
     })
+}
+
+fn true_custom_c2<Tree: 'static + MerkleTreeTrait>(
+    porep_config: PoRepConfig,
+    phase1_output: SealCommitPhase1Output<Tree>,
+    prover_id: ProverId,
+    sector_id: SectorId,
+) -> Result<()> {
+	Ok(())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -674,9 +682,10 @@ pub fn c2_stage2_fft(
         log_d += 1;
     }
 
+    let mut provers = provers;
+
     let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false));
 
-    let mut provers = provers;
     let a_s = provers
         .iter_mut()
         .map(|prover| {
@@ -687,14 +696,12 @@ pub fn c2_stage2_fft(
             let mut c =
                 EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.c, Vec::new()))?;
 
-            a.ifft(&worker, &mut fft_kern)?;
-            a.coset_fft(&worker, &mut fft_kern)?;
-
-            b.ifft(&worker, &mut fft_kern)?;
-            b.coset_fft(&worker, &mut fft_kern)?;
-
-            c.ifft(&worker, &mut fft_kern)?;
-            c.coset_fft(&worker, &mut fft_kern)?;
+            b.ifft(&worker, &mut fft_kern).unwrap();
+            b.coset_fft(&worker, &mut fft_kern).unwrap();
+            a.ifft(&worker, &mut fft_kern).unwrap();
+            a.coset_fft(&worker, &mut fft_kern).unwrap();
+            c.ifft(&worker, &mut fft_kern).unwrap();
+            c.coset_fft(&worker, &mut fft_kern).unwrap();
 
             a.mul_assign(&worker, &b);
             drop(b);
@@ -706,15 +713,7 @@ pub fn c2_stage2_fft(
             let a_len = a.len() - 1;
             a.truncate(a_len);
 
-            Ok({
-                let start = std::time::Instant::now();
-                let ret = Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<Fr>>());
-                info!(
-                    "time measured for object construction: {:?}",
-                    std::time::Instant::now() - start
-                );
-                ret
-            })
+            Ok({ Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<Fr>>()) })
         })
         .collect::<Result<Vec<Arc<Vec<Fr>>>, SynthesisError>>()?;
 
