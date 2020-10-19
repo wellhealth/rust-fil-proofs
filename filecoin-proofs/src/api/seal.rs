@@ -1,30 +1,36 @@
-use bellperson::domain::EvaluationDomain;
-use bellperson::gpu::LockedFFTKernel;
-use bellperson::groth16::ParameterSource;
-use bellperson::multicore::Worker;
-use bellperson::SynthesisError;
-use serde::{Deserialize, Serialize};
-use std::fs::{self, metadata, File, OpenOptions};
-use std::io::prelude::*;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
 use anyhow::{ensure, Context, Result};
+use bellperson::domain::EvaluationDomain;
 use bellperson::domain::Scalar;
+use bellperson::gpu::LockedFFTKernel;
+use bellperson::gpu::LockedMultiexpKernel;
 use bellperson::groth16;
 use bellperson::groth16::MappedParameters;
+use bellperson::groth16::ParameterSource;
 use bellperson::groth16::ProvingAssignment;
+use bellperson::multicore::Worker;
+use bellperson::multiexp::multiexp;
 use bellperson::multiexp::DensityTracker;
+use bellperson::multiexp::FullDensity;
 use bellperson::Circuit;
 use bellperson::ConstraintSystem;
 use bellperson::Index;
+use bellperson::SynthesisError;
 use bellperson::Variable;
 use bincode::{deserialize, serialize};
+use ff::PrimeField;
 use log::{info, trace};
 use memmap::MmapOptions;
 use merkletree::store::{DiskStore, Store, StoreConfig};
 use paired::bls12_381::Bls12;
 use paired::bls12_381::Fr;
+use paired::bls12_381::FrRepr;
+use rayon::iter::IntoParallelRefMutIterator;
+use serde::{Deserialize, Serialize};
+use std::fs::{self, metadata, File, OpenOptions};
+use std::io::prelude::*;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::sync_channel;
+use std::sync::Arc;
 
 use rand::rngs::OsRng;
 use rayon::iter::IndexedParallelIterator;
@@ -490,7 +496,6 @@ pub fn stage1_2<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     sector_id: SectorId,
 ) -> Result<()> {
-
     let stage1_data = prepare_c2::<Tree>(porep_config, phase1_output, prover_id, sector_id)?;
     let C2DataStage1 {
         porep_config,
@@ -500,14 +505,15 @@ pub fn stage1_2<Tree: 'static + MerkleTreeTrait>(
         prover_id,
     } = stage1_data;
 
-	use ff::Field;
+    use ff::Field;
 
-	let mut rng = OsRng;
+    let mut rng = OsRng;
     let r_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
     let s_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
 
     let provers = c2_stage1::<Tree>(circuits)?;
-	let _ = c2_stage2_fft(provers, &groth_params, r_s, s_s);
+
+    let _ = c2_stage2(provers, &groth_params, r_s, s_s);
     Ok(())
 }
 
@@ -649,8 +655,8 @@ pub fn c2_stage1<Tree: 'static + MerkleTreeTrait>(
         .collect::<Result<Vec<ConcreteProvingAssignment>, _>>()
 }
 
-pub fn c2_stage2_fft(
-    provers: Vec<ConcreteProvingAssignment>,
+pub fn c2_stage2(
+    mut provers: Vec<ConcreteProvingAssignment>,
     params: &MappedParameters<paired::bls12_381::Bls12>,
     r_s: Vec<Fr>,
     s_s: Vec<Fr>,
@@ -676,49 +682,96 @@ pub fn c2_stage2_fft(
 
     let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false));
 
-    let mut provers = provers;
-    let a_s = provers
-        .iter_mut()
-        .map(|prover| {
-            let mut a =
-                EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.a, Vec::new()))?;
-            let mut b =
-                EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.b, Vec::new()))?;
-            let mut c =
-                EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.c, Vec::new()))?;
+    let (tx_1, rx_1) =
+        sync_channel::<(EvaluationDomain<Bls12, Scalar<Bls12>>, _, _)>(provers.len());
+    let (tx_2, rx_2) = sync_channel(provers.len());
+    let (tx_hl, rx_hl) = sync_channel(2);
 
-            a.ifft(&worker, &mut fft_kern)?;
-            a.coset_fft(&worker, &mut fft_kern)?;
+    let mut a_s = Default::default();
+    rayon::scope({
+        let a_s = &mut a_s;
+        let mut provers = provers;
+        let worker = &worker;
+        let fft_kern = &mut fft_kern;
+        move |s| {
+            s.spawn(move |s| {
+                while let Ok(data) = rx_1.recv() {
+                    let (mut a, b, c) = data;
+                    a.mul_assign(&worker, &b);
+                    drop(b);
+                    a.sub_assign(&worker, &c);
+                    drop(c);
+                    a.divide_by_z_on_coset(&worker);
+                    tx_2.send(a).unwrap();
+                }
+            });
+            s.spawn(move |_| {
+                tx_hl.send(params.get_h(0)).unwrap();
+                tx_hl.send(params.get_l(0)).unwrap();
+            });
 
-            b.ifft(&worker, &mut fft_kern)?;
-            b.coset_fft(&worker, &mut fft_kern)?;
+            for prover in &mut provers {
+                let mut a =
+                    EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.a, Vec::new()))
+                        .unwrap();
+                let mut b =
+                    EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.b, Vec::new()))
+                        .unwrap();
+                let mut c =
+                    EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.c, Vec::new()))
+                        .unwrap();
 
-            c.ifft(&worker, &mut fft_kern)?;
-            c.coset_fft(&worker, &mut fft_kern)?;
+                b.ifft(&worker, fft_kern).unwrap();
+                b.coset_fft(&worker, fft_kern).unwrap();
+                a.ifft(&worker, fft_kern).unwrap();
+                a.coset_fft(&worker, fft_kern).unwrap();
+                c.ifft(&worker, fft_kern).unwrap();
+                c.coset_fft(&worker, fft_kern).unwrap();
+                tx_1.send((a, b, c)).unwrap();
+            }
+            drop(tx_1);
+            *a_s = rx_2
+                .iter()
+                .map(|mut a| {
+                    a.icoset_fft(&worker, fft_kern).unwrap();
+                    let mut a = a.into_coeffs();
+                    let a_len = a.len() - 1;
+                    a.truncate(a_len);
+                    a
+                })
+                .map(|a| Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()))
+                .collect::<Vec<_>>();
+            assert_eq!(a_s.len(), provers.len());
+        }
+    });
 
-            a.mul_assign(&worker, &b);
-            drop(b);
-            a.sub_assign(&worker, &c);
-            drop(c);
-            a.divide_by_z_on_coset(&worker);
-            a.icoset_fft(&worker, &mut fft_kern)?;
-            let mut a = a.into_coeffs();
-            let a_len = a.len() - 1;
-            a.truncate(a_len);
+    let param_h = rx_hl.recv().unwrap()?;
+    let param_l = rx_hl.recv().unwrap()?;
 
-            Ok({
-                let start = std::time::Instant::now();
-                let ret = Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<Fr>>());
-                info!(
-                    "time measured for object construction: {:?}",
-                    std::time::Instant::now() - start
-                );
-                ret
-            })
+    let mut multiexp_kern = Some(LockedMultiexpKernel::<Bls12>::new(log_d, false));
+
+    let h_s = a_s
+        .into_iter()
+        .map(|a| {
+            let h = multiexp(&worker, &param_h, FullDensity, a, &mut multiexp_kern);
+            Ok(h)
         })
-        .collect::<Result<Vec<Arc<Vec<Fr>>>, SynthesisError>>()?;
+        .collect::<Result<Vec<_>, SynthesisError>>()?;
 
-    Ok(a_s)
+    let input_assignments = provers
+        .par_iter_mut()
+        .map(|prover| {
+            let input_assignment = std::mem::replace(&mut prover.input_assignment, Vec::new());
+            Arc::new(
+                input_assignment
+                    .into_iter()
+                    .map(|s| s.into_repr())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    Ok(todo!())
 }
 
 pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
