@@ -9,6 +9,7 @@ repository = "https://github.com/filecoin-project/rust-fil-proofs"
 readme = "README.md"
 
 [dependencies]
+futures = "0.1"
 storage-proofs = { version = "^5.0.0", path = "../storage-proofs" }
 bitvec = "0.17"
 chrono = "0.4"
@@ -54,7 +55,7 @@ generic-array = "0.13.2"
 structopt = "0.3.12"
 humansize = "1.1.0"
 indicatif = "0.14.0"
-groupy = "0.3.0"
+groupy = "0.3.1"
 
 [dependencies.reqwest]
 version = "0.10"
