@@ -472,7 +472,7 @@ pub fn c2_stage2(
         .map(|((prover, input_assignment), aux_assignment)| {
 
 			let a_inputs_source = param_a.0.clone();
-			let a_aux_source = (param_a.1.0.clone(), input_assignment.len());
+			let a_aux_source = ((param_a.1).0.clone(), input_assignment.len());
 
             let a_inputs = multiexp_full(
                 &worker,
@@ -494,7 +494,7 @@ pub fn c2_stage2(
             let b_input_density_total = b_input_density.get_total_density();
             let b_aux_density = Arc::new(prover.b_aux_density);
 			let b_g1_inputs_source = param_bg1.0.clone();
-			let b_g1_aux_source = (param_bg1.1.0.clone(), b_input_density_total);
+			let b_g1_aux_source = ((param_bg1.1).0.clone(), b_input_density_total);
 
             let b_g1_inputs = multiexp(
                 &worker,
@@ -512,7 +512,7 @@ pub fn c2_stage2(
                 &mut multiexp_kern,
             );
 			let b_g2_inputs_source = param_bg2.0.clone();
-			let b_g2_aux_source = (param_bg2.1.0.clone(), b_input_density_total);
+			let b_g2_aux_source = ((param_bg2.1).0.clone(), b_input_density_total);
 
             let b_g2_inputs = multiexp(
                 &worker,
