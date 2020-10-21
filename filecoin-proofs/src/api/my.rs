@@ -2,12 +2,16 @@ use std::sync::Arc;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::sync_channel;
 use bellperson::Circuit;
+use bellperson::gpu;
 use bellperson::groth16::ParameterSource;
+use bellperson::multiexp::SourceBuilder;
+use bellperson::multiexp::multiexp_full;
 use ff::Field;
 use ff::PrimeField;
 use bellperson::ConstraintSystem;
 use groupy::CurveAffine;
 use groupy::CurveProjective;
+use paired::bls12_381::G1Affine;
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::IntoParallelRefMutIterator;
@@ -152,6 +156,7 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
 
     proof.write(&mut buf)?;
 
+	let buf = buf;
     // Verification is cheap when parameters are cached,
     // and it is never correct to return a proof which does not verify.
     verify_seal::<Tree>(
@@ -162,8 +167,7 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
         sector_id,
         ticket,
         seed,
-        &buf,
-    )
+        &buf,)
     .context("post-seal verification sanity check failed")?;
 
     let out = SealCommitOutput { proof: buf };
@@ -409,7 +413,7 @@ pub fn c2_stage2(
     let h_s = a_s
         .into_iter()
         .map(|a| {
-            Ok(multiexp(
+            Ok(multiexp_full(
                 &worker,
                 param_h.clone(),
                 FullDensity,
@@ -453,9 +457,8 @@ pub fn c2_stage2(
     let l_s = aux_assignments
         .iter()
         .map(|aux_assignment| {
-            Ok(multiexp(
-                &worker,
-                param_l.clone(),
+            Ok(multiexp_full(
+                &worker, param_l.clone(),
                 FullDensity,
                 aux_assignment.clone(),
                 &mut multiexp_kern,
@@ -474,7 +477,7 @@ pub fn c2_stage2(
 			let a_inputs_source = param_a.0.clone();
 			let a_aux_source = (param_a.1.0.clone(), input_assignment.len());
 
-            let a_inputs = multiexp(
+            let a_inputs = multiexp_full(
                 &worker,
                 a_inputs_source,
                 FullDensity,
@@ -600,3 +603,4 @@ pub fn c2_stage2(
 
     Ok(proofs)
 }
+
