@@ -289,15 +289,13 @@ where
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
 
-    let mut device_info = select_gpu_device();
-
-    let gpu_index = device_info.index;
+    let gpu_index = select_gpu_device();
 
     log::info!("select gpu index: {}", gpu_index);
 
     defer! {
         log::info!("release gpu index: {}", gpu_index);
-        release_gpu_device(device_info);
+        release_gpu_device(gpu_index);
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -475,15 +473,13 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
-    let device_info = select_gpu_device();
-
-    let gpu_index = device_info.index;
+    let gpu_index = select_gpu_device();
 
     log::info!("select gpu index: {}", gpu_index);
 
     defer! {
         log::info!("release gpu index: {}", gpu_index);
-        release_gpu_device(device_info);
+        release_gpu_device(gpu_index);
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1136,12 +1132,6 @@ where
     Ok(out)
 }
 
-#[derive(Debug, Clone)]
-pub struct GpuDeviceInfo {
-    index: usize,
-    device: Device,
-}
-
 #[derive(Debug)]
 pub struct Queue<T> {
     qdata: Vec<T>,
@@ -1177,30 +1167,31 @@ impl <T> Queue<T> {
 lazy_static::lazy_static! {
     //pub static ref GPU_NVIDIA_DEVICES: Vec<Device> = get_devices(GPU_NVIDIA_PLATFORM_NAME).unwrap_or_default();
     //pub static ref GPU_NVIDIA_DEVICES: Vec<Device> = get_devices(GPU_NVIDIA_PLATFORM_NAME).unwrap_or_default();
-    pub static ref GPU_NVIDIA_DEVICES_QUEUE:  Mutex<Queue<GpuDeviceInfo>> = Mutex::new(Queue::new());
-    pub static ref GPU_NVIDIA_DEVICES_QUEUE_INIT: Vec<usize>  = Vec::new();
-
+    pub static ref GPU_NVIDIA_DEVICES_QUEUE:  Mutex<Queue<usize>> = Mutex::new(Queue::new());
 }
 
 static mut N: i32 = 0;
 
-pub fn select_gpu_device() -> GpuDeviceInfo {
+pub fn select_gpu_device() -> usize {
 
     let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
 
     unsafe {
+
         if N == 0{
             let devices = &bellperson::gpu::GPU_NVIDIA_DEVICES;
 
             for i in 0 .. devices.len(){
-                let v =  devices[i];
-
-                queue.push(GpuDeviceInfo{index:i, device: v})
+                 queue.push(i)
             }
 
             N = 1;
             info!("init gpu finished: {}", N);
         }
+    }
+
+    if queue.len() == 0 {
+        return 0;
     }
 
     queue.pop().unwrap()
@@ -1217,9 +1208,9 @@ pub fn select_gpu_device() -> GpuDeviceInfo {
 }
 
 
-pub fn release_gpu_device(device_info : GpuDeviceInfo)  {
+pub fn release_gpu_device(gpu_index : usize)  {
     let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
-     queue.push(device_info);
+     queue.push(gpu_index);
 }
 
 
