@@ -337,9 +337,6 @@ pub fn c2_stage2(
                     tx_2.send(a).unwrap();
                 }
             });
-            s.spawn(move |_| {
-                tx_hl.send(params.get_h(0)).unwrap();
-            });
 
             s.spawn(move |_| {
                 *a_s = rx_3
@@ -355,7 +352,15 @@ pub fn c2_stage2(
                 assert_eq!(a_s.len(), provers_len);
             });
 
-            for prover in provers.iter_mut() {
+            let len = provers.len();
+            let mut spawn_index = if len <= 2 { 0 } else { len - 2 };
+            for (index, prover) in provers.iter_mut().enumerate() {
+                if index >= spawn_index {
+                    spawn_index = len + 1;
+                    s.spawn(move |_| {
+                        tx_hl.send(params.get_h(0)).unwrap();
+                    });
+                }
                 let mut a =
                     EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.a, Vec::new()))
                         .unwrap();
@@ -386,7 +391,8 @@ pub fn c2_stage2(
                 tx_3.send(a).unwrap();
             }
         }
-    }).unwrap();
+    })
+    .unwrap();
 
     let param_h = rx_hl.recv().unwrap()?;
 
@@ -417,7 +423,8 @@ pub fn c2_stage2(
                 .collect::<Result<Vec<_>, SynthesisError>>();
             drop(param_h);
         }
-    }).unwrap();
+    })
+    .unwrap();
 
     info!("done h_s");
     let h_s = h_s?;
@@ -486,7 +493,8 @@ pub fn c2_stage2(
                 .collect::<Result<Vec<_>, SynthesisError>>();
             drop(param_l);
         }
-    }).unwrap();
+    })
+    .unwrap();
     let l_s = l_s?;
 
     info!("done l_s");
@@ -568,9 +576,9 @@ pub fn c2_stage2(
         })
         .collect::<Result<Vec<_>, SynthesisError>>()?;
 
-	drop(param_a);
-	drop(param_bg1);
-	drop(param_bg2);
+    drop(param_a);
+    drop(param_bg1);
+    drop(param_bg2);
 
     info!("done inputs");
     drop(multiexp_kern);
