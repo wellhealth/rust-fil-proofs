@@ -17,12 +17,7 @@ use filecoin_proofs::types::{
     SealCommitPhase1Output, SealPreCommitOutput, SealPreCommitPhase1Output, SectorSize,
     UnpaddedBytesAmount,
 };
-use filecoin_proofs::{
-    add_piece, generate_piece_commitment, generate_window_post, seal_commit_phase1,
-    seal_commit_phase2, seal_pre_commit_phase1, seal_pre_commit_phase2, validate_cache_for_commit,
-    validate_cache_for_precommit_phase2, verify_window_post, with_shape, PoStType,
-    PrivateReplicaInfo, PublicReplicaInfo,
-};
+use filecoin_proofs::{add_piece, generate_piece_commitment, generate_window_post, seal_commit_phase1, seal_commit_phase2, seal_pre_commit_phase1, seal_pre_commit_phase2, validate_cache_for_commit, validate_cache_for_precommit_phase2, verify_window_post, with_shape, PoStType, PrivateReplicaInfo, PublicReplicaInfo, generate_window_post_inner, verify_window_post_inner};
 use log::info;
 use serde::{Deserialize, Serialize};
 use storage_proofs::merkle::MerkleTreeTrait;
@@ -470,19 +465,20 @@ pub fn run_window_post_bench<Tree: 'static + MerkleTreeTrait>(
     };
 
     let gen_window_post_measurement = measure(|| {
-        generate_window_post::<Tree>(&post_config, &RANDOMNESS, &priv_replica_info, PROVER_ID)
+        generate_window_post_inner::<Tree>(&post_config, &RANDOMNESS, &priv_replica_info, PROVER_ID,0)
     })
     .expect("failed to generate window post");
 
     let proof = &gen_window_post_measurement.return_value;
 
     let verify_window_post_measurement = measure(|| {
-        verify_window_post::<Tree>(
+        verify_window_post_inner::<Tree>(
             &post_config,
             &RANDOMNESS,
             &pub_replica_info,
             PROVER_ID,
             &proof,
+            0,
         )
     })
     .expect("failed to verify window post proof");

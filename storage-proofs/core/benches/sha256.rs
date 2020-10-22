@@ -103,6 +103,7 @@ fn sha256_circuit_benchmark(c: &mut Criterion) {
                         },
                         &groth_params,
                         &mut rng,
+                        0,
                     )
                     .unwrap();
 
@@ -130,10 +131,14 @@ fn sha256_circuit_benchmark(c: &mut Criterion) {
     );
 }
 
-criterion_group!(
+/*criterion_group!(
     benches,
     sha256_benchmark,
     sha256_raw_benchmark,
     sha256_circuit_benchmark
 );
-criterion_main!(benches);
+criterion_main!(benches);*/
+
+fn main() {
+
+}

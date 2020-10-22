@@ -395,6 +395,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         tree_count: usize,
         labels: &[(PathBuf, String)],
         old_labels: &LabelsCache<Tree>,
+        gpu_index: usize,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
@@ -405,7 +406,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .expect("use_gpu_column_builder settings lock failure")
             .use_gpu_column_builder
         {
-            Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(nodes_count, configs, labels)
+            Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(nodes_count, configs, labels, gpu_index)
         } else {
             Self::generate_tree_c_cpu::<ColumnArity, TreeArity>(
                 ColumnArity::to_usize(),
@@ -549,6 +550,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         max_gpu_tree_batch_size: usize,
         max_gpu_column_batch_size: usize,
         column_write_batch_size: usize,
+        gpu_index:usize
     ) where
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
@@ -558,6 +560,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             nodes_count,
             max_gpu_column_batch_size,
             max_gpu_tree_batch_size,
+            gpu_index
         )
         .expect("failed to create ColumnTreeBuilder");
 
@@ -654,6 +657,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         nodes_count: usize,
         configs: Vec<StoreConfig>,
         labels: &[(PathBuf, String)],
+        gpu_index:usize,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
@@ -705,6 +709,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     max_gpu_tree_batch_size,
                     max_gpu_column_batch_size,
                     column_write_batch_size,
+                    gpu_index,
                 )
             },
         );
@@ -718,6 +723,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         nodes_count: usize,
         configs: Vec<StoreConfig>,
         labels: &[(PathBuf, String)],
+        gpu_index:usize,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
@@ -726,7 +732,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         info!("generating tree c using the GPU");
         // Build the tree for CommC
         measure_op(GenerateTreeC, || {
-            Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity>(nodes_count, configs, labels)
+            Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity>(nodes_count, configs, labels, gpu_index)
         })
     }
 
@@ -807,6 +813,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         tree_r_last_config: StoreConfig,
         replica_path: PathBuf,
         labels: &'a LabelsCache<Tree>,
+        gpu_index: usize,
     ) -> Result<(
         LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>,
         Data<'b>,
@@ -910,6 +917,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                             nodes_count,
                             max_gpu_tree_batch_size,
                             tree_r_last_config.rows_to_discard,
+                            gpu_index,
                         )
                         .expect("failed to create TreeBuilder");
 
@@ -1038,6 +1046,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         data_tree: Option<BinaryMerkleTree<G>>,
         config: StoreConfig,
         replica_path: PathBuf,
+        gpu_index:usize,
     ) -> Result<TransformedLayers<Tree, G>> {
         // Generate key layers.
         let (_, labels) = measure_op(EncodeWindowTimeAll, || {
@@ -1052,6 +1061,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             config,
             replica_path,
             labels,
+            gpu_index,
         )
     }
 
@@ -1087,6 +1097,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         tree_count: usize,
         replica_path: PathBuf,
         labels: &LabelsCache<Tree>,
+        gpu_index:usize,
     ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>> {
         let tree_r_last = measure_op(GenerateTreeRLast, || {
             Self::generate_tree_r_last::<Tree::Arity>(
@@ -1096,6 +1107,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 tree_r_config.clone(),
                 replica_path.clone(),
                 labels,
+                gpu_index,
             )
         })?;
 
@@ -1110,6 +1122,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         config: StoreConfig,
         replica_path: PathBuf,
         label_configs: Labels<Tree>,
+        gpu_index: usize,
     ) -> Result<TransformedLayers<Tree, G>> {
         trace!("transform_and_replicate_layers");
         let nodes_count = graph.size();
@@ -1202,6 +1215,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         tree_count,
                         &paths,
                         &labels,
+                        gpu_index,
                     ),
                     8 => Self::generate_tree_c::<U8, Tree::Arity>(
                         nodes_count,
@@ -1209,6 +1223,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         tree_count,
                         &paths,
                         &labels,
+                        gpu_index,
                     ),
                     11 => Self::generate_tree_c::<U11, Tree::Arity>(
                         nodes_count,
@@ -1216,6 +1231,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         tree_count,
                         &paths,
                         &labels,
+                        gpu_index,
                     ),
                     _ => panic!("Unsupported column arity"),
                 };
@@ -1265,6 +1281,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     tree_r_last_config.clone(),
                     replica_path.clone(),
                     &labels,
+                    gpu_index,
                 )
             })
             .unwrap();
@@ -1346,6 +1363,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         data_tree: BinaryMerkleTree<G>,
         config: StoreConfig,
         replica_path: PathBuf,
+        gpu_index: usize,
     ) -> Result<(
         <Self as PoRep<'a, Tree::Hasher, G>>::Tau,
         <Self as PoRep<'a, Tree::Hasher, G>>::ProverAux,
@@ -1360,6 +1378,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             config,
             replica_path,
             labels,
+            gpu_index,
         )?;
 
         Ok((tau, (paux, taux)))
@@ -1373,6 +1392,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         tree_count: usize,
         tree_r_last_config: StoreConfig,
         replica_path: PathBuf,
+        gpu_index:usize,
     ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         TreeArity: PoseidonArity,
@@ -1400,6 +1420,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 nodes_count,
                 max_gpu_tree_batch_size,
                 tree_r_last_config.rows_to_discard,
+                gpu_index,
             )
             .expect("failed to create TreeBuilder");
 
@@ -1490,6 +1511,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         replica_path: R,
         cache_path: S,
         sector_size: usize,
+        gpu_index:usize,
     ) -> Result<(
         <Tree::Hasher as Hasher>::Domain,
         PersistentAux<<Tree::Hasher as Hasher>::Domain>,
@@ -1518,6 +1540,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             tree_count,
             tree_r_last_config,
             replica_pathbuf,
+            gpu_index,
         )?;
         info!("tree_r_last done");
 
@@ -1561,487 +1584,5 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         };
 
         Ok((comm_r, p_aux))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use ff::{Field, PrimeField};
-    use paired::bls12_381::{Fr, FrRepr};
-    use rand::{Rng, SeedableRng};
-    use rand_xorshift::XorShiftRng;
-    use storage_proofs_core::hasher::poseidon::PoseidonHasher;
-    use storage_proofs_core::{
-        drgraph::BASE_DEGREE,
-        fr32::fr_into_bytes,
-        hasher::{Blake2sHasher, PedersenHasher, Sha256Hasher},
-        merkle::MerkleTreeTrait,
-        proof::ProofScheme,
-        table_tests,
-        test_helper::setup_replica,
-    };
-
-    use crate::stacked::{PrivateInputs, SetupParams, EXP_DEGREE};
-    use crate::PoRep;
-
-    const DEFAULT_STACKED_LAYERS: usize = 11;
-
-    #[test]
-    fn test_calculate_fixed_challenges() {
-        let layer_challenges = LayerChallenges::new(10, 333);
-        let expected = 333;
-
-        let calculated_count = layer_challenges.challenges_count_all();
-        assert_eq!(expected as usize, calculated_count);
-    }
-
-    #[test]
-    fn extract_all_pedersen_8() {
-        test_extract_all::<DiskTree<PedersenHasher, typenum::U8, typenum::U0, typenum::U0>>();
-    }
-
-    #[test]
-    fn extract_all_pedersen_8_2() {
-        test_extract_all::<DiskTree<PedersenHasher, typenum::U8, typenum::U2, typenum::U0>>();
-    }
-
-    #[test]
-    fn extract_all_pedersen_8_8_2() {
-        test_extract_all::<DiskTree<PedersenHasher, typenum::U8, typenum::U8, typenum::U2>>();
-    }
-
-    #[test]
-    fn extract_all_sha256_8() {
-        test_extract_all::<DiskTree<Sha256Hasher, typenum::U8, typenum::U0, typenum::U0>>();
-    }
-
-    #[test]
-    fn extract_all_sha256_8_8() {
-        test_extract_all::<DiskTree<Sha256Hasher, typenum::U8, typenum::U8, typenum::U0>>();
-    }
-
-    #[test]
-    fn extract_all_sha256_8_8_2() {
-        test_extract_all::<DiskTree<Sha256Hasher, typenum::U8, typenum::U8, typenum::U2>>();
-    }
-
-    #[test]
-    fn extract_all_blake2s_8() {
-        test_extract_all::<DiskTree<Blake2sHasher, typenum::U8, typenum::U0, typenum::U0>>();
-    }
-
-    #[test]
-    fn extract_all_blake2s_8_8() {
-        test_extract_all::<DiskTree<Blake2sHasher, typenum::U8, typenum::U8, typenum::U0>>();
-    }
-
-    #[test]
-    fn extract_all_blake2s_8_8_2() {
-        test_extract_all::<DiskTree<Blake2sHasher, typenum::U8, typenum::U8, typenum::U2>>();
-    }
-
-    #[test]
-    fn extract_all_poseidon_8() {
-        test_extract_all::<DiskTree<PoseidonHasher, typenum::U8, typenum::U0, typenum::U0>>();
-    }
-
-    #[test]
-    fn extract_all_poseidon_8_2() {
-        test_extract_all::<DiskTree<PoseidonHasher, typenum::U8, typenum::U2, typenum::U0>>();
-    }
-
-    #[test]
-    fn extract_all_poseidon_8_8_2() {
-        test_extract_all::<DiskTree<PoseidonHasher, typenum::U8, typenum::U8, typenum::U2>>();
-    }
-
-    fn test_extract_all<Tree: 'static + MerkleTreeTrait>() {
-        // femme::pretty::Logger::new()
-        //     .start(log::LevelFilter::Trace)
-        //     .ok();
-
-        let rng = &mut XorShiftRng::from_seed(crate::TEST_SEED);
-        let replica_id: <Tree::Hasher as Hasher>::Domain =
-            <Tree::Hasher as Hasher>::Domain::random(rng);
-        let nodes = 64 * get_base_tree_count::<Tree>();
-
-        let data: Vec<u8> = (0..nodes)
-            .flat_map(|_| {
-                let v: <Tree::Hasher as Hasher>::Domain =
-                    <Tree::Hasher as Hasher>::Domain::random(rng);
-                v.into_bytes()
-            })
-            .collect();
-
-        // MT for original data is always named tree-d, and it will be
-        // referenced later in the process as such.
-        let cache_dir = tempfile::tempdir().expect("tempdir failure");
-        let config = StoreConfig::new(
-            cache_dir.path(),
-            CacheKey::CommDTree.to_string(),
-            default_rows_to_discard(nodes, BINARY_ARITY),
-        );
-
-        // Generate a replica path.
-        let replica_path = cache_dir.path().join("replica-path");
-        let mut mmapped_data = setup_replica(&data, &replica_path);
-
-        let layer_challenges = LayerChallenges::new(DEFAULT_STACKED_LAYERS, 5);
-
-        let sp = SetupParams {
-            nodes,
-            degree: BASE_DEGREE,
-            expansion_degree: EXP_DEGREE,
-            porep_id: [32; 32],
-            layer_challenges,
-        };
-
-        let pp = StackedDrg::<Tree, Blake2sHasher>::setup(&sp).expect("setup failed");
-
-        StackedDrg::<Tree, Blake2sHasher>::replicate(
-            &pp,
-            &replica_id,
-            (mmapped_data.as_mut()).into(),
-            None,
-            config.clone(),
-            replica_path,
-        )
-        .expect("replication failed");
-
-        let mut copied = vec![0; data.len()];
-        copied.copy_from_slice(&mmapped_data);
-        assert_ne!(data, copied, "replication did not change data");
-
-        let decoded_data = StackedDrg::<Tree, Blake2sHasher>::extract_all(
-            &pp,
-            &replica_id,
-            mmapped_data.as_mut(),
-            Some(config),
-        )
-        .expect("failed to extract data");
-
-        assert_eq!(data, decoded_data);
-
-        cache_dir.close().expect("Failed to remove cache dir");
-    }
-
-    fn prove_verify_fixed(n: usize) {
-        let challenges = LayerChallenges::new(DEFAULT_STACKED_LAYERS, 5);
-
-        test_prove_verify::<DiskTree<PedersenHasher, typenum::U4, typenum::U0, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<PedersenHasher, typenum::U4, typenum::U2, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<PedersenHasher, typenum::U4, typenum::U8, typenum::U2>>(
-            n,
-            challenges.clone(),
-        );
-
-        test_prove_verify::<DiskTree<PedersenHasher, typenum::U8, typenum::U0, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<PedersenHasher, typenum::U8, typenum::U2, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<PedersenHasher, typenum::U8, typenum::U8, typenum::U2>>(
-            n,
-            challenges.clone(),
-        );
-
-        test_prove_verify::<DiskTree<Sha256Hasher, typenum::U8, typenum::U0, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<Sha256Hasher, typenum::U8, typenum::U2, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<Sha256Hasher, typenum::U8, typenum::U8, typenum::U2>>(
-            n,
-            challenges.clone(),
-        );
-
-        test_prove_verify::<DiskTree<Sha256Hasher, typenum::U4, typenum::U0, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<Sha256Hasher, typenum::U4, typenum::U2, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<Sha256Hasher, typenum::U4, typenum::U8, typenum::U2>>(
-            n,
-            challenges.clone(),
-        );
-
-        test_prove_verify::<DiskTree<Blake2sHasher, typenum::U4, typenum::U0, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<Blake2sHasher, typenum::U4, typenum::U2, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<Blake2sHasher, typenum::U4, typenum::U8, typenum::U2>>(
-            n,
-            challenges.clone(),
-        );
-
-        test_prove_verify::<DiskTree<Blake2sHasher, typenum::U8, typenum::U0, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<Blake2sHasher, typenum::U8, typenum::U2, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<Blake2sHasher, typenum::U8, typenum::U8, typenum::U2>>(
-            n,
-            challenges.clone(),
-        );
-
-        test_prove_verify::<DiskTree<PoseidonHasher, typenum::U4, typenum::U0, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<PoseidonHasher, typenum::U4, typenum::U2, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<PoseidonHasher, typenum::U4, typenum::U8, typenum::U2>>(
-            n,
-            challenges.clone(),
-        );
-
-        test_prove_verify::<DiskTree<PoseidonHasher, typenum::U8, typenum::U0, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<PoseidonHasher, typenum::U8, typenum::U2, typenum::U0>>(
-            n,
-            challenges.clone(),
-        );
-        test_prove_verify::<DiskTree<PoseidonHasher, typenum::U8, typenum::U8, typenum::U2>>(
-            n, challenges,
-        );
-    }
-
-    fn test_prove_verify<Tree: 'static + MerkleTreeTrait>(n: usize, challenges: LayerChallenges) {
-        // This will be called multiple times, only the first one succeeds, and that is ok.
-        // femme::pretty::Logger::new()
-        //     .start(log::LevelFilter::Trace)
-        //     .ok();
-
-        let nodes = n * get_base_tree_count::<Tree>();
-        let rng = &mut XorShiftRng::from_seed(crate::TEST_SEED);
-
-        let degree = BASE_DEGREE;
-        let expansion_degree = EXP_DEGREE;
-        let replica_id: <Tree::Hasher as Hasher>::Domain =
-            <Tree::Hasher as Hasher>::Domain::random(rng);
-        let data: Vec<u8> = (0..nodes)
-            .flat_map(|_| fr_into_bytes(&Fr::random(rng)))
-            .collect();
-
-        // MT for original data is always named tree-d, and it will be
-        // referenced later in the process as such.
-        let cache_dir = tempfile::tempdir().expect("tempdir failure");
-        let config = StoreConfig::new(
-            cache_dir.path(),
-            CacheKey::CommDTree.to_string(),
-            default_rows_to_discard(nodes, BINARY_ARITY),
-        );
-
-        // Generate a replica path.
-        let replica_path = cache_dir.path().join("replica-path");
-        let mut mmapped_data = setup_replica(&data, &replica_path);
-
-        let partitions = 2;
-
-        let arbitrary_porep_id = [92; 32];
-        let sp = SetupParams {
-            nodes,
-            degree,
-            expansion_degree,
-            porep_id: arbitrary_porep_id,
-            layer_challenges: challenges,
-        };
-
-        let pp = StackedDrg::<Tree, Blake2sHasher>::setup(&sp).expect("setup failed");
-        let (tau, (p_aux, t_aux)) = StackedDrg::<Tree, Blake2sHasher>::replicate(
-            &pp,
-            &replica_id,
-            (mmapped_data.as_mut()).into(),
-            None,
-            config,
-            replica_path.clone(),
-        )
-        .expect("replication failed");
-
-        let mut copied = vec![0; data.len()];
-        copied.copy_from_slice(&mmapped_data);
-        assert_ne!(data, copied, "replication did not change data");
-
-        let seed = rng.gen();
-        let pub_inputs =
-            PublicInputs::<<Tree::Hasher as Hasher>::Domain, <Blake2sHasher as Hasher>::Domain> {
-                replica_id,
-                seed,
-                tau: Some(tau),
-                k: None,
-            };
-
-        // Store a copy of the t_aux for later resource deletion.
-        let t_aux_orig = t_aux.clone();
-
-        // Convert TemporaryAux to TemporaryAuxCache, which instantiates all
-        // elements based on the configs stored in TemporaryAux.
-        let t_aux = TemporaryAuxCache::<Tree, Blake2sHasher>::new(&t_aux, replica_path)
-            .expect("failed to restore contents of t_aux");
-
-        let priv_inputs = PrivateInputs { p_aux, t_aux };
-
-        let all_partition_proofs = &StackedDrg::<Tree, Blake2sHasher>::prove_all_partitions(
-            &pp,
-            &pub_inputs,
-            &priv_inputs,
-            partitions,
-        )
-        .expect("failed to generate partition proofs");
-
-        let proofs_are_valid = StackedDrg::<Tree, Blake2sHasher>::verify_all_partitions(
-            &pp,
-            &pub_inputs,
-            all_partition_proofs,
-        )
-        .expect("failed to verify partition proofs");
-
-        // Discard cached MTs that are no longer needed.
-        TemporaryAux::<Tree, Blake2sHasher>::clear_temp(t_aux_orig).expect("t_aux delete failed");
-
-        assert!(proofs_are_valid);
-
-        cache_dir.close().expect("Failed to remove cache dir");
-    }
-
-    table_tests! {
-        prove_verify_fixed {
-           prove_verify_fixed_64_64(64);
-        }
-    }
-
-    #[test]
-    // We are seeing a bug, in which setup never terminates for some sector sizes.
-    // This test is to debug that and should remain as a regression teset.
-    fn setup_terminates() {
-        let degree = BASE_DEGREE;
-        let expansion_degree = EXP_DEGREE;
-        let nodes = 1024 * 1024 * 32 * 8; // This corresponds to 8GiB sectors (32-byte nodes)
-        let layer_challenges = LayerChallenges::new(10, 333);
-        let sp = SetupParams {
-            nodes,
-            degree,
-            expansion_degree,
-            porep_id: [32; 32],
-            layer_challenges,
-        };
-
-        // When this fails, the call to setup should panic, but seems to actually hang (i.e. neither return nor panic) for some reason.
-        // When working as designed, the call to setup returns without error.
-        let _pp = StackedDrg::<
-            DiskTree<PedersenHasher, typenum::U8, typenum::U0, typenum::U0>,
-            Blake2sHasher,
-        >::setup(&sp)
-        .expect("setup failed");
-    }
-
-    #[test]
-    fn test_generate_labels() {
-        let layers = 11;
-        let nodes_2k = 1 << 11;
-        let nodes_4k = 1 << 12;
-        let replica_id = [9u8; 32];
-        let porep_id = [123; 32];
-        test_generate_labels_aux(
-            nodes_2k,
-            layers,
-            replica_id,
-            porep_id,
-            Fr::from_repr(FrRepr([
-                0x1a4017052cbe1c4a,
-                0x446354db91e96d8e,
-                0xbc864a95454eba0c,
-                0x094cf219d72cad06,
-            ]))
-            .unwrap(),
-        );
-
-        test_generate_labels_aux(
-            nodes_4k,
-            layers,
-            replica_id,
-            porep_id,
-            Fr::from_repr(FrRepr([
-                0x0a6917a59c51198b,
-                0xd2edc96e3717044a,
-                0xf438a1131f907206,
-                0x084f42888ca2342c,
-            ]))
-            .unwrap(),
-        );
-    }
-
-    fn test_generate_labels_aux(
-        sector_size: usize,
-        layers: usize,
-        replica_id: [u8; 32],
-        porep_id: [u8; 32],
-        expected_last_label: Fr,
-    ) {
-        let nodes = sector_size / NODE_SIZE;
-
-        let cache_dir = tempfile::tempdir().expect("tempdir failure");
-        let config = StoreConfig::new(
-            cache_dir.path(),
-            CacheKey::CommDTree.to_string(),
-            nodes.trailing_zeros() as usize,
-        );
-
-        let graph = StackedBucketGraph::<PoseidonHasher>::new(
-            None,
-            nodes,
-            BASE_DEGREE,
-            EXP_DEGREE,
-            porep_id,
-        )
-        .unwrap();
-
-        let unused_layer_challenges = LayerChallenges::new(layers, 0);
-
-        let (labels, _) = StackedDrg::<
-            // Although not generally correct for every size, the hasher shape is not used,
-            // so for purposes of testing label creation, it is safe to supply a dummy.
-            DiskTree<PoseidonHasher, typenum::U8, typenum::U8, typenum::U2>,
-            Sha256Hasher,
-        >::generate_labels(
-            &graph,
-            &unused_layer_challenges,
-            &<PoseidonHasher as Hasher>::Domain::try_from_bytes(&replica_id).unwrap(),
-            config,
-        )
-        .unwrap();
-
-        let final_labels = labels.labels_for_last_layer().unwrap();
-        let last_label = final_labels.read_at(nodes - 1).unwrap();
-
-        assert_eq!(expected_last_label.into_repr(), last_label.0);
     }
 }

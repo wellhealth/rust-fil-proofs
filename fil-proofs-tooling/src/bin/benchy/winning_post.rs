@@ -5,10 +5,7 @@ use fil_proofs_tooling::shared::{create_replica, PROVER_ID, RANDOMNESS};
 use fil_proofs_tooling::{measure, Metadata};
 use filecoin_proofs::constants::{WINNING_POST_CHALLENGE_COUNT, WINNING_POST_SECTOR_COUNT};
 use filecoin_proofs::types::PoStConfig;
-use filecoin_proofs::{
-    generate_winning_post, generate_winning_post_sector_challenge, verify_winning_post, with_shape,
-    PoStType,
-};
+use filecoin_proofs::{generate_winning_post, generate_winning_post_sector_challenge, verify_winning_post, with_shape, PoStType, generate_winning_post_inner, verify_winning_post_inner};
 use log::info;
 use serde::Serialize;
 use storage_proofs::merkle::MerkleTreeTrait;
@@ -79,19 +76,20 @@ pub fn run_fallback_post_bench<Tree: 'static + MerkleTreeTrait>(
     .expect("failed to generate winning post sector challenge");
 
     let gen_winning_post_measurement = measure(|| {
-        generate_winning_post::<Tree>(&post_config, &RANDOMNESS, &priv_replica_info[..], PROVER_ID)
+        generate_winning_post_inner::<Tree>(&post_config, &RANDOMNESS, &priv_replica_info[..], PROVER_ID,0)
     })
     .expect("failed to generate winning post");
 
     let proof = &gen_winning_post_measurement.return_value;
 
     let verify_winning_post_measurement = measure(|| {
-        verify_winning_post::<Tree>(
+        verify_winning_post_inner::<Tree>(
             &post_config,
             &RANDOMNESS,
             &pub_replica_info[..],
             PROVER_ID,
             &proof,
+            0,
         )
     })
     .expect("failed to verify winning post proof");
