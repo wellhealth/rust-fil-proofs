@@ -14,7 +14,7 @@ use rayon::iter::IntoParallelIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
 use storage_proofs::hasher::Domain;
-use crate::Commitment;
+use crate::{Commitment, verify_seal_inner};
 use crate::DefaultPieceDomain;
 use crate::DefaultPieceHasher;
 use crate::PaddedBytesAmount;
@@ -114,6 +114,7 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
     phase1_output: SealCommitPhase1Output<Tree>,
     prover_id: ProverId,
     sector_id: SectorId,
+    gpu_index:usize,
 ) -> Result<SealCommitOutput> {
     let stage1_data = prepare_c2::<Tree>(porep_config, phase1_output, prover_id, sector_id)?;
     let C2DataStage1 {
@@ -134,7 +135,7 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
     info!("此版本使用星际无限C2流程(抽离自bellperson)");
     let provers = c2_stage1::<Tree>(circuits)?;
 
-    let proofs = c2_stage2(provers, &groth_params, r_s, s_s)?;
+    let proofs = c2_stage2(provers, &groth_params, r_s, s_s, gpu_index)?;
     let proofs = proofs
         .into_iter()
         .map(|groth_proof| {
@@ -156,7 +157,7 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
 	let buf = buf;
     // Verification is cheap when parameters are cached,
     // and it is never correct to return a proof which does not verify.
-    verify_seal::<Tree>(
+    verify_seal_inner::<Tree>(
         porep_config,
         comm_r,
         comm_d,
@@ -164,7 +165,9 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
         sector_id,
         ticket,
         seed,
-        &buf,)
+        &buf,
+        gpu_index,
+    )
     .context("post-seal verification sanity check failed")?;
 
     let out = SealCommitOutput { proof: buf };
@@ -287,6 +290,7 @@ pub fn c2_stage2(
     params: &MappedParameters<paired::bls12_381::Bls12>,
     r_s: Vec<Fr>,
     s_s: Vec<Fr>,
+    gpu_index:usize,
 ) -> Result<Vec<Proof<Bls12>>, SynthesisError> {
     let worker = Worker::new();
     let input_len = provers[0].input_assignment.len();
@@ -307,7 +311,7 @@ pub fn c2_stage2(
         log_d += 1;
     }
 
-    let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false));
+    let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false,gpu_index));
 
     let (tx_1, rx_1) =
         sync_channel::<(EvaluationDomain<Bls12, Scalar<Bls12>>, _, _)>(provers.len());
@@ -405,7 +409,7 @@ pub fn c2_stage2(
     drop(rx_hl);
     drop(fft_kern);
 
-    let mut multiexp_kern = Some(LockedMultiexpKernel::<Bls12>::new(log_d, false));
+    let mut multiexp_kern = Some(LockedMultiexpKernel::<Bls12>::new(log_d, false,gpu_index));
 
     let h_s = a_s
         .into_iter()
