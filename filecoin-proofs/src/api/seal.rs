@@ -1,7 +1,8 @@
 use std::fs::{self, metadata, File, OpenOptions};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
-use ocl::{Device, Platform};
+use ocl::{Device};
+
 use std::sync::Mutex;
 
 use anyhow::{ensure, Context, Result};
@@ -45,6 +46,7 @@ use crate::types::{
 use crate::Labels;
 use std::marker::PhantomData;
 //use bellperson::gpu::GpuDeviceInfo;
+
 use regex::internal::Input;
 
 #[allow(clippy::too_many_arguments)]
@@ -289,12 +291,12 @@ where
 
     let mut device_info = select_gpu_device();
 
-
     let gpu_index = device_info.index;
 
     log::info!("select gpu index: {}", gpu_index);
 
     defer! {
+        log::info!("release gpu index: {}", gpu_index);
         release_gpu_device(device_info);
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -480,6 +482,7 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
     log::info!("select gpu index: {}", gpu_index);
 
     defer! {
+        log::info!("release gpu index: {}", gpu_index);
         release_gpu_device(device_info);
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1175,19 +1178,28 @@ lazy_static::lazy_static! {
     //pub static ref GPU_NVIDIA_DEVICES: Vec<Device> = get_devices(GPU_NVIDIA_PLATFORM_NAME).unwrap_or_default();
     //pub static ref GPU_NVIDIA_DEVICES: Vec<Device> = get_devices(GPU_NVIDIA_PLATFORM_NAME).unwrap_or_default();
     pub static ref GPU_NVIDIA_DEVICES_QUEUE:  Mutex<Queue<GpuDeviceInfo>> = Mutex::new(Queue::new());
+    pub static ref GPU_NVIDIA_DEVICES_QUEUE_INIT: Vec<usize>  = Vec::new();
+
 }
+
+static mut N: i32 = 0;
 
 pub fn select_gpu_device() -> GpuDeviceInfo {
 
     let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
 
-    if queue.len() == 0{
-        let devices = &bellperson::gpu::GPU_NVIDIA_DEVICES;
+    unsafe {
+        if N == 0{
+            let devices = &bellperson::gpu::GPU_NVIDIA_DEVICES;
 
-        for i in 0 .. devices.len(){
-            let v =  devices[i];
+            for i in 0 .. devices.len(){
+                let v =  devices[i];
 
-            queue.push(GpuDeviceInfo{index:i, device: v})
+                queue.push(GpuDeviceInfo{index:i, device: v})
+            }
+
+            N = 1;
+            info!("init gpu finished: {}", N);
         }
     }
 

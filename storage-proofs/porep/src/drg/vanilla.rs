@@ -438,7 +438,7 @@ where
         data_tree: Option<BinaryMerkleTree<H>>,
         config: StoreConfig,
         replica_path: PathBuf,
-        gpu_index:usize,
+        _gpu_index:usize,
     ) -> Result<(Self::Tau, Self::ProverAux)> {
         use storage_proofs_core::cache_key::CacheKey;
 
