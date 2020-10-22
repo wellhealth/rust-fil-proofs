@@ -9,6 +9,7 @@ repository = "https://github.com/filecoin-project/rust-fil-proofs"
 readme = "README.md"
 
 [dependencies]
+crossbeam = "*"
 futures = "0.1"
 storage-proofs = { version = "^5.0.0", path = "../storage-proofs" }
 bitvec = "0.17"

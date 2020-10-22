@@ -1,19 +1,7 @@
-use std::sync::Arc;
-use std::sync::mpsc::channel;
-use std::sync::mpsc::sync_channel;
-use bellperson::Circuit;
-use bellperson::groth16::ParameterSource;
-use bellperson::multiexp::multiexp_full;
-use ff::Field;
-use ff::PrimeField;
-use bellperson::ConstraintSystem;
-use groupy::CurveAffine;
-use groupy::CurveProjective;
-use rayon::iter::IndexedParallelIterator;
-use rayon::iter::IntoParallelIterator;
-use rayon::iter::IntoParallelRefMutIterator;
-use rayon::iter::ParallelIterator;
-use storage_proofs::hasher::Domain;
+use crate::caches::get_stacked_params;
+use crate::parameters::setup_params;
+use crate::util::as_safe_commitment;
+use crate::verify_seal;
 use crate::Commitment;
 use crate::DefaultPieceDomain;
 use crate::DefaultPieceHasher;
@@ -21,42 +9,54 @@ use crate::PaddedBytesAmount;
 use crate::PoRepConfig;
 use crate::PoRepProofPartitions;
 use crate::ProverId;
-use crate::SINGLE_PARTITION_PROOF_LEN;
 use crate::SealCommitOutput;
 use crate::SealCommitPhase1Output;
 use crate::Ticket;
-use crate::caches::get_stacked_params;
-use crate::parameters::setup_params;
-use crate::util::as_safe_commitment;
-use crate::verify_seal;
+use crate::SINGLE_PARTITION_PROOF_LEN;
 use anyhow::{ensure, Context, Result};
-use bellperson::Index;
-use bellperson::SynthesisError;
-use bellperson::Variable;
 use bellperson::domain::EvaluationDomain;
 use bellperson::domain::Scalar;
 use bellperson::gpu::LockedFFTKernel;
 use bellperson::gpu::LockedMultiexpKernel;
 use bellperson::groth16;
 use bellperson::groth16::MappedParameters;
+use bellperson::groth16::ParameterSource;
 use bellperson::groth16::Proof;
 use bellperson::groth16::ProvingAssignment;
 use bellperson::multicore::Worker;
+use bellperson::multiexp::multiexp;
+use bellperson::multiexp::multiexp_full;
 use bellperson::multiexp::DensityTracker;
 use bellperson::multiexp::FullDensity;
-use bellperson::multiexp::multiexp;
+use bellperson::Circuit;
+use bellperson::ConstraintSystem;
+use bellperson::Index;
+use bellperson::SynthesisError;
+use bellperson::Variable;
+use ff::Field;
+use ff::PrimeField;
+use futures::Future;
+use groupy::CurveAffine;
+use groupy::CurveProjective;
 use log::info;
 use paired::bls12_381::Bls12;
 use paired::bls12_381::Fr;
 use paired::bls12_381::FrRepr;
 use rand::rngs::OsRng;
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::IntoParallelRefMutIterator;
+use rayon::iter::ParallelIterator;
+use std::sync::mpsc::channel;
+use std::sync::mpsc::sync_channel;
+use std::sync::Arc;
 use storage_proofs::compound_proof;
 use storage_proofs::compound_proof::CircuitComponent;
 use storage_proofs::compound_proof::CompoundProof;
+use storage_proofs::hasher::Domain;
 use storage_proofs::merkle::MerkleTreeTrait;
 use storage_proofs::multi_proof::MultiProof;
 use storage_proofs::porep::stacked;
-use futures::Future;
 use storage_proofs::porep::stacked::StackedCircuit;
 use storage_proofs::porep::stacked::StackedCompound;
 use storage_proofs::porep::stacked::StackedDrg;
@@ -75,8 +75,6 @@ where
     pub comm_d: Commitment,
     pub seed: Ticket,
 }
-
-
 
 pub struct ConcreteProvingAssignment {
     // Density of queries
@@ -153,7 +151,7 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
 
     proof.write(&mut buf)?;
 
-	let buf = buf;
+    let buf = buf;
     // Verification is cheap when parameters are cached,
     // and it is never correct to return a proof which does not verify.
     verify_seal::<Tree>(
@@ -164,7 +162,8 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
         sector_id,
         ticket,
         seed,
-        &buf,)
+        &buf,
+    )
     .context("post-seal verification sanity check failed")?;
 
     let out = SealCommitOutput { proof: buf };
@@ -259,7 +258,6 @@ pub fn prepare_c2<Tree: 'static + MerkleTreeTrait>(
     })
 }
 
-
 pub fn c2_stage1<Tree: 'static + MerkleTreeTrait>(
     circuits: Vec<StackedCircuit<Tree, DefaultPieceHasher>>,
 ) -> Result<Vec<ConcreteProvingAssignment>> {
@@ -287,7 +285,7 @@ pub fn c2_stage2(
     params: &MappedParameters<paired::bls12_381::Bls12>,
     r_s: Vec<Fr>,
     s_s: Vec<Fr>,
-) -> Result<Vec<Proof<Bls12>>, SynthesisError> {
+) -> Result<Vec<Proof<Bls12>>> {
     let worker = Worker::new();
     let input_len = provers[0].input_assignment.len();
     let vk = params.get_vk(input_len)?;
@@ -314,16 +312,17 @@ pub fn c2_stage2(
     let (tx_2, rx_2) = sync_channel(provers.len());
     let (tx_3, rx_3) = sync_channel(provers.len());
     let (tx_hl, rx_hl) = channel();
-	let (tx_ab, rx_ab) = channel();
-	let (tx_g2, rx_g2) = channel();
+    let (tx_ab, rx_ab) = channel();
+    let (tx_g2, rx_g2) = channel();
 
-    let mut a_s = Default::default();
-    rayon::scope({
+    let mut a_s = vec![];
+    crossbeam::scope({
         let a_s = &mut a_s;
         let provers_len = provers.len();
         let provers = &mut provers;
         let worker = &worker;
         let fft_kern = &mut fft_kern;
+        let tx_hl = tx_hl.clone();
 
         move |s| {
             s.spawn(move |_| {
@@ -340,13 +339,6 @@ pub fn c2_stage2(
             });
             s.spawn(move |_| {
                 tx_hl.send(params.get_h(0)).unwrap();
-                tx_hl.send(params.get_l(0)).unwrap();
-				let a = params.get_a(0, 0);
-				tx_ab.send(a).unwrap();
-				let g1 = params.get_b_g1(0, 0);
-				tx_ab.send(g1).unwrap();
-				let g2 = params.get_b_g2(0, 0);
-				tx_g2.send(g2).unwrap();
             });
 
             s.spawn(move |_| {
@@ -394,33 +386,41 @@ pub fn c2_stage2(
                 tx_3.send(a).unwrap();
             }
         }
-    });
+    }).unwrap();
 
     let param_h = rx_hl.recv().unwrap()?;
-    let param_l = rx_hl.recv().unwrap()?;
-	let param_a = rx_ab.recv().unwrap()?;
-	let param_bg1 = rx_ab.recv().unwrap()?;
-	let param_bg2 = rx_g2.recv().unwrap()?;
 
-    drop(rx_hl);
     drop(fft_kern);
 
     let mut multiexp_kern = Some(LockedMultiexpKernel::<Bls12>::new(log_d, false));
 
-    let h_s = a_s
-        .into_iter()
-        .map(|a| {
-            Ok(multiexp_full(
-                &worker,
-                param_h.clone(),
-                FullDensity,
-                a,
-                &mut multiexp_kern,
-            ))
-        })
-        .collect::<Result<Vec<_>, SynthesisError>>()?;
-	drop(param_h);
-	info!("done h_s");
+    let mut h_s = Ok(vec![]);
+    crossbeam::scope({
+        let h_s = &mut h_s;
+        let worker = &worker;
+        let multiexp_kern = &mut multiexp_kern;
+        move |s| {
+            s.spawn(move |_| {
+                tx_hl.send(params.get_l(0)).unwrap();
+            });
+            *h_s = a_s
+                .into_iter()
+                .map(|a| {
+                    Ok(multiexp_full(
+                        worker,
+                        param_h.clone(),
+                        FullDensity,
+                        a,
+                        multiexp_kern,
+                    ))
+                })
+                .collect::<Result<Vec<_>, SynthesisError>>();
+            drop(param_h);
+        }
+    }).unwrap();
+
+    info!("done h_s");
+    let h_s = h_s?;
 
     let input_assignments = provers
         .par_iter_mut()
@@ -434,7 +434,7 @@ pub fn c2_stage2(
             )
         })
         .collect::<Vec<_>>();
-	info!("done input_assignments");
+    info!("done input_assignments");
 
     let aux_assignments = provers
         .par_iter_mut()
@@ -449,30 +449,58 @@ pub fn c2_stage2(
         })
         .collect::<Vec<_>>();
 
-	info!("done aux_assignments");
+    info!("done aux_assignments");
 
-    let l_s = aux_assignments
-        .iter()
-        .map(|aux_assignment| {
-            Ok(multiexp_full(
-                &worker, param_l.clone(),
-                FullDensity,
-                aux_assignment.clone(),
-                &mut multiexp_kern,
-            ))
-        })
-        .collect::<Result<Vec<_>, SynthesisError>>()?;
-	drop(param_l);
-	info!("done l_s");
+    let mut l_s = Ok(vec![]);
+    let param_l = rx_hl.recv().unwrap()?;
+    drop(rx_hl);
+    crossbeam::scope({
+        let worker = &worker;
+        let multiexp_kern = &mut multiexp_kern;
+        let l_s = &mut l_s;
+        let aux_assignments = &aux_assignments;
+        move |s| {
+            s.spawn(move |_| {
+                let a = params.get_a(0, 0);
+                tx_ab.send(a).unwrap();
+                let g1 = params.get_b_g1(0, 0);
+                tx_ab.send(g1).unwrap();
+                let g2 = params.get_b_g2(0, 0);
+                tx_g2.send(g2).unwrap();
+            });
 
+            *l_s = aux_assignments
+                .iter()
+                .map({
+                    let param_l = param_l.clone();
+                    move |aux_assignment| {
+                        Ok(multiexp_full(
+                            worker,
+                            param_l.clone(),
+                            FullDensity,
+                            aux_assignment.clone(),
+                            multiexp_kern,
+                        ))
+                    }
+                })
+                .collect::<Result<Vec<_>, SynthesisError>>();
+            drop(param_l);
+        }
+    }).unwrap();
+    let l_s = l_s?;
+
+    info!("done l_s");
+
+    let param_a = rx_ab.recv().unwrap()?;
+    let param_bg1 = rx_ab.recv().unwrap()?;
+    let param_bg2 = rx_g2.recv().unwrap()?;
     let inputs = provers
         .into_iter()
         .zip(input_assignments.iter())
         .zip(aux_assignments.iter())
         .map(|((prover, input_assignment), aux_assignment)| {
-
-			let a_inputs_source = param_a.0.clone();
-			let a_aux_source = ((param_a.1).0.clone(), input_assignment.len());
+            let a_inputs_source = param_a.0.clone();
+            let a_aux_source = ((param_a.1).0.clone(), input_assignment.len());
 
             let a_inputs = multiexp_full(
                 &worker,
@@ -493,8 +521,8 @@ pub fn c2_stage2(
             let b_input_density = Arc::new(prover.b_input_density);
             let b_input_density_total = b_input_density.get_total_density();
             let b_aux_density = Arc::new(prover.b_aux_density);
-			let b_g1_inputs_source = param_bg1.0.clone();
-			let b_g1_aux_source = ((param_bg1.1).0.clone(), b_input_density_total);
+            let b_g1_inputs_source = param_bg1.0.clone();
+            let b_g1_aux_source = ((param_bg1.1).0.clone(), b_input_density_total);
 
             let b_g1_inputs = multiexp(
                 &worker,
@@ -511,8 +539,8 @@ pub fn c2_stage2(
                 aux_assignment.clone(),
                 &mut multiexp_kern,
             );
-			let b_g2_inputs_source = param_bg2.0.clone();
-			let b_g2_aux_source = ((param_bg2.1).0.clone(), b_input_density_total);
+            let b_g2_inputs_source = param_bg2.0.clone();
+            let b_g2_aux_source = ((param_bg2.1).0.clone(), b_input_density_total);
 
             let b_g2_inputs = multiexp(
                 &worker,
@@ -540,7 +568,11 @@ pub fn c2_stage2(
         })
         .collect::<Result<Vec<_>, SynthesisError>>()?;
 
-	info!("done inputs");
+	drop(param_a);
+	drop(param_bg1);
+	drop(param_bg2);
+
+    info!("done inputs");
     drop(multiexp_kern);
     let proofs = h_s
         .into_iter()
@@ -600,4 +632,3 @@ pub fn c2_stage2(
 
     Ok(proofs)
 }
-
