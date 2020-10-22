@@ -357,8 +357,11 @@ pub fn c2_stage2(
             for (index, prover) in provers.iter_mut().enumerate() {
                 if index >= spawn_index {
                     spawn_index = len + 1;
-                    s.spawn(move |_| {
-                        tx_hl.send(params.get_h(0)).unwrap();
+                    s.spawn({
+                        let tx_hl = tx_hl.clone();
+                        move |_| {
+                            tx_hl.send(params.get_h(0)).unwrap();
+                        }
                     });
                 }
                 let mut a =
