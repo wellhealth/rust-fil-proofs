@@ -1,7 +1,6 @@
 use std::fs::{self, metadata, File, OpenOptions};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
-use ocl::{Device};
 
 use std::sync::Mutex;
 
@@ -45,9 +44,7 @@ use crate::types::{
 };
 use crate::Labels;
 use std::marker::PhantomData;
-//use bellperson::gpu::GpuDeviceInfo;
 
-use regex::internal::Input;
 
 #[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1<R, S, T, Tree: 'static + MerkleTreeTrait>(

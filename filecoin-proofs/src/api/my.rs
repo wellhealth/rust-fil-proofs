@@ -1,17 +1,3 @@
-use std::sync::Arc;
-use std::sync::mpsc::channel;
-use std::sync::mpsc::sync_channel;
-use bellperson::Circuit;
-use bellperson::groth16::ParameterSource;
-use bellperson::multiexp::multiexp_full; use ff::Field; use ff::PrimeField; use bellperson::ConstraintSystem;
-use groupy::CurveAffine;
-use groupy::CurveProjective;
-use rayon::iter::IndexedParallelIterator;
-use rayon::iter::IntoParallelIterator;
-use rayon::iter::IntoParallelRefMutIterator;
-use rayon::iter::ParallelIterator;
-use storage_proofs::hasher::Domain;
-use crate::{Commitment, verify_seal_inner};
 use crate::caches::get_stacked_params;
 use crate::parameters::setup_params;
 use crate::util::as_safe_commitment;
@@ -25,6 +11,7 @@ use crate::SealCommitOutput;
 use crate::SealCommitPhase1Output;
 use crate::Ticket;
 use crate::SINGLE_PARTITION_PROOF_LEN;
+use crate::{verify_seal_inner, Commitment};
 use anyhow::{ensure, Context, Result};
 use bellperson::domain::EvaluationDomain;
 use bellperson::domain::Scalar;
@@ -32,24 +19,40 @@ use bellperson::gpu::LockedFFTKernel;
 use bellperson::gpu::LockedMultiexpKernel;
 use bellperson::groth16;
 use bellperson::groth16::MappedParameters;
+use bellperson::groth16::ParameterSource;
 use bellperson::groth16::Proof;
 use bellperson::groth16::ProvingAssignment;
 use bellperson::multicore::Worker;
 use bellperson::multiexp::multiexp;
+use bellperson::multiexp::multiexp_full;
 use bellperson::multiexp::DensityTracker;
 use bellperson::multiexp::FullDensity;
+use bellperson::Circuit;
+use bellperson::ConstraintSystem;
 use bellperson::Index;
 use bellperson::SynthesisError;
 use bellperson::Variable;
+use ff::Field;
+use ff::PrimeField;
 use futures::Future;
+use groupy::CurveAffine;
+use groupy::CurveProjective;
 use log::info;
 use paired::bls12_381::Bls12;
 use paired::bls12_381::Fr;
 use paired::bls12_381::FrRepr;
 use rand::rngs::OsRng;
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::IntoParallelRefMutIterator;
+use rayon::iter::ParallelIterator;
+use std::sync::mpsc::channel;
+use std::sync::mpsc::sync_channel;
+use std::sync::Arc;
 use storage_proofs::compound_proof;
 use storage_proofs::compound_proof::CircuitComponent;
 use storage_proofs::compound_proof::CompoundProof;
+use storage_proofs::hasher::Domain;
 use storage_proofs::merkle::MerkleTreeTrait;
 use storage_proofs::multi_proof::MultiProof;
 use storage_proofs::porep::stacked;
@@ -108,7 +111,7 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
     phase1_output: SealCommitPhase1Output<Tree>,
     prover_id: ProverId,
     sector_id: SectorId,
-    gpu_index:usize,
+    gpu_index: usize,
 ) -> Result<SealCommitOutput> {
     let stage1_data = prepare_c2::<Tree>(porep_config, phase1_output, prover_id, sector_id)?;
     let C2DataStage1 {
@@ -133,7 +136,7 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
     let provers = c2_stage1::<Tree>(circuits)?;
     info!("sector: {}, C2 done with stage1 CPU", sector_id);
 
-    let proofs = c2_stage2(provers, &groth_params, r_s, s_s, sector_id)?;
+    let proofs = c2_stage2(provers, &groth_params, r_s, s_s, sector_id, gpu_index)?;
     let proofs = proofs
         .into_iter()
         .map(|groth_proof| {
@@ -287,6 +290,7 @@ pub fn c2_stage2(
     r_s: Vec<Fr>,
     s_s: Vec<Fr>,
     sector_id: SectorId,
+    gpu_index: usize,
 ) -> Result<Vec<Proof<Bls12>>> {
     let worker = Worker::new();
     let input_len = provers[0].input_assignment.len();
@@ -307,7 +311,7 @@ pub fn c2_stage2(
         log_d += 1;
     }
 
-    let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false,gpu_index));
+    let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false, gpu_index));
 
     let (tx_1, rx_1) =
         sync_channel::<(EvaluationDomain<Bls12, Scalar<Bls12>>, _, _)>(provers.len());
@@ -402,7 +406,7 @@ pub fn c2_stage2(
 
     drop(fft_kern);
 
-    let mut multiexp_kern = Some(LockedMultiexpKernel::<Bls12>::new(log_d, false,gpu_index));
+    let mut multiexp_kern = Some(LockedMultiexpKernel::<Bls12>::new(log_d, false, gpu_index));
 
     let mut h_s = Ok(vec![]);
     crossbeam::scope({
