@@ -401,7 +401,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     where
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
-        P: AsRef<Path>,
+        P: AsRef<Path> + Send + Sync,
     {
         if settings::SETTINGS
             .lock()
@@ -413,7 +413,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 configs,
                 labels,
                 replica_path,
-				gpu_index,
+                gpu_index,
             )
         } else {
             Self::generate_tree_c_cpu::<ColumnArity, TreeArity>(
@@ -426,14 +426,16 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         }
     }
 
-    fn fast_create_batch<ColumnArity>(
+    fn fast_create_batch<ColumnArity, P>(
         nodes_count: usize,
         config_counts: usize,
         batch_size: usize,
         paths: &[(PathBuf, String)],
         mut builder_tx: SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
+        replica_path: P,
     ) where
         ColumnArity: 'static + PoseidonArity,
+        P: AsRef<Path> + Send + Sync,
     {
         let mut files = paths
             .iter()
@@ -441,6 +443,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .map(|x| File::open(x).context("cannot open layer file for tree-c"))
             .collect::<Result<Vec<_>>>()
             .unwrap();
+        info!("file opened for p2, {:?}", replica_path.as_ref());
 
         for _ in 0..config_counts {
             Self::fast_create_batch_for_config(
@@ -448,22 +451,25 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 batch_size,
                 &mut builder_tx,
                 &mut files,
+                &replica_path,
             );
         }
     }
 
-    fn fast_create_batch_for_config<ColumnArity>(
+    fn fast_create_batch_for_config<ColumnArity, P>(
         nodes_count: usize,
         batch_size: usize,
         builder_tx: &mut SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
         files: &mut [File],
+        replica_path: P,
     ) where
         ColumnArity: 'static + PoseidonArity,
+        P: AsRef<Path> + Send + Sync,
     {
         let (tx, rx) = mpsc::channel();
 
         rayon::join(
-            || Self::read_column_batch_from_file(files, nodes_count, batch_size, tx),
+            || Self::read_column_batch_from_file(files, nodes_count, batch_size, tx, &replica_path),
             || {
                 Self::create_column_in_memory::<ColumnArity>(
                     rx,
@@ -502,12 +508,15 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         }
     }
 
-    fn read_column_batch_from_file(
+    fn read_column_batch_from_file<P>(
         files: &mut [File],
         nodes_count: usize,
         batch_size: usize,
         tx: Sender<Vec<Vec<Fr>>>,
-    ) {
+        replica_path: P,
+    ) where
+        P: AsRef<Path> + Send + Sync,
+    {
         use merkletree::merkle::Element;
         use std::io::Read;
 
@@ -528,46 +537,55 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         .collect()
                 })
                 .collect::<Vec<Vec<Fr>>>();
+            info!(
+                "sector: {:?}: node index: {}",
+                replica_path.as_ref(),
+                node_index
+            );
 
             tx.send(data).unwrap();
         }
     }
-    fn create_batch_gpu<ColumnArity>(
+    fn create_batch_gpu<ColumnArity, P: AsRef<Path> + Send + Sync>(
         nodes_count: usize,
         configs: &[StoreConfig],
         paths: &[(PathBuf, String)],
         builder_tx: SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
         batch_size: usize,
+        replica_path: P,
     ) where
         ColumnArity: 'static + PoseidonArity,
     {
-        Self::fast_create_batch::<ColumnArity>(
+        Self::fast_create_batch::<ColumnArity, _>(
             nodes_count,
             configs.len(),
             batch_size,
             paths,
             builder_tx,
+            replica_path,
         );
     }
 
-    fn receive_and_generate_tree_c<ColumnArity, TreeArity>(
+    fn receive_and_generate_tree_c<ColumnArity, TreeArity, P>(
         nodes_count: usize,
         configs: &[StoreConfig],
         builder_rx: Receiver<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
         max_gpu_tree_batch_size: usize,
         max_gpu_column_batch_size: usize,
         column_write_batch_size: usize,
-        gpu_index:usize
+        replica_path: P,
+        gpu_index: usize,
     ) where
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
+        P: AsRef<Path> + Send + Sync,
     {
         let mut column_tree_builder = ColumnTreeBuilder::<ColumnArity, TreeArity>::new(
             Some(BatcherType::GPU),
             nodes_count,
             max_gpu_column_batch_size,
             max_gpu_tree_batch_size,
-            gpu_index
+            gpu_index,
         )
         .expect("failed to create ColumnTreeBuilder");
 
@@ -577,6 +595,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let (tx, rx) = mpsc::sync_channel(0);
         // Loop until all trees for all configs have been built.
         while i < configs.len() {
+            info!("sector: {:?}: recv column: {}", replica_path.as_ref(), i);
             let (columns, is_final) = builder_rx.recv().expect("failed to recv columns");
 
             // Just add non-final column batches.
@@ -593,7 +612,14 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 .expect("failed to add final columns");
 
             assert_eq!(base_data.len(), nodes_count);
-            info!("persist tree-c: {}/{}", i + 1, configs.len());
+            info!(
+                "sector: {:?}: persist tree-c: {}/{}",
+                replica_path.as_ref(),
+                i + 1,
+                configs.len()
+            );
+
+			let replica_path = PathBuf::from(replica_path.as_ref());
             rayon::spawn({
                 let config = config.clone();
                 let config_len = configs.len();
@@ -605,7 +631,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     let path = StoreConfig::data_path(&config.path, &config.id);
                     if path.exists() {
                         if let Err(e) = std::fs::remove_file(&path) {
-                            info!("cannot delete file: {:?}, erro: {}", path, e);
+                            info!("sector: {:?}: cannot delete file: {:?}, erro: {}", replica_path, path, e);
                         }
                     }
 
@@ -665,12 +691,12 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         configs: Vec<StoreConfig>,
         labels: &[(PathBuf, String)],
         replica_path: P,
-        gpu_index:usize,
+        gpu_index: usize,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
-        P: AsRef<Path>,
+        P: AsRef<Path> + Send + Sync,
     {
         info!("Building column hashes, {:?}", replica_path.as_ref());
 
@@ -700,24 +726,27 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let (builder_tx, builder_rx) = mpsc::sync_channel(0);
 
         let configs = &configs;
+		let replica_path = &replica_path;
         rayon::join(
             move || {
-                Self::create_batch_gpu::<ColumnArity>(
+                Self::create_batch_gpu::<ColumnArity, _>(
                     nodes_count,
                     configs,
                     labels,
                     builder_tx,
                     max_gpu_column_batch_size,
+                    replica_path,
                 )
             },
             move || {
-                Self::receive_and_generate_tree_c::<ColumnArity, TreeArity>(
+                Self::receive_and_generate_tree_c::<ColumnArity, TreeArity, _>(
                     nodes_count,
                     configs,
                     builder_rx,
                     max_gpu_tree_batch_size,
                     max_gpu_column_batch_size,
                     column_write_batch_size,
+					replica_path,
                     gpu_index,
                 )
             },
@@ -733,17 +762,23 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         configs: Vec<StoreConfig>,
         labels: &[(PathBuf, String)],
         replica_path: P,
-        gpu_index:usize,
+        gpu_index: usize,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
-        P: AsRef<Path>,
+        P: AsRef<Path> + Send + Sync,
     {
         info!("generating tree c using the GPU");
         // Build the tree for CommC
         measure_op(GenerateTreeC, || {
-            Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity, _>(nodes_count, configs, labels, replica_path, gpu_index)
+            Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity, _>(
+                nodes_count,
+                configs,
+                labels,
+                replica_path,
+                gpu_index,
+            )
         })
     }
 
@@ -1064,7 +1099,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         data_tree: Option<BinaryMerkleTree<G>>,
         config: StoreConfig,
         replica_path: PathBuf,
-        gpu_index:usize,
+        gpu_index: usize,
     ) -> Result<TransformedLayers<Tree, G>> {
         // Generate key layers.
         let (_, labels) = measure_op(EncodeWindowTimeAll, || {
@@ -1115,7 +1150,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         tree_count: usize,
         replica_path: PathBuf,
         labels: &LabelsCache<Tree>,
-        gpu_index:usize,
+        gpu_index: usize,
     ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>> {
         let tree_r_last = measure_op(GenerateTreeRLast, || {
             Self::generate_tree_r_last::<Tree::Arity>(
@@ -1413,7 +1448,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         tree_count: usize,
         tree_r_last_config: StoreConfig,
         replica_path: PathBuf,
-        gpu_index:usize,
+        gpu_index: usize,
     ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         TreeArity: PoseidonArity,
@@ -1532,7 +1567,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         replica_path: R,
         cache_path: S,
         sector_size: usize,
-        gpu_index:usize,
+        gpu_index: usize,
     ) -> Result<(
         <Tree::Hasher as Hasher>::Domain,
         PersistentAux<<Tree::Hasher as Hasher>::Domain>,
