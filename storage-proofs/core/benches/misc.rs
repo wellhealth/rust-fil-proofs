@@ -32,5 +32,9 @@ fn read_bytes_benchmark(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, read_bytes_benchmark);
-criterion_main!(benches);
+//criterion_group!(benches, read_bytes_benchmark);
+//criterion_main!(benches);
+
+fn main() {
+
+}

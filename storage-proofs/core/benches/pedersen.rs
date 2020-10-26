@@ -129,6 +129,7 @@ fn pedersen_circuit_benchmark(c: &mut Criterion) {
                         },
                         &groth_params,
                         &mut rng,
+                        0,
                     )
                     .unwrap();
 
@@ -181,6 +182,7 @@ fn pedersen_md_circuit_benchmark(c: &mut Criterion) {
                         },
                         &groth_params,
                         &mut rng,
+                        0,
                     )
                     .unwrap();
 
@@ -208,6 +210,7 @@ fn pedersen_md_circuit_benchmark(c: &mut Criterion) {
     );
 }
 
+/*
 criterion_group!(
     benches,
     pedersen_benchmark,
@@ -216,3 +219,8 @@ criterion_group!(
     pedersen_md_circuit_benchmark,
 );
 criterion_main!(benches);
+*/
+
+fn main() {
+
+}

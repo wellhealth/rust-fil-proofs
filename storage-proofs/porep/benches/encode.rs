@@ -78,5 +78,9 @@ fn kdf_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, kdf_benchmark);
-criterion_main!(benches);
+//criterion_group!(benches, kdf_benchmark);
+//criterion_main!(benches);
+
+fn main() {
+
+}

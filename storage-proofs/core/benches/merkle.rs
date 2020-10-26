@@ -44,5 +44,9 @@ fn merkle_benchmark(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, merkle_benchmark);
-criterion_main!(benches);
+//criterion_group!(benches, merkle_benchmark);
+//criterion_main!(benches);
+
+fn main() {
+
+}

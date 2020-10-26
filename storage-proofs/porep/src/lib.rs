@@ -24,6 +24,7 @@ pub trait PoRep<'a, H: Hasher, G: Hasher>: ProofScheme<'a> {
         data_tree: Option<BinaryMerkleTree<G>>,
         config: StoreConfig,
         replica_path: PathBuf,
+        gpu_index:usize,
     ) -> Result<(Self::Tau, Self::ProverAux)>;
 
     fn extract_all(

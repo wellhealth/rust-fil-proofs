@@ -94,6 +94,7 @@ fn xor_circuit_benchmark(c: &mut Criterion) {
                         },
                         &groth_params,
                         &mut rng,
+                        0,
                     )
                     .unwrap();
 
@@ -123,5 +124,9 @@ fn xor_circuit_benchmark(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, xor_benchmark, xor_circuit_benchmark);
-criterion_main!(benches);
+//criterion_group!(benches, xor_benchmark, xor_circuit_benchmark);
+//criterion_main!(benches);
+
+fn main() {
+
+}
