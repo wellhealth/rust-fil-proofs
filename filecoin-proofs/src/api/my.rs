@@ -129,10 +129,14 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
     let r_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
     let s_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
 
-    info!("此版本使用星际无限C2流程(抽离自bellperson)");
+    info!(
+        "sector: {}, 此版本使用星际无限C2流程(抽离自bellperson)",
+        sector_id
+    );
     let provers = c2_stage1::<Tree>(circuits)?;
+    info!("sector: {}, C2 done with stage1 CPU", sector_id);
 
-    let proofs = c2_stage2(provers, &groth_params, r_s, s_s)?;
+    let proofs = c2_stage2(provers, &groth_params, r_s, s_s, sector_id)?;
     let proofs = proofs
         .into_iter()
         .map(|groth_proof| {
@@ -245,7 +249,6 @@ pub fn prepare_c2<Tree: 'static + MerkleTreeTrait>(
         .collect::<Result<Vec<_>>>()?;
 
     let groth_params = get_stacked_params::<Tree>(porep_config)?;
-    // let p: MappedParameters<Bls12> = groth_params;
     Ok(C2DataStage1 {
         porep_config,
         ticket,
@@ -285,6 +288,7 @@ pub fn c2_stage2(
     params: &MappedParameters<paired::bls12_381::Bls12>,
     r_s: Vec<Fr>,
     s_s: Vec<Fr>,
+    sector_id: SectorId,
 ) -> Result<Vec<Proof<Bls12>>> {
     let worker = Worker::new();
     let input_len = provers[0].input_assignment.len();
@@ -326,9 +330,7 @@ pub fn c2_stage2(
 
         move |s| {
             s.spawn(move |_| {
-                while let Ok(data) = rx_1.recv() {
-                    let (mut a, b, c) = data;
-
+                while let Ok((mut a, b, c)) = rx_1.recv() {
                     a.mul_assign(&worker, &b);
                     drop(b);
                     a.sub_assign(&worker, &c);
@@ -396,6 +398,7 @@ pub fn c2_stage2(
         }
     })
     .unwrap();
+    info!("sector: {}, done FFT", sector_id);
 
     let param_h = rx_hl.recv().unwrap()?;
 
@@ -429,7 +432,7 @@ pub fn c2_stage2(
     })
     .unwrap();
 
-    info!("done h_s");
+    info!("sector: {}, done h_s", sector_id);
     let h_s = h_s?;
 
     let input_assignments = provers
@@ -444,7 +447,7 @@ pub fn c2_stage2(
             )
         })
         .collect::<Vec<_>>();
-    info!("done input_assignments");
+    info!("sector: {}, done input_assignments", sector_id);
 
     let aux_assignments = provers
         .par_iter_mut()
@@ -459,7 +462,7 @@ pub fn c2_stage2(
         })
         .collect::<Vec<_>>();
 
-    info!("done aux_assignments");
+    info!("sector: {}, done aux_assignments", sector_id);
 
     let mut l_s = Ok(vec![]);
     let param_l = rx_hl.recv().unwrap()?;
@@ -500,7 +503,7 @@ pub fn c2_stage2(
     .unwrap();
     let l_s = l_s?;
 
-    info!("done l_s");
+    info!("sector: {}, done l_s", sector_id);
 
     let param_a = rx_ab.recv().unwrap()?;
     let param_bg1 = rx_ab.recv().unwrap()?;
@@ -583,7 +586,7 @@ pub fn c2_stage2(
     drop(param_bg1);
     drop(param_bg2);
 
-    info!("done inputs");
+    info!("sector {}, done inputs", sector_id);
     drop(multiexp_kern);
     let proofs = h_s
         .into_iter()

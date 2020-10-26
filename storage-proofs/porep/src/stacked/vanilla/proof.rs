@@ -389,23 +389,30 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         Ok(tree)
     }
 
-    fn generate_tree_c<ColumnArity, TreeArity>(
+    fn generate_tree_c<ColumnArity, TreeArity, P>(
         nodes_count: usize,
         configs: Vec<StoreConfig>,
         tree_count: usize,
         labels: &[(PathBuf, String)],
         old_labels: &LabelsCache<Tree>,
+        replica_path: P,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
+        P: AsRef<Path>,
     {
         if settings::SETTINGS
             .lock()
             .expect("use_gpu_column_builder settings lock failure")
             .use_gpu_column_builder
         {
-            Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(nodes_count, configs, labels)
+            Self::generate_tree_c_gpu::<ColumnArity, TreeArity, _>(
+                nodes_count,
+                configs,
+                labels,
+                replica_path,
+            )
         } else {
             Self::generate_tree_c_cpu::<ColumnArity, TreeArity>(
                 ColumnArity::to_usize(),
@@ -415,7 +422,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 old_labels,
             )
         }
-        // Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(nodes_count, configs, labels)
     }
 
     fn fast_create_batch<ColumnArity>(
@@ -650,16 +656,18 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         rx.recv().unwrap();
     }
-    fn generate_tree_c_gpu_impl<ColumnArity, TreeArity>(
+    fn generate_tree_c_gpu_impl<ColumnArity, TreeArity, P>(
         nodes_count: usize,
         configs: Vec<StoreConfig>,
         labels: &[(PathBuf, String)],
+        replica_path: P,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
+        P: AsRef<Path>,
     {
-        info!("Building column hashes");
+        info!("Building column hashes, {:?}", replica_path.as_ref());
 
         // NOTE: The max number of columns we recommend sending to the GPU at once is
         // 400000 for columns and 700000 for trees (conservative soft-limits discussed).
@@ -714,19 +722,21 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     }
 
     #[allow(clippy::needless_range_loop)]
-    fn generate_tree_c_gpu<ColumnArity, TreeArity>(
+    fn generate_tree_c_gpu<ColumnArity, TreeArity, P>(
         nodes_count: usize,
         configs: Vec<StoreConfig>,
         labels: &[(PathBuf, String)],
+        replica_path: P,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
+        P: AsRef<Path>,
     {
         info!("generating tree c using the GPU");
         // Build the tree for CommC
         measure_op(GenerateTreeC, || {
-            Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity>(nodes_count, configs, labels)
+            Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity, _>(nodes_count, configs, labels, replica_path)
         })
     }
 
@@ -816,7 +826,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     {
         let (configs, replica_config) = split_config_and_replica(
             tree_r_last_config.clone(),
-            replica_path,
+            replica_path.clone(),
             nodes_count,
             tree_count,
         )?;
@@ -829,7 +839,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .expect("use_gpu_tree_builder settings lock failure")
             .use_gpu_tree_builder
         {
-            info!("generating tree r last using the GPU");
+            info!(
+                "generating tree r last using the GPU, replica: {:?}",
+                replica_path
+            );
             let max_gpu_tree_batch_size = settings::SETTINGS
                 .lock()
                 .expect("max_gpu_tree_batch_size settings lock failure")
@@ -931,9 +944,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
                             // If we get here, this is a final leaf batch: build a sub-tree.
                             info!(
-                                "building base tree_r_last with GPU {}/{}",
+                                "building base tree_r_last with GPU {}/{}, replica: {:?}",
                                 i + 1,
-                                tree_count
+                                tree_count,
+                                replica_path
                             );
                             let (_, tree_data) = tree_builder
                                 .add_final_leaves(&encoded)
@@ -984,7 +998,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 }
             });
         } else {
-            info!("generating tree r last using the CPU");
+            info!(
+                "generating tree r last using the CPU, replica: {:?}",
+                replica_path
+            );
             let size = Store::len(last_layer_labels);
 
             let mut start = 0;
@@ -1010,9 +1027,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     });
 
                 info!(
-                    "building base tree_r_last with CPU {}/{}",
+                    "building base tree_r_last with CPU {}/{}, replica {:?}",
                     i + 1,
-                    tree_count
+                    tree_count,
+                    replica_path
                 );
                 LCTree::<Tree::Hasher, Tree::Arity, typenum::U0, typenum::U0>::from_par_iter_with_config(encoded_data, config.clone())?;
 
@@ -1020,7 +1038,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 end += size / tree_count;
             }
         };
-
 
         create_lc_tree::<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>(
             tree_r_last_config.size.expect("config size failure"),
@@ -1196,30 +1213,33 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         rayon::scope(|s| {
             s.spawn(|_| {
                 let tree_c = match layers {
-                    2 => Self::generate_tree_c::<U2, Tree::Arity>(
+                    2 => Self::generate_tree_c::<U2, Tree::Arity, _>(
                         nodes_count,
                         configs,
                         tree_count,
                         &paths,
                         &labels,
+                        &replica_path,
                     ),
-                    8 => Self::generate_tree_c::<U8, Tree::Arity>(
+                    8 => Self::generate_tree_c::<U8, Tree::Arity, _>(
                         nodes_count,
                         configs,
                         tree_count,
                         &paths,
                         &labels,
+                        &replica_path,
                     ),
-                    11 => Self::generate_tree_c::<U11, Tree::Arity>(
+                    11 => Self::generate_tree_c::<U11, Tree::Arity, _>(
                         nodes_count,
                         configs,
                         tree_count,
                         &paths,
                         &labels,
+                        &replica_path,
                     ),
                     _ => panic!("Unsupported column arity"),
                 };
-                info!("tree_c done");
+                info!("tree_c done, {:?}", &replica_path);
                 c_tx.send(tree_c).unwrap();
             });
             // Build the MerkleTree over the original data (if needed).
