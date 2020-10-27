@@ -468,7 +468,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .map(|x| File::open(x).context("cannot open layer file for tree-c"))
             .collect::<Result<Vec<_>>>()
             .unwrap();
-        info!("file opened for p2, {:?}", replica_path.as_ref());
+        info!("{:?}, file opened for p2", replica_path.as_ref());
 
         for _ in 0..config_counts
         {
@@ -492,7 +492,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         ColumnArity: 'static + PoseidonArity,
         P: AsRef<Path> + Send + Sync,
     {
-        let (tx, rx) = mpsc::channel();
+        let bytes_per_item = batch_size * std::mem::size_of::<Fr>() * 11;
+        let sync_size = 32 * 1024 * 1024 * 1024 / bytes_per_item;
+        let (tx, rx) = mpsc::sync_channel(sync_size);
 
         rayon::join(
             || Self::read_column_batch_from_file(files, nodes_count, batch_size, tx, &replica_path),
@@ -541,7 +543,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         files: &mut [File],
         nodes_count: usize,
         batch_size: usize,
-        tx: Sender<Vec<Vec<Fr>>>,
+        tx: SyncSender<Vec<Vec<Fr>>>,
         replica_path: P,
     ) where
         P: AsRef<Path> + Send + Sync,
@@ -551,10 +553,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         for node_index in (0..nodes_count).step_by(batch_size)
         {
             let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
-            let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
 
+            let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
             let data = files
-                .iter_mut()
+                .par_iter_mut()
                 .map(|x| {
                     let mut buf_bytes = vec![0u8; chunk_byte_count];
                     let t0 = std::time::Instant::now();
@@ -734,7 +736,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     let base_offset = base_data.len();
                     flatten_and_write_store(&tree_data, base_offset)
                         .expect("failed to flatten and write store");
-
                 }
             });
 
@@ -760,7 +761,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         TreeArity: PoseidonArity,
         P: AsRef<Path> + Send + Sync,
     {
-        info!("Building column hashes, {:?}", replica_path.as_ref());
+        info!("{:?}, Building column hashes", replica_path.as_ref());
 
         // NOTE: The max number of columns we recommend sending to the GPU at once is
         // 400000 for columns and 700000 for trees (conservative soft-limits discussed).
@@ -831,7 +832,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         TreeArity: PoseidonArity,
         P: AsRef<Path> + Send + Sync,
     {
-        info!("generating tree c using the GPU");
+        info!(
+            "{:?}, generating tree c using the GPU",
+            replica_path.as_ref()
+        );
         // Build the tree for CommC
         measure_op(GenerateTreeC, || {
             Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity, _>(
@@ -948,7 +952,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .use_gpu_tree_builder
         {
             info!(
-                "generating tree r last using the GPU, replica: {:?}",
+                "{:?}: generating tree r last using the GPU, replica",
                 replica_path
             );
             let max_gpu_tree_batch_size = settings::SETTINGS
@@ -1057,10 +1061,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
                             // If we get here, this is a final leaf batch: build a sub-tree.
                             info!(
-                                "building base tree_r_last with GPU {}/{}, replica: {:?}",
+                                "{:?}: building base tree_r_last with GPU {}/{}, replica",
+                                replica_path,
                                 i + 1,
                                 tree_count,
-                                replica_path
                             );
                             let (_, tree_data) = tree_builder
                                 .add_final_leaves(&encoded)
@@ -1115,7 +1119,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         else
         {
             info!(
-                "generating tree r last using the CPU, replica: {:?}",
+                "{:?}: generating tree r last using the CPU, replica",
                 replica_path
             );
             let size = Store::len(last_layer_labels);
@@ -1144,10 +1148,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     });
 
                 info!(
-                    "building base tree_r_last with CPU {}/{}, replica {:?}",
+                    "{:?}: building base tree_r_last with CPU {}/{}, replica",
+                    replica_path,
                     i + 1,
                     tree_count,
-                    replica_path
                 );
                 LCTree::<Tree::Hasher, Tree::Arity, typenum::U0, typenum::U0>::from_par_iter_with_config(encoded_data, config.clone())?;
 
@@ -1372,7 +1376,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     ),
                     _ => panic!("Unsupported column arity"),
                 };
-                info!("tree_c done, {:?}", &replica_path);
+                info!("{:?}: tree_c done", &replica_path);
                 c_tx.send(tree_c).unwrap();
             });
             // Build the MerkleTree over the original data (if needed).
@@ -1412,7 +1416,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             drop(tree_d);
 
             // Encode original data into the last layer.
-            info!("building tree_r_last");
+            info!("{:?}: building tree_r_last", &replica_path);
             let (tree_r_last, data) = measure_op(GenerateTreeRLast, || {
                 Self::generate_tree_r_last::<Tree::Arity>(
                     data,
