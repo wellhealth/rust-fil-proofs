@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::fs::OpenOptions;
+use std::io::Read;
 use std::io::Write;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -14,9 +15,10 @@ use merkletree::merkle::{
     is_merkle_tree_size_valid,
 };
 use merkletree::store::{DiskStore, StoreConfig};
-use mpsc::{Receiver, Sender, SyncSender};
+use mpsc::{Receiver, SyncSender};
 use paired::bls12_381::Fr;
 use rayon::prelude::*;
+use scopeguard::defer;
 use storage_proofs_core::{
     cache_key::CacheKey,
     data::Data,
@@ -72,12 +74,14 @@ pub const TOTAL_PARENTS: usize = 37;
 // }
 
 #[derive(Debug)]
-pub struct StackedDrg<'a, Tree: 'a + MerkleTreeTrait, G: 'a + Hasher> {
+pub struct StackedDrg<'a, Tree: 'a + MerkleTreeTrait, G: 'a + Hasher>
+{
     _a: PhantomData<&'a Tree>,
     _b: PhantomData<&'a G>,
 }
 
-impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tree, G> {
+impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tree, G>
+{
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prove_layers(
         graph: &StackedBucketGraph<Tree::Hasher>,
@@ -88,7 +92,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         layers: usize,
         _total_layers: usize,
         partition_count: usize,
-    ) -> Result<Vec<Vec<Proof<Tree, G>>>> {
+    ) -> Result<Vec<Vec<Proof<Tree, G>>>>
+    {
         assert!(layers > 0);
         assert_eq!(t_aux.labels.len(), layers);
 
@@ -109,7 +114,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let mut parents = vec![0; base_degree];
             graph.base_parents(x, &mut parents)?;
 
-            for parent in &parents {
+            for parent in &parents
+            {
                 columns.push(t_aux.column(*parent)?);
             }
 
@@ -192,7 +198,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         let mut labeling_proofs = Vec::with_capacity(layers);
                         let mut encoding_proof = None;
 
-                        for layer in 1..=layers {
+                        for layer in 1..=layers
+                        {
                             trace!("  encoding proof layer {}", layer,);
                             let parents_data: Vec<<Tree::Hasher as Hasher>::Domain> = if layer == 1
                             {
@@ -203,7 +210,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                                     .into_iter()
                                     .map(|parent| t_aux.domain_node_at_layer(layer, parent))
                                     .collect::<Result<_>>()?
-                            } else {
+                            }
+                            else
+                            {
                                 let mut parents = vec![0; graph.degree()];
                                 graph.parents(challenge, &mut parents)?;
                                 let base_parents_count = graph.base_graph().degree();
@@ -212,10 +221,13 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                                     .into_iter()
                                     .enumerate()
                                     .map(|(i, parent)| {
-                                        if i < base_parents_count {
+                                        if i < base_parents_count
+                                        {
                                             // parents data for base parents is from the current layer
                                             t_aux.domain_node_at_layer(layer, parent)
-                                        } else {
+                                        }
+                                        else
+                                        {
                                             // parents data for exp parents is from the previous layer
                                             t_aux.domain_node_at_layer(layer - 1, parent)
                                         }
@@ -225,7 +237,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
                             // repeat parents
                             let mut parents_data_full = vec![Default::default(); TOTAL_PARENTS];
-                            for chunk in parents_data_full.chunks_mut(parents_data.len()) {
+                            for chunk in parents_data_full.chunks_mut(parents_data.len())
+                            {
                                 chunk.copy_from_slice(&parents_data[..chunk.len()]);
                             }
 
@@ -246,7 +259,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
                             labeling_proofs.push(proof);
 
-                            if layer == layers {
+                            if layer == layers
+                            {
                                 encoding_proof = Some(EncodingProof::new(
                                     layer as u32,
                                     challenge as u64,
@@ -274,7 +288,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         data: &mut [u8],
         config: StoreConfig,
-    ) -> Result<()> {
+    ) -> Result<()>
+    {
         trace!("extract_and_invert_transform_layers");
 
         let layers = layer_challenges.layers();
@@ -307,7 +322,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         layer_challenges: &LayerChallenges,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
-    ) -> Result<(LabelsCache<Tree>, Labels<Tree>)> {
+    ) -> Result<(LabelsCache<Tree>, Labels<Tree>)>
+    {
         let mut parent_cache = graph.parent_cache()?;
 
         if settings::SETTINGS
@@ -323,7 +339,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 replica_id,
                 config,
             )
-        } else {
+        }
+        else
+        {
             info!("single core replication");
             create_label::single::create_labels(
                 graph,
@@ -342,7 +360,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         layer_challenges: &LayerChallenges,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
-    ) -> Result<(LabelsCache<Tree>, Labels<Tree>)> {
+    ) -> Result<(LabelsCache<Tree>, Labels<Tree>)>
+    {
         let mut parent_cache = graph.parent_cache()?;
 
         if settings::SETTINGS
@@ -358,7 +377,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 replica_id,
                 config,
             )
-        } else {
+        }
+        else
+        {
             info!("single core replication");
             create_label::single::my_create_labels(
                 graph,
@@ -373,7 +394,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     fn build_binary_tree<K: Hasher>(
         tree_data: &[u8],
         config: StoreConfig,
-    ) -> Result<BinaryMerkleTree<K>> {
+    ) -> Result<BinaryMerkleTree<K>>
+    {
         trace!("building tree (size: {})", tree_data.len());
 
         let leafs = tree_data.len() / NODE_SIZE;
@@ -415,7 +437,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 replica_path,
                 gpu_index,
             )
-        } else {
+        }
+        else
+        {
             Self::generate_tree_c_cpu::<ColumnArity, TreeArity>(
                 ColumnArity::to_usize(),
                 nodes_count,
@@ -445,7 +469,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .unwrap();
         info!("file opened for p2, {:?}", replica_path.as_ref());
 
-        for _ in 0..config_counts {
+        for _ in 0..config_counts
+        {
             Self::fast_create_batch_for_config(
                 nodes_count,
                 batch_size,
@@ -466,7 +491,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         ColumnArity: 'static + PoseidonArity,
         P: AsRef<Path> + Send + Sync,
     {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(100);
 
         rayon::join(
             || Self::read_column_batch_from_file(files, nodes_count, batch_size, tx, &replica_path),
@@ -490,7 +515,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         ColumnArity: 'static + PoseidonArity,
     {
         let layers = ColumnArity::to_usize();
-        for node_index in (0..nodes_count).step_by(batch_size) {
+        for node_index in (0..nodes_count).step_by(batch_size)
+        {
             let data = rx.recv().unwrap();
             let mut columns: Vec<GenericArray<Fr, ColumnArity>> = vec![
                     GenericArray::<Fr, ColumnArity>::generate(|_i: usize| Fr::zero());
@@ -498,8 +524,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 ];
 
             let is_final = node_index + batch_size >= nodes_count;
-            for layer_index in 0..layers {
-                for (index, column) in columns.iter_mut().enumerate() {
+            for layer_index in 0..layers
+            {
+                for (index, column) in columns.iter_mut().enumerate()
+                {
                     column[layer_index] = data[layer_index][index];
                 }
             }
@@ -512,29 +540,39 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         files: &mut [File],
         nodes_count: usize,
         batch_size: usize,
-        tx: Sender<Vec<Vec<Fr>>>,
+        tx: SyncSender<Vec<Vec<Fr>>>,
         replica_path: P,
     ) where
         P: AsRef<Path> + Send + Sync,
     {
         use merkletree::merkle::Element;
-        use std::io::Read;
 
-        for node_index in (0..nodes_count).step_by(batch_size) {
+        for node_index in (0..nodes_count).step_by(batch_size)
+        {
             let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
             let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
 
             let data = files
-                .par_iter_mut()
+                .iter_mut()
                 .map(|x| {
                     let mut buf_bytes = vec![0u8; chunk_byte_count];
+                    let t0 = std::time::Instant::now();
                     x.read_exact(&mut buf_bytes).unwrap();
+                    let t1 = std::time::Instant::now();
                     let size = std::mem::size_of::<<Tree::Hasher as Hasher>::Domain>();
-                    buf_bytes
+                    let res = buf_bytes
                         .chunks(size)
                         .map(|x| <<Tree::Hasher as Hasher>::Domain>::from_slice(x))
                         .map(Into::into)
-                        .collect()
+                        .collect();
+                    let t2 = std::time::Instant::now();
+                    info!(
+                        "{:?}: read label file [{:?}], collect info: [{:?}]",
+                        replica_path.as_ref(),
+                        t1 - t0,
+                        t2 - t1
+                    );
+                    res
                 })
                 .collect::<Vec<Vec<Fr>>>();
             info!(
@@ -592,14 +630,26 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let mut i = 0;
         let mut config = &configs[i];
 
-        let (tx, rx) = mpsc::sync_channel(0);
         // Loop until all trees for all configs have been built.
-        while i < configs.len() {
-            info!("sector: {:?}: recv column: {}", replica_path.as_ref(), i);
+        let config_count = configs.len();
+
+        let mut chans = (0..config_count)
+            .map(|_| mpsc::channel())
+            .map(|(tx, rx)| (tx, Some(rx)))
+            .collect::<Vec<_>>();
+
+        while i < config_count
+        {
+            info!(
+                "sector: {:?}: recv in config: {}",
+                replica_path.as_ref(),
+                i + 1
+            );
             let (columns, is_final) = builder_rx.recv().expect("failed to recv columns");
 
             // Just add non-final column batches.
-            if !is_final {
+            if !is_final
+            {
                 column_tree_builder
                     .add_columns(&columns)
                     .expect("failed to add columns");
@@ -613,25 +663,38 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
             assert_eq!(base_data.len(), nodes_count);
             info!(
-                "sector: {:?}: persist tree-c: {}/{}",
+                "{:?}: persist tree-c: {}/{}",
                 replica_path.as_ref(),
                 i + 1,
                 configs.len()
             );
 
-			let replica_path = PathBuf::from(replica_path.as_ref());
+            let replica_path = PathBuf::from(replica_path.as_ref());
             rayon::spawn({
                 let config = config.clone();
-                let config_len = configs.len();
-                let tx = tx.clone();
+                let sync_tx = chans[i].0.clone();
+                let sync_rx = match i
+                {
+                    0 => None,
+                    _ => chans[i - 1].1.take(),
+                };
                 move || {
+                    sync_rx.map(|x| x.recv().unwrap());
+                    defer!({
+                        sync_tx.send(()).unwrap();
+                    });
                     let tree_len = base_data.len() + tree_data.len();
                     assert_eq!(tree_len, config.size.expect("config size failure"));
 
                     let path = StoreConfig::data_path(&config.path, &config.id);
-                    if path.exists() {
-                        if let Err(e) = std::fs::remove_file(&path) {
-                            info!("sector: {:?}: cannot delete file: {:?}, erro: {}", replica_path, path, e);
+                    if path.exists()
+                    {
+                        if let Err(e) = std::fs::remove_file(&path)
+                        {
+                            info!(
+                                "sector: {:?}: cannot delete file: {:?}, erro: {}",
+                                replica_path, path, e
+                            );
                         }
                     }
 
@@ -653,7 +716,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                             .try_for_each(|(index, fr_elements)| {
                                 let mut buf = Vec::with_capacity(batch_size * NODE_SIZE);
 
-                                for fr in fr_elements {
+                                for fr in fr_elements
+                                {
                                     buf.extend(fr_into_bytes(&fr));
                                 }
                                 store
@@ -670,21 +734,18 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     flatten_and_write_store(&tree_data, base_offset)
                         .expect("failed to flatten and write store");
 
-                    if i + 1 == config_len {
-                        tx.send(()).unwrap();
-                    }
                 }
             });
 
             // Move on to the next config.
             i += 1;
-            if i == configs.len() {
+            if i == configs.len()
+            {
                 break;
             }
             config = &configs[i];
         }
-
-        rx.recv().unwrap();
+        chans.last().unwrap().1.as_ref().unwrap().recv().unwrap();
     }
     fn generate_tree_c_gpu_impl<ColumnArity, TreeArity, P>(
         nodes_count: usize,
@@ -726,7 +787,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let (builder_tx, builder_rx) = mpsc::sync_channel(0);
 
         let configs = &configs;
-		let replica_path = &replica_path;
+        let replica_path = &replica_path;
         rayon::join(
             move || {
                 Self::create_batch_gpu::<ColumnArity, _>(
@@ -746,7 +807,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     max_gpu_tree_batch_size,
                     max_gpu_column_batch_size,
                     column_write_batch_size,
-					replica_path,
+                    replica_path,
                     gpu_index,
                 )
             },
@@ -799,7 +860,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             info!("Building column hashes");
 
             let mut trees = Vec::with_capacity(tree_count);
-            for (i, config) in configs.iter().enumerate() {
+            for (i, config) in configs.iter().enumerate()
+            {
                 let mut hashes: Vec<<Tree::Hasher as Hasher>::Domain> =
                     vec![<Tree::Hasher as Hasher>::Domain::default(); nodes_count];
 
@@ -813,11 +875,13 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     let chunk_size = (nodes_count as f64 / num_chunks as f64).ceil() as usize;
 
                     // calculate all n chunks in parallel
-                    for (chunk, hashes_chunk) in hashes.chunks_mut(chunk_size).enumerate() {
+                    for (chunk, hashes_chunk) in hashes.chunks_mut(chunk_size).enumerate()
+                    {
                         let labels = &labels;
 
                         s.spawn(move |_| {
-                            for (j, hash) in hashes_chunk.iter_mut().enumerate() {
+                            for (j, hash) in hashes_chunk.iter_mut().enumerate()
+                            {
                                 let data: Vec<_> = (1..=layers)
                                     .map(|layer| {
                                         let store = labels.labels_for_layer(layer);
@@ -899,9 +963,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             rayon::scope(|s| {
                 let data = &mut data;
                 s.spawn(move |_| {
-                    for i in 0..config_count {
+                    for i in 0..config_count
+                    {
                         let mut node_index = 0;
-                        while node_index != nodes_count {
+                        while node_index != nodes_count
+                        {
                             let chunked_nodes_count =
                                 std::cmp::min(nodes_count - node_index, max_gpu_tree_batch_size);
                             let start = (i * nodes_count) + node_index;
@@ -974,12 +1040,14 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         let mut config = &configs[i];
 
                         // Loop until all trees for all configs have been built.
-                        while i < configs.len() {
+                        while i < configs.len()
+                        {
                             let (encoded, is_final) =
                                 builder_rx.recv().expect("failed to recv encoded data");
 
                             // Just add non-final leaf batches.
-                            if !is_final {
+                            if !is_final
+                            {
                                 tree_builder
                                     .add_leaves(&encoded)
                                     .expect("failed to add leaves");
@@ -1033,7 +1101,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
                             // Move on to the next config.
                             i += 1;
-                            if i == configs.len() {
+                            if i == configs.len()
+                            {
                                 break;
                             }
                             config = &configs[i];
@@ -1041,7 +1110,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     });
                 }
             });
-        } else {
+        }
+        else
+        {
             info!(
                 "generating tree r last using the CPU, replica: {:?}",
                 replica_path
@@ -1051,7 +1122,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let mut start = 0;
             let mut end = size / tree_count;
 
-            for (i, config) in configs.iter().enumerate() {
+            for (i, config) in configs.iter().enumerate()
+            {
                 let encoded_data = last_layer_labels
                     .read_range(start..end)?
                     .into_par_iter()
@@ -1100,7 +1172,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         config: StoreConfig,
         replica_path: PathBuf,
         gpu_index: usize,
-    ) -> Result<TransformedLayers<Tree, G>> {
+    ) -> Result<TransformedLayers<Tree, G>>
+    {
         // Generate key layers.
         let (_, labels) = measure_op(EncodeWindowTimeAll, || {
             Self::generate_labels(graph, layer_challenges, replica_id, config.clone())
@@ -1123,15 +1196,19 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         tree_d_config: &StoreConfig,
         data_tree: Option<BinaryMerkleTree<G>>,
         mut data: Data<'b>,
-    ) -> Result<(BinaryMerkleTree<G>, Data<'b>)> {
-        let tree_d = match data_tree {
-            Some(t) => {
+    ) -> Result<(BinaryMerkleTree<G>, Data<'b>)>
+    {
+        let tree_d = match data_tree
+        {
+            Some(t) =>
+            {
                 trace!("using existing original data merkle tree");
                 assert_eq!(t.len(), 2 * (data.len() / NODE_SIZE) - 1);
 
                 t
             }
-            None => {
+            None =>
+            {
                 trace!("building merkle tree for the original data");
                 data.ensure_data()?;
                 measure_op(CommD, || {
@@ -1151,7 +1228,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         replica_path: PathBuf,
         labels: &LabelsCache<Tree>,
         gpu_index: usize,
-    ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>> {
+    ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
+    {
         let tree_r_last = measure_op(GenerateTreeRLast, || {
             Self::generate_tree_r_last::<Tree::Arity>(
                 data,
@@ -1176,7 +1254,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         replica_path: PathBuf,
         label_configs: Labels<Tree>,
         gpu_index: usize,
-    ) -> Result<TransformedLayers<Tree, G>> {
+    ) -> Result<TransformedLayers<Tree, G>>
+    {
         trace!("transform_and_replicate_layers");
         let nodes_count = graph.size();
 
@@ -1261,7 +1340,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         rayon::scope(|s| {
             s.spawn(|_| {
-                let tree_c = match layers {
+                let tree_c = match layers
+                {
                     2 => Self::generate_tree_c::<U2, Tree::Arity, _>(
                         nodes_count,
                         configs,
@@ -1295,14 +1375,17 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 c_tx.send(tree_c).unwrap();
             });
             // Build the MerkleTree over the original data (if needed).
-            let (tree_d, data) = match data_tree {
-                Some(t) => {
+            let (tree_d, data) = match data_tree
+            {
+                Some(t) =>
+                {
                     trace!("using existing original data merkle tree");
                     assert_eq!(t.len(), 2 * (data.len() / NODE_SIZE) - 1);
 
                     (t, data)
                 }
-                None => {
+                None =>
+                {
                     let mut data = data;
                     trace!("building merkle tree for the original data");
                     data.ensure_data().unwrap();
@@ -1384,7 +1467,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         pp: &'a PublicParams<Tree>,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
-    ) -> Result<Labels<Tree>> {
+    ) -> Result<Labels<Tree>>
+    {
         info!("my_replicate_phase1");
 
         let (_, labels) = measure_op(EncodeWindowTimeAll, || {
@@ -1399,7 +1483,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         pp: &'a PublicParams<Tree>,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
-    ) -> Result<Labels<Tree>> {
+    ) -> Result<Labels<Tree>>
+    {
         info!("replicate_phase1");
 
         let (_, labels) = measure_op(EncodeWindowTimeAll, || {
@@ -1423,7 +1508,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) -> Result<(
         <Self as PoRep<'a, Tree::Hasher, G>>::Tau,
         <Self as PoRep<'a, Tree::Hasher, G>>::ProverAux,
-    )> {
+    )>
+    {
         info!("replicate_phase2");
 
         let (tau, paux, taux) = Self::transform_and_replicate_layers_inner(
@@ -1482,14 +1568,17 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
             // Allocate zeros once and reuse.
             let zero_leaves: Vec<Fr> = vec![Fr::zero(); max_gpu_tree_batch_size];
-            for (i, config) in configs.iter().enumerate() {
+            for (i, config) in configs.iter().enumerate()
+            {
                 let mut consumed = 0;
-                while consumed < nodes_count {
+                while consumed < nodes_count
+                {
                     let batch_size = usize::min(max_gpu_tree_batch_size, nodes_count - consumed);
 
                     consumed += batch_size;
 
-                    if consumed != nodes_count {
+                    if consumed != nodes_count
+                    {
                         tree_builder
                             .add_leaves(&zero_leaves[0..batch_size])
                             .expect("failed to add leaves");
@@ -1541,9 +1630,12 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         .expect("failed to wrote tree_r_last data");
                 }
             }
-        } else {
+        }
+        else
+        {
             info!("generating tree r last using the CPU");
-            for (i, config) in configs.iter().enumerate() {
+            for (i, config) in configs.iter().enumerate()
+            {
                 let encoded_data = vec![<Tree::Hasher as Hasher>::Domain::default(); nodes_count];
 
                 info!(
@@ -1571,7 +1663,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) -> Result<(
         <Tree::Hasher as Hasher>::Domain,
         PersistentAux<<Tree::Hasher as Hasher>::Domain>,
-    )> {
+    )>
+    {
         let leaf_count = sector_size / NODE_SIZE;
         let replica_pathbuf = PathBuf::from(replica_path.as_ref());
         assert_eq!(0, sector_size % NODE_SIZE);
@@ -1621,7 +1714,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) -> Result<(
         <Tree::Hasher as Hasher>::Domain,
         PersistentAux<<Tree::Hasher as Hasher>::Domain>,
-    )> {
+    )>
+    {
         let existing_p_aux: PersistentAux<<Tree::Hasher as Hasher>::Domain> = {
             let p_aux_bytes = std::fs::read(&existing_p_aux_path)?;
 
