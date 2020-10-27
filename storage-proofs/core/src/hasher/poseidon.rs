@@ -379,6 +379,7 @@ impl LightAlgorithm<PoseidonDomain> for PoseidonFunction {
                 &parts
                     .iter()
                     .map(|x| {
+                        //panic!("unsupported arity {}")
                         <Bls12 as ff::ScalarEngine>::Fr::from_repr(x.0).expect("from_repr failure")
                     })
                     .collect::<Vec<_>>(),

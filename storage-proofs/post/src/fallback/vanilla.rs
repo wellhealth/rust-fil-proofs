@@ -1,10 +1,12 @@
 use std::collections::BTreeSet;
 use std::marker::PhantomData;
 
+use log::{info, trace};
+
 use anyhow::ensure;
 use byteorder::{ByteOrder, LittleEndian};
 use generic_array::typenum::Unsigned;
-use log::{error, trace};
+use log::{error};
 use paired::bls12_381::Fr;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -312,6 +314,8 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
         pub_inputs: &'b Self::PublicInputs,
         priv_inputs: &'b Self::PrivateInputs,
     ) -> Result<Self::Proof> {
+        info!("vanilla.rs prove");
+
         let proofs = Self::prove_all_partitions(pub_params, pub_inputs, priv_inputs, 1)?;
         let k = match pub_inputs.k {
             None => 0,
@@ -334,6 +338,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
         priv_inputs: &'b Self::PrivateInputs,
         partition_count: usize,
     ) -> Result<Vec<Self::Proof>> {
+        info!("vanilla.rs prove_all_partitions");
         ensure!(
             priv_inputs.sectors.len() == pub_inputs.sectors.len(),
             "inconsistent number of private and public sectors {} != {}",
@@ -363,7 +368,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
             .zip(priv_inputs.sectors.chunks(num_sectors_per_chunk))
             .enumerate()
         {
-            trace!("proving partition {}", j);
+            info!("proving partition {}", j);
 
             let mut proofs = Vec::with_capacity(num_sectors_per_chunk);
 
@@ -377,7 +382,9 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                 let tree_leafs = tree.leafs();
                 let rows_to_discard = default_rows_to_discard(tree_leafs, Tree::Arity::to_usize());
 
-                trace!(
+                info!("proving sector_id {}", sector_id);
+
+                info!(
                     "Generating proof for tree leafs {} and arity {}",
                     tree_leafs,
                     Tree::Arity::to_usize(),
