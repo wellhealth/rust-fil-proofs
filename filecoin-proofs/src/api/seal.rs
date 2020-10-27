@@ -468,7 +468,7 @@ pub fn seal_commit_phase2<Tree>(
     sector_id: SectorId,
 ) -> Result<SealCommitOutput>
 where
-    Tree: 'static + MerkleTreeTrait + UnwindSafe,
+    Tree: 'static + MerkleTreeTrait,
 {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
