@@ -1,7 +1,6 @@
 use std::fs::{self, metadata, File, OpenOptions};
 use std::io::prelude::*;
 use std::panic::AssertUnwindSafe;
-use std::panic::UnwindSafe;
 use std::path::{Path, PathBuf};
 
 use std::sync::Mutex;
