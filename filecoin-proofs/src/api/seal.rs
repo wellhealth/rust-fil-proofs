@@ -1,5 +1,7 @@
 use std::fs::{self, metadata, File, OpenOptions};
 use std::io::prelude::*;
+use std::panic::AssertUnwindSafe;
+use std::panic::UnwindSafe;
 use std::path::{Path, PathBuf};
 
 use std::sync::Mutex;
@@ -44,7 +46,6 @@ use crate::types::{
 };
 use crate::Labels;
 use std::marker::PhantomData;
-
 
 #[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1<R, S, T, Tree: 'static + MerkleTreeTrait>(
@@ -458,16 +459,17 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     Ok(out)
 }
 
-
 use scopeguard::defer;
 
-pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
+pub fn seal_commit_phase2<Tree>(
     porep_config: PoRepConfig,
     phase1_output: SealCommitPhase1Output<Tree>,
     prover_id: ProverId,
     sector_id: SectorId,
-) -> Result<SealCommitOutput> {
-
+) -> Result<SealCommitOutput>
+where
+    Tree: 'static + MerkleTreeTrait + UnwindSafe,
+{
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
     let gpu_index = select_gpu_device();
@@ -479,8 +481,23 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
         release_gpu_device(gpu_index);
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        crate::api::my::custom_c2::<Tree>(
+            porep_config,
+            phase1_output,
+            prover_id,
+            sector_id,
+            gpu_index,
+        )
+    }));
 
-    crate::api::my::custom_c2::<Tree>(porep_config, phase1_output, prover_id, sector_id,gpu_index)
+    match result {
+        Ok(r) => r,
+        Err(e) => {
+            info!("c2 panic, sector: {:?}", sector_id);
+            panic!("{:?}", e);
+        }
+    }
 }
 
 /// Computes a sectors's `comm_d` given its pieces.
@@ -520,7 +537,7 @@ pub fn verify_seal_inner<Tree: 'static + MerkleTreeTrait>(
     ticket: Ticket,
     seed: Ticket,
     proof_vec: &[u8],
-    gpu_index:usize,
+    gpu_index: usize,
 ) -> Result<bool> {
     info!("verify_seal:start: {:?}", sector_id);
     ensure!(comm_d_in != [0; 32], "Invalid all zero commitment (comm_d)");
@@ -642,7 +659,17 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     //gpu_index:usize,
 ) -> Result<bool> {
     let gpu_index = 0;
-    verify_seal_inner::<Tree>(porep_config,comm_r_in, comm_d_in,prover_id,sector_id,ticket,seed,proof_vec,gpu_index)
+    verify_seal_inner::<Tree>(
+        porep_config,
+        comm_r_in,
+        comm_d_in,
+        prover_id,
+        sector_id,
+        ticket,
+        seed,
+        proof_vec,
+        gpu_index,
+    )
 }
 
 /// Verifies a batch of outputs of some previously-run seal operations.
@@ -667,9 +694,8 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
     tickets: &[Ticket],
     seeds: &[Ticket],
     proof_vecs: &[&[u8]],
-
 ) -> Result<bool> {
-    let gpu_index:usize = 0;
+    let gpu_index: usize = 0;
     info!("verify_batch_seal:start");
     ensure!(!comm_r_ins.is_empty(), "Cannot prove empty batch");
     let l = comm_r_ins.len();
@@ -771,10 +797,10 @@ pub fn fauxrep<R: AsRef<Path>, S: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
     out_path: S,
-    gpu_index:usize,
+    gpu_index: usize,
 ) -> Result<Commitment> {
     let mut rng = rand::thread_rng();
-    fauxrep_aux::<_, R, S, Tree>(&mut rng, porep_config, cache_path, out_path,gpu_index)
+    fauxrep_aux::<_, R, S, Tree>(&mut rng, porep_config, cache_path, out_path, gpu_index)
 }
 
 pub fn fauxrep_aux<
@@ -787,7 +813,7 @@ pub fn fauxrep_aux<
     porep_config: PoRepConfig,
     cache_path: R,
     out_path: S,
-    gpu_index:usize
+    gpu_index: usize,
 ) -> Result<Commitment> {
     let sector_bytes = PaddedBytesAmount::from(porep_config).0;
 
@@ -1134,16 +1160,16 @@ pub struct Queue<T> {
     qdata: Vec<T>,
 }
 
-impl <T> Queue<T> {
+impl<T> Queue<T> {
     fn new() -> Self {
-        Queue{ qdata: Vec::new() }
+        Queue { qdata: Vec::new() }
     }
 
     fn push(&mut self, item: T) {
         self.qdata.push(item);
     }
 
-    fn pop(&mut self) ->Option<T> {
+    fn pop(&mut self) -> Option<T> {
         let l = self.qdata.len();
 
         if l > 0 {
@@ -1154,11 +1180,10 @@ impl <T> Queue<T> {
         }
     }
 
-    fn len(&mut self) -> usize{
+    fn len(&mut self) -> usize {
         self.qdata.len()
     }
 }
-
 
 #[cfg(feature = "gpu")]
 lazy_static::lazy_static! {
@@ -1170,16 +1195,14 @@ lazy_static::lazy_static! {
 static mut N: i32 = 0;
 
 pub fn select_gpu_device() -> usize {
-
     let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
 
     unsafe {
-
-        if N == 0{
+        if N == 0 {
             let devices = &bellperson::gpu::GPU_NVIDIA_DEVICES;
 
-            for i in 0 .. devices.len(){
-                 queue.push(i)
+            for i in 0..devices.len() {
+                queue.push(i)
             }
 
             N = 1;
@@ -1193,7 +1216,7 @@ pub fn select_gpu_device() -> usize {
 
     queue.pop().unwrap()
 
-   /* let device_info = queue.pop().unwrap()
+    /* let device_info = queue.pop().unwrap()
 
     let index = device_info.index;
 
@@ -1204,10 +1227,7 @@ pub fn select_gpu_device() -> usize {
     return index;*/
 }
 
-
-pub fn release_gpu_device(gpu_index : usize)  {
+pub fn release_gpu_device(gpu_index: usize) {
     let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
-     queue.push(gpu_index);
+    queue.push(gpu_index);
 }
-
-
