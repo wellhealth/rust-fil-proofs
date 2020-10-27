@@ -4,6 +4,7 @@ use std::io::Read;
 use std::io::Write;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::Sender;
 use std::sync::{mpsc, Arc, RwLock};
 
 use anyhow::Context;
@@ -491,7 +492,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         ColumnArity: 'static + PoseidonArity,
         P: AsRef<Path> + Send + Sync,
     {
-        let (tx, rx) = mpsc::sync_channel(100);
+        let (tx, rx) = mpsc::channel();
 
         rayon::join(
             || Self::read_column_batch_from_file(files, nodes_count, batch_size, tx, &replica_path),
@@ -540,7 +541,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         files: &mut [File],
         nodes_count: usize,
         batch_size: usize,
-        tx: SyncSender<Vec<Vec<Fr>>>,
+        tx: Sender<Vec<Vec<Fr>>>,
         replica_path: P,
     ) where
         P: AsRef<Path> + Send + Sync,
