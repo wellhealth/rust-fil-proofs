@@ -15,6 +15,7 @@ use crate::{verify_seal_inner, Commitment};
 use anyhow::{ensure, Context, Result};
 use bellperson::domain::EvaluationDomain;
 use bellperson::domain::Scalar;
+use bellperson::gpu;
 use bellperson::gpu::LockedFFTKernel;
 use bellperson::gpu::LockedMultiexpKernel;
 use bellperson::groth16;
@@ -23,10 +24,12 @@ use bellperson::groth16::ParameterSource;
 use bellperson::groth16::Proof;
 use bellperson::groth16::ProvingAssignment;
 use bellperson::multicore::Worker;
-use bellperson::multiexp::multiexp;
 use bellperson::multiexp::multiexp_full;
+use bellperson::multiexp::multiexp_inner;
 use bellperson::multiexp::DensityTracker;
 use bellperson::multiexp::FullDensity;
+use bellperson::multiexp::QueryDensity;
+use bellperson::multiexp::SourceBuilder;
 use bellperson::Circuit;
 use bellperson::ConstraintSystem;
 use bellperson::Index;
@@ -34,6 +37,7 @@ use bellperson::SynthesisError;
 use bellperson::Variable;
 use ff::Field;
 use ff::PrimeField;
+use ff::ScalarEngine;
 use futures::Future;
 use groupy::CurveAffine;
 use groupy::CurveProjective;
@@ -46,6 +50,7 @@ use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
+use scopeguard::defer;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::sync_channel;
 use std::sync::Arc;
@@ -173,7 +178,7 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
 
     let out = SealCommitOutput { proof: buf };
 
-    info!("seal_commit_phase2:finish: {:?}", sector_id);
+    info!("{:?}: seal_commit_phase2:finish", sector_id);
     Ok(out)
 }
 
@@ -183,7 +188,8 @@ pub fn prepare_c2<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     sector_id: SectorId,
 ) -> Result<C2DataStage1<Tree>> {
-    info!("seal_commit_phase2:start: {:?}", sector_id);
+    info!("{:?}: seal_commit_phase2:start", sector_id);
+
     let SealCommitPhase1Output {
         vanilla_proofs,
         comm_r,
@@ -194,6 +200,7 @@ pub fn prepare_c2<Tree: 'static + MerkleTreeTrait>(
     } = phase1_output;
     ensure!(comm_d != [0; 32], "Invalid all zero commitment (comm_d)");
     ensure!(comm_r != [0; 32], "Invalid all zero commitment (comm_r)");
+
     let comm_r_safe = as_safe_commitment(&comm_r, "comm_r")?;
     let comm_d_safe = DefaultPieceDomain::try_from_bytes(&comm_d)?;
 
@@ -208,7 +215,8 @@ pub fn prepare_c2<Tree: 'static + MerkleTreeTrait>(
     };
 
     info!(
-        "got groth params ({}) while sealing",
+        "{:?}: got groth params ({}) while sealing",
+        sector_id,
         u64::from(PaddedBytesAmount::from(porep_config))
     );
 
@@ -228,7 +236,7 @@ pub fn prepare_c2<Tree: 'static + MerkleTreeTrait>(
     >>::setup(&compound_setup_params)?
     .vanilla_params;
 
-    info!("snark_proof:start");
+    info!("{:?}: snark_proof:start", sector_id);
 
     ensure!(
         !vanilla_proofs.is_empty(),
@@ -316,7 +324,7 @@ pub fn c2_stage2(
     let (tx_1, rx_1) =
         sync_channel::<(EvaluationDomain<Bls12, Scalar<Bls12>>, _, _)>(provers.len());
     let (tx_2, rx_2) = sync_channel(provers.len());
-    let (tx_3, rx_3) = sync_channel(provers.len());
+    let (tx_3, rx_3) = sync_channel::<EvaluationDomain<Bls12, Scalar<Bls12>>>(provers.len());
     let (tx_hl, rx_hl) = channel();
     let (tx_ab, rx_ab) = channel();
     let (tx_g2, rx_g2) = channel();
@@ -332,26 +340,34 @@ pub fn c2_stage2(
 
         move |s| {
             s.spawn(move |_| {
-                while let Ok((mut a, b, c)) = rx_1.recv() {
+                for (index, (mut a, b, c)) in rx_1.iter().enumerate() {
+                    info!("{:?}: merge a, b, c. index: {}", sector_id, index);
                     a.mul_assign(&worker, &b);
                     drop(b);
                     a.sub_assign(&worker, &c);
                     drop(c);
                     a.divide_by_z_on_coset(&worker);
-                    tx_2.send(a).unwrap();
+                    tx_2.send((index, a)).unwrap();
                 }
             });
 
             s.spawn(move |_| {
                 *a_s = rx_3
                     .iter()
-                    .map(|a: EvaluationDomain<Bls12, Scalar<Bls12>>| {
+                    .enumerate()
+                    .map(|(index, a)| {
+                        info!("{:?}: convert a to arc: {}", sector_id, index);
                         let mut a = a.into_coeffs();
                         let a_len = a.len() - 1;
                         a.truncate(a_len);
-                        a
+                        (index, a)
                     })
-                    .map(|a| Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()))
+                    .map(|(index, a)| {
+                        defer!({
+                            info!("{:?}: collected Arc for a, index: {}", sector_id, index);
+                        });
+                        Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>())
+                    })
                     .collect::<Vec<_>>();
                 assert_eq!(a_s.len(), provers_len);
             });
@@ -364,7 +380,9 @@ pub fn c2_stage2(
                     s.spawn({
                         let tx_hl = tx_hl.clone();
                         move |_| {
+                            info!("{:?}: sending params_h", sector_id);
                             tx_hl.send(params.get_h(0)).unwrap();
+                            info!("{:?}: params_h sent", sector_id);
                         }
                     });
                 }
@@ -387,20 +405,22 @@ pub fn c2_stage2(
                 c.ifft(&worker, fft_kern).unwrap();
                 c.coset_fft(&worker, fft_kern).unwrap();
                 tx_1.send((a, b, c)).unwrap();
-                for mut a in rx_2.try_iter() {
+                for (index, mut a) in rx_2.try_iter() {
+                    info!("{:?}, doing icoset_fft for a, index: {}", sector_id, index);
                     a.icoset_fft(&worker, fft_kern).unwrap();
                     tx_3.send(a).unwrap();
                 }
             }
             drop(tx_1);
-            for mut a in rx_2.iter() {
+            for (index, mut a) in rx_2.iter() {
+                info!("{:?}, doing icoset_fft for a, index: {}", sector_id, index);
                 a.icoset_fft(&worker, fft_kern).unwrap();
                 tx_3.send(a).unwrap();
             }
         }
     })
     .unwrap();
-    info!("sector: {}, done FFT", sector_id);
+    info!("{:?}, done FFT", sector_id);
 
     let param_h = rx_hl.recv().unwrap()?;
 
@@ -434,7 +454,7 @@ pub fn c2_stage2(
     })
     .unwrap();
 
-    info!("sector: {}, done h_s", sector_id);
+    info!("{:?}, done h_s", sector_id);
     let h_s = h_s?;
 
     let input_assignments = provers
@@ -449,7 +469,7 @@ pub fn c2_stage2(
             )
         })
         .collect::<Vec<_>>();
-    info!("sector: {}, done input_assignments", sector_id);
+    info!("{:?}, done input_assignments", sector_id);
 
     let aux_assignments = provers
         .par_iter_mut()
@@ -464,7 +484,7 @@ pub fn c2_stage2(
         })
         .collect::<Vec<_>>();
 
-    info!("sector: {}, done aux_assignments", sector_id);
+    info!("{:?}, done aux_assignments", sector_id);
 
     let mut l_s = Ok(vec![]);
     let param_l = rx_hl.recv().unwrap()?;
@@ -505,7 +525,7 @@ pub fn c2_stage2(
     .unwrap();
     let l_s = l_s?;
 
-    info!("sector: {}, done l_s", sector_id);
+    info!("{:?}, done l_s", sector_id);
 
     let param_a = rx_ab.recv().unwrap()?;
     let param_bg1 = rx_ab.recv().unwrap()?;
@@ -526,12 +546,13 @@ pub fn c2_stage2(
                 &mut multiexp_kern,
             );
 
-            let a_aux = multiexp(
+            let a_aux = multiexp_sector(
                 &worker,
                 a_aux_source,
                 Arc::new(prover.a_aux_density),
                 aux_assignment.clone(),
                 &mut multiexp_kern,
+                sector_id,
             );
 
             let b_input_density = Arc::new(prover.b_input_density);
@@ -540,37 +561,41 @@ pub fn c2_stage2(
             let b_g1_inputs_source = param_bg1.0.clone();
             let b_g1_aux_source = ((param_bg1.1).0.clone(), b_input_density_total);
 
-            let b_g1_inputs = multiexp(
+            let b_g1_inputs = multiexp_sector(
                 &worker,
                 b_g1_inputs_source,
                 b_input_density.clone(),
                 input_assignment.clone(),
                 &mut multiexp_kern,
+                sector_id,
             );
 
-            let b_g1_aux = multiexp(
+            let b_g1_aux = multiexp_sector(
                 &worker,
                 b_g1_aux_source,
                 b_aux_density.clone(),
                 aux_assignment.clone(),
                 &mut multiexp_kern,
+                sector_id,
             );
             let b_g2_inputs_source = param_bg2.0.clone();
             let b_g2_aux_source = ((param_bg2.1).0.clone(), b_input_density_total);
 
-            let b_g2_inputs = multiexp(
+            let b_g2_inputs = multiexp_sector(
                 &worker,
                 b_g2_inputs_source,
                 b_input_density,
                 input_assignment.clone(),
                 &mut multiexp_kern,
+                sector_id,
             );
-            let b_g2_aux = multiexp(
+            let b_g2_aux = multiexp_sector(
                 &worker,
                 b_g2_aux_source,
                 b_aux_density,
                 aux_assignment.clone(),
                 &mut multiexp_kern,
+                sector_id,
             );
 
             Ok((
@@ -588,7 +613,7 @@ pub fn c2_stage2(
     drop(param_bg1);
     drop(param_bg2);
 
-    info!("sector {}, done inputs", sector_id);
+    info!("{:?}, done inputs", sector_id);
     drop(multiexp_kern);
     let proofs = h_s
         .into_iter()
@@ -647,4 +672,67 @@ pub fn c2_stage2(
         .collect::<Result<Vec<_>, SynthesisError>>()?;
 
     Ok(proofs)
+}
+
+/// Perform multi-exponentiation. The caller is responsible for ensuring the
+/// query size is the same as the number of exponents.
+pub fn multiexp_sector<Q, D, G, S>(
+    pool: &Worker,
+    bases: S,
+    density_map: D,
+    exponents: Arc<Vec<<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr>>,
+    kern: &mut Option<gpu::LockedMultiexpKernel<G::Engine>>,
+    sector_id: SectorId,
+) -> Box<dyn Future<Item = <G as CurveAffine>::Projective, Error = SynthesisError>>
+where
+    for<'a> &'a Q: QueryDensity,
+    D: Send + Sync + 'static + Clone + AsRef<Q>,
+    G: CurveAffine,
+    G::Engine: paired::Engine,
+    S: SourceBuilder<G>,
+{
+    if let Some(ref mut kern) = kern {
+        if let Ok(p) = kern.with(|k: &mut gpu::MultiexpKernel<G::Engine>| {
+            let start = std::time::Instant::now();
+            let mut exps = vec![exponents[0]; exponents.len()];
+            let mut n = 0;
+            for (&e, d) in exponents.iter().zip(density_map.as_ref().iter()) {
+                if d {
+                    exps[n] = e;
+                    n += 1;
+                }
+            }
+
+            let (bss, skip) = bases.clone().get();
+            let stop = std::time::Instant::now();
+            info!("{:?}: density time = {:?}", sector_id, stop - start);
+            k.multiexp(pool, bss, Arc::new(exps), skip, n)
+        }) {
+            return Box::new(pool.compute(move || Ok(p)));
+        }
+    }
+
+    let c = if exponents.len() < 32 {
+        3u32
+    } else {
+        (f64::from(exponents.len() as u32)).ln().ceil() as u32
+    };
+
+    if let Some(query_size) = density_map.as_ref().get_query_size() {
+        // If the density map has a known query size, it should not be
+        // inconsistent with the number of exponents.
+        assert!(query_size == exponents.len());
+    }
+
+    let future = multiexp_inner(pool, bases, density_map, exponents, 0, c, true);
+    #[cfg(feature = "gpu")]
+    {
+        // Do not give the control back to the caller till the
+        // multiexp is done. We may want to reacquire the GPU again
+        // between the multiexps.
+        let result = future.wait();
+        Box::new(pool.compute(move || result))
+    }
+    #[cfg(not(feature = "gpu"))]
+    future
 }
