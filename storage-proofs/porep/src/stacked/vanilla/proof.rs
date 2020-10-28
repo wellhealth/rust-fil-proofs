@@ -959,7 +959,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let config_count = configs.len(); // Don't move config into closure below.
             let configs = &configs;
 
-            crossbeam::scope(|s| {
+            rayon::scope(|s| {
                 let data = &mut data;
                 s.spawn(move |_| {
                     for i in 0..config_count {
@@ -1103,13 +1103,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         }
                     });
                 }
-            })
-            .unwrap();
+            });
         } else {
-            info!(
-                "{:?}: generating tree r last using the CPU, replica",
-                replica_path
-            );
+            info!("{:?}: generating tree r last using the CPU", replica_path);
             let size = Store::len(last_layer_labels);
 
             let mut start = 0;
