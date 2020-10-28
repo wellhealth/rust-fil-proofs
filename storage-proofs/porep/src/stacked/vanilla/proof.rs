@@ -338,7 +338,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     }
 
     #[allow(clippy::type_complexity)]
-
     fn my_generate_labels(
         graph: &StackedBucketGraph<Tree::Hasher>,
         layer_challenges: &LayerChallenges,
@@ -535,8 +534,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         for node_index in (0..nodes_count).step_by(batch_size) {
             let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
-
             let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
+
             let data = files
                 .par_iter_mut()
                 .map(|x| {
@@ -560,15 +559,13 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     res
                 })
                 .collect::<Vec<Vec<Fr>>>();
-            info!(
-                "sector: {:?}: node index: {}",
-                replica_path.as_ref(),
-                node_index
-            );
+
+            info!("{:?}: node index: {}", replica_path.as_ref(), node_index);
 
             tx.send(data).unwrap();
         }
     }
+
     fn create_batch_gpu<ColumnArity, P: AsRef<Path> + Send + Sync>(
         nodes_count: usize,
         configs: &[StoreConfig],
@@ -624,13 +621,13 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .collect::<Vec<_>>();
 
         while i < config_count {
+            let (columns, is_final) = builder_rx.recv().expect("failed to recv columns");
+
             info!(
                 "sector: {:?}: recv in config: {}",
                 replica_path.as_ref(),
                 i + 1
             );
-            let (columns, is_final) = builder_rx.recv().expect("failed to recv columns");
-
             // Just add non-final column batches.
             if !is_final {
                 column_tree_builder
@@ -661,7 +658,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     _ => chans[i - 1].1.take(),
                 };
                 move || {
-                    sync_rx.map(|x| x.recv().unwrap());
+                    if let Some(x) = sync_rx {
+                        x.recv().unwrap()
+                    }
                     defer!({
                         sync_tx.send(()).unwrap();
                     });
@@ -765,30 +764,39 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         let configs = &configs;
         let replica_path = &replica_path;
-        rayon::join(
-            move || {
-                Self::create_batch_gpu::<ColumnArity, _>(
-                    nodes_count,
-                    configs,
-                    labels,
-                    builder_tx,
-                    max_gpu_column_batch_size,
-                    replica_path,
-                )
-            },
-            move || {
-                Self::receive_and_generate_tree_c::<ColumnArity, TreeArity, _>(
-                    nodes_count,
-                    configs,
-                    builder_rx,
-                    max_gpu_tree_batch_size,
-                    max_gpu_column_batch_size,
-                    column_write_batch_size,
-                    replica_path,
-                    gpu_index,
-                )
-            },
-        );
+
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(64)
+            .build()
+            .unwrap();
+
+        pool.install(|| {
+            rayon::join(
+                move || {
+                    Self::create_batch_gpu::<ColumnArity, _>(
+                        nodes_count,
+                        configs,
+                        labels,
+                        builder_tx,
+                        max_gpu_column_batch_size,
+                        replica_path,
+                    )
+                },
+                move || {
+                    Self::receive_and_generate_tree_c::<ColumnArity, TreeArity, _>(
+                        nodes_count,
+                        configs,
+                        builder_rx,
+                        max_gpu_tree_batch_size,
+                        max_gpu_column_batch_size,
+                        column_write_batch_size,
+                        replica_path,
+                        gpu_index,
+                    )
+                },
+            );
+        });
+
         create_disk_tree::<
             DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>,
         >(configs[0].size.expect("config size failure"), &configs)
@@ -937,7 +945,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let config_count = configs.len(); // Don't move config into closure below.
             let configs = &configs;
 
-            rayon::scope(|s| {
+            crossbeam::scope(|s| {
                 let data = &mut data;
                 s.spawn(move |_| {
                     for i in 0..config_count {
@@ -1081,7 +1089,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         }
                     });
                 }
-            });
+            }).unwrap();
         } else {
             info!(
                 "{:?}: generating tree r last using the CPU, replica",
@@ -1300,7 +1308,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let (c_tx, c_rx) = mpsc::sync_channel(5);
         let (r_tx, r_rx) = mpsc::sync_channel(5);
 
-        rayon::scope(|s| {
+        crossbeam::scope(|s| {
             s.spawn(|_| {
                 let tree_c = match layers {
                     2 => Self::generate_tree_c::<U2, Tree::Arity, _>(
@@ -1386,7 +1394,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
             r_tx.send((tree_r_last, tree_d_root, data, tree_d_config))
                 .unwrap();
-        });
+        }).unwrap();
 
         let tree_c = c_rx.recv().unwrap();
         let (tree_r_last, tree_d_root, data, tree_d_config) = r_rx.recv().unwrap();
