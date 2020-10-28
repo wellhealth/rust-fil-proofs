@@ -295,16 +295,25 @@ where
         release_gpu_device(gpu_index);
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
+            &compound_public_params.vanilla_params,
+            labels,
+            data,
+            data_tree,
+            config,
+            replica_path.as_ref().to_path_buf(),
+            gpu_index,
+        )
+    }));
 
-    let (tau, (p_aux, t_aux)) = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
-        &compound_public_params.vanilla_params,
-        labels,
-        data,
-        data_tree,
-        config,
-        replica_path.as_ref().to_path_buf(),
-        gpu_index,
-    )?;
+    let (tau, (p_aux, t_aux)) = match result {
+        Ok(r) => r?,
+        Err(e) => {
+            info!("p2 panic, sector: {:?}", replica_path.as_ref());
+            panic!("error: {:?}", e);
+        }
+    };
 
     let comm_r = commitment_from_fr(tau.comm_r.into());
 
