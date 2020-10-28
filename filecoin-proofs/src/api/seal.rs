@@ -481,13 +481,19 @@ where
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        crate::api::my::custom_c2::<Tree>(
-            porep_config,
-            phase1_output,
-            prover_id,
-            sector_id,
-            gpu_index,
-        )
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(num_cpus::get())
+            .build()
+            .unwrap()
+            .install(|| {
+                crate::api::my::custom_c2::<Tree>(
+                    porep_config,
+                    phase1_output,
+                    prover_id,
+                    sector_id,
+                    gpu_index,
+                )
+            })
     }));
 
     match result {

@@ -473,7 +473,21 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         let replica_path = &replica_path;
         rayon::join(
-            || Self::read_column_batch_from_file(files, nodes_count, batch_size, tx, &replica_path),
+            || {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(11)
+                    .build()
+                    .unwrap()
+                    .install(|| {
+                        Self::read_column_batch_from_file(
+                            files,
+                            nodes_count,
+                            batch_size,
+                            tx,
+                            &replica_path,
+                        )
+                    })
+            },
             || {
                 Self::create_column_in_memory::<ColumnArity, _>(
                     rx,
@@ -1089,7 +1103,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         }
                     });
                 }
-            }).unwrap();
+            })
+            .unwrap();
         } else {
             info!(
                 "{:?}: generating tree r last using the CPU, replica",
@@ -1394,7 +1409,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
             r_tx.send((tree_r_last, tree_d_root, data, tree_d_config))
                 .unwrap();
-        }).unwrap();
+        })
+        .unwrap();
 
         let tree_c = c_rx.recv().unwrap();
         let (tree_r_last, tree_d_root, data, tree_d_config) = r_rx.recv().unwrap();
