@@ -288,10 +288,10 @@ where
 
     let gpu_index = select_gpu_device();
 
-    log::info!("select gpu index: {}", gpu_index);
+    info!("select gpu index: {}", gpu_index);
 
     defer! {
-        log::info!("release gpu index: {}", gpu_index);
+        info!("release gpu index: {}", gpu_index);
         release_gpu_device(gpu_index);
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -310,7 +310,7 @@ where
     let (tau, (p_aux, t_aux)) = match result {
         Ok(r) => r?,
         Err(e) => {
-            info!("p2 panic, sector: {:?}", replica_path.as_ref());
+            info!("{:?}: p2 panic, error: {:?}", replica_path.as_ref(), e);
             panic!("error: {:?}", e);
         }
     };
