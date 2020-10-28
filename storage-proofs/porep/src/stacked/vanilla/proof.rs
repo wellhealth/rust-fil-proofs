@@ -1405,7 +1405,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 )
             })
             .unwrap();
-            info!("tree_r_last done");
+            info!("{:?}: tree_r_last done", &replica_path);
 
             r_tx.send((tree_r_last, tree_d_root, data, tree_d_config))
                 .unwrap();
