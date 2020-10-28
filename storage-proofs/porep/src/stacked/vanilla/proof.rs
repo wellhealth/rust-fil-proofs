@@ -550,31 +550,34 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
             let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
 
+            info!(
+                "{:?}: before file reading: index {}, time: {:?}",
+                replica_path.as_ref(),
+                node_index,
+                std::time::Instant::now()
+            );
+
             let data = files
                 .par_iter_mut()
                 .map(|x| {
+                    info!(
+                        "{:?}: start file reading: {}, time: {:?}",
+                        replica_path.as_ref(),
+                        node_index,
+                        std::time::Instant::now(),
+                    );
                     let mut buf_bytes = vec![0u8; chunk_byte_count];
-                    let t0 = std::time::Instant::now();
                     x.read_exact(&mut buf_bytes).unwrap();
-                    let t1 = std::time::Instant::now();
                     let size = std::mem::size_of::<<Tree::Hasher as Hasher>::Domain>();
-                    let res = buf_bytes
+                    buf_bytes
                         .chunks(size)
                         .map(|x| <<Tree::Hasher as Hasher>::Domain>::from_slice(x))
                         .map(Into::into)
-                        .collect();
-                    let t2 = std::time::Instant::now();
-                    info!(
-                        "{:?}: read label file [{:?}], collect info: [{:?}]",
-                        replica_path.as_ref(),
-                        t1 - t0,
-                        t2 - t1
-                    );
-                    res
+                        .collect()
                 })
                 .collect::<Vec<Vec<Fr>>>();
 
-            info!("{:?}: node index: {}", replica_path.as_ref(), node_index);
+            info!("{:?}: done file reading index: {}", replica_path.as_ref(), node_index);
 
             tx.send(data).unwrap();
         }
