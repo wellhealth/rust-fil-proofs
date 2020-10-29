@@ -16,6 +16,7 @@ mod porep;
 mod proof;
 mod proof_scheme;
 mod utils;
+pub mod p2;
 
 pub use self::challenges::{ChallengeRequirements, LayerChallenges};
 pub use self::column::Column;

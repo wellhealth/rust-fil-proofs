@@ -512,7 +512,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     {
         let layers = ColumnArity::to_usize();
         for node_index in (0..nodes_count).step_by(batch_size) {
-
             let data = rx.recv().unwrap();
             let t0 = std::time::Instant::now();
             let mut columns: Vec<GenericArray<Fr, ColumnArity>> = vec![
@@ -552,10 +551,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
 
             info!(
-                "{:?}: before file reading: index {}, time: {:?}",
+                "{:?}: before file reading: index {}",
                 replica_path.as_ref(),
                 node_index,
-                std::time::Instant::now()
             );
 
             let data = files
@@ -578,12 +576,21 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 })
                 .collect::<Vec<Vec<Fr>>>();
 
-            info!("{:?}: done file reading index: {}", replica_path.as_ref(), node_index);
+            info!(
+                "{:?}: done file reading index: {}",
+                replica_path.as_ref(),
+                node_index
+            );
 
-			let t0 = std::time::Instant::now();
+            let t0 = std::time::Instant::now();
             tx.send(data).unwrap();
-			let t1 = std::time::Instant::now();
-            info!("{:?}: data sent index: {}, time : {:?}", replica_path.as_ref(), node_index, t1 - t0);
+            let t1 = std::time::Instant::now();
+            info!(
+                "{:?}: data sent index: {}, time : {:?}",
+                replica_path.as_ref(),
+                node_index,
+                t1 - t0
+            );
         }
     }
 
@@ -642,7 +649,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .collect::<Vec<_>>();
 
         while i < config_count {
+            info!("{:?}: before builder_rx.recv()", replica_path.as_ref());
             let (columns, is_final) = builder_rx.recv().expect("failed to recv columns");
+            info!("{:?}: after builder_rx.recv()", replica_path.as_ref());
 
             // Just add non-final column batches.
             if !is_final {
@@ -676,10 +685,21 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 move || {
                     if let Some(x) = sync_rx {
                         x.recv().unwrap();
-						info!("{:?}, start persisting {}/{}", replica_path, i + 1, config_count);
+                        info!(
+                            "{:?}, start persisting {}/{}",
+                            replica_path,
+                            i + 1,
+                            config_count
+                        );
                     }
+
                     defer!({
-						info!("{:?}, done persisting {}/{}", replica_path, i + 1, config_count);
+                        info!(
+                            "{:?}, done persisting {}/{}",
+                            replica_path,
+                            i + 1,
+                            config_count
+                        );
                         sync_tx.send(()).unwrap();
                     });
                     let tree_len = base_data.len() + tree_data.len();
@@ -689,7 +709,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     if path.exists() {
                         if let Err(e) = std::fs::remove_file(&path) {
                             info!(
-                                "sector: {:?}: cannot delete file: {:?}, erro: {}",
+                                "sector: {:?}: cannot delete file: {:?}, error: {}",
                                 replica_path, path, e
                             );
                         }
