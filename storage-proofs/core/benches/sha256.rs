@@ -131,14 +131,10 @@ fn sha256_circuit_benchmark(c: &mut Criterion) {
     );
 }
 
-/*criterion_group!(
+criterion_group!(
     benches,
     sha256_benchmark,
     sha256_raw_benchmark,
     sha256_circuit_benchmark
 );
-criterion_main!(benches);*/
-
-fn main() {
-
-}
+criterion_main!(benches);

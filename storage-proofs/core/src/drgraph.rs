@@ -235,3 +235,147 @@ pub fn derive_drg_seed(porep_id: [u8; 32]) -> [u8; 28] {
     drg_seed
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use memmap::MmapMut;
+    use memmap::MmapOptions;
+    use merkletree::store::StoreConfig;
+
+    use crate::hasher::{
+        Blake2sHasher, PedersenHasher, PoseidonArity, PoseidonHasher, Sha256Hasher,
+    };
+    use crate::merkle::{
+        create_base_merkle_tree, DiskStore, MerkleProofTrait, MerkleTreeTrait, MerkleTreeWrapper,
+    };
+
+    // Create and return an object of MmapMut backed by in-memory copy of data.
+    pub fn mmap_from(data: &[u8]) -> MmapMut {
+        let mut mm = MmapOptions::new()
+            .len(data.len())
+            .map_anon()
+            .expect("Failed to create memory map");
+        mm.copy_from_slice(data);
+        mm
+    }
+
+    fn graph_bucket<H: Hasher>() {
+        let degree = BASE_DEGREE;
+        let porep_id = [123; 32];
+
+        for &size in &[4, 16, 256, 2048] {
+            let g = BucketGraph::<H>::new(size, degree, 0, porep_id).unwrap();
+
+            assert_eq!(g.size(), size, "wrong nodes count");
+
+            let mut parents = vec![0; degree];
+            g.parents(0, &mut parents).unwrap();
+            assert_eq!(parents, vec![0; degree as usize]);
+            parents = vec![0; degree];
+            g.parents(1, &mut parents).unwrap();
+            assert_eq!(parents, vec![0; degree as usize]);
+
+            for i in 2..size {
+                let mut pa1 = vec![0; degree];
+                g.parents(i, &mut pa1).unwrap();
+                let mut pa2 = vec![0; degree];
+                g.parents(i, &mut pa2).unwrap();
+
+                assert_eq!(pa1.len(), degree);
+                assert_eq!(pa1, pa2, "different parents on the same node");
+
+                let mut p1 = vec![0; degree];
+                g.parents(i, &mut p1).unwrap();
+                let mut p2 = vec![0; degree];
+                g.parents(i, &mut p2).unwrap();
+
+                for parent in p1 {
+                    // TODO: fix me
+                    assert_ne!(i, parent as usize, "self reference found");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn graph_bucket_sha256() {
+        graph_bucket::<Sha256Hasher>();
+    }
+
+    #[test]
+    fn graph_bucket_blake2s() {
+        graph_bucket::<Blake2sHasher>();
+    }
+
+    #[test]
+    fn graph_bucket_pedersen() {
+        graph_bucket::<PedersenHasher>();
+    }
+
+    fn gen_proof<H: 'static + Hasher, U: 'static + PoseidonArity>(config: Option<StoreConfig>) {
+        let leafs = 64;
+        let porep_id = [1; 32];
+        let g = BucketGraph::<H>::new(leafs, BASE_DEGREE, 0, porep_id).unwrap();
+        let data = vec![2u8; NODE_SIZE * leafs];
+
+        let mmapped = &mmap_from(&data);
+        let tree = create_base_merkle_tree::<
+            MerkleTreeWrapper<H, DiskStore<H::Domain>, U, typenum::U0, typenum::U0>,
+        >(config, g.size(), mmapped)
+        .unwrap();
+        let proof = tree.gen_proof(2).unwrap();
+
+        assert!(proof.verify());
+    }
+
+    #[test]
+    fn gen_proof_pedersen_binary() {
+        gen_proof::<PedersenHasher, typenum::U2>(None);
+    }
+
+    #[test]
+    fn gen_proof_poseidon_binary() {
+        gen_proof::<PoseidonHasher, typenum::U2>(None);
+    }
+
+    #[test]
+    fn gen_proof_sha256_binary() {
+        gen_proof::<Sha256Hasher, typenum::U2>(None);
+    }
+
+    #[test]
+    fn gen_proof_blake2s_binary() {
+        gen_proof::<Blake2sHasher, typenum::U2>(None);
+    }
+
+    #[test]
+    fn gen_proof_pedersen_quad() {
+        gen_proof::<PedersenHasher, typenum::U4>(None);
+    }
+
+    #[test]
+    fn gen_proof_poseidon_quad() {
+        gen_proof::<PoseidonHasher, typenum::U4>(None);
+    }
+
+    #[test]
+    fn gen_proof_sha256_quad() {
+        gen_proof::<Sha256Hasher, typenum::U4>(None);
+    }
+
+    #[test]
+    fn gen_proof_blake2s_quad() {
+        gen_proof::<Blake2sHasher, typenum::U4>(None);
+    }
+
+    #[test]
+    fn gen_proof_pedersen_oct() {
+        gen_proof::<PedersenHasher, typenum::U8>(None);
+    }
+
+    #[test]
+    fn gen_proof_poseidon_oct() {
+        gen_proof::<PoseidonHasher, typenum::U8>(None);
+    }
+}

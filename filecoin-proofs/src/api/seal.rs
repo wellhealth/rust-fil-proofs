@@ -31,9 +31,10 @@ use storage_proofs::util::default_rows_to_discard;
 use crate::api::util::{
     as_safe_commitment, commitment_from_fr, get_base_tree_leafs, get_base_tree_size,
 };
-use crate::caches::get_stacked_verifying_key;
+use crate::caches::{get_stacked_params, get_stacked_verifying_key};
 use crate::constants::{
     DefaultBinaryTree, DefaultPieceDomain, DefaultPieceHasher, POREP_MINIMUM_CHALLENGES,
+    SINGLE_PARTITION_PROOF_LEN,
 };
 use crate::parameters::setup_params;
 pub use crate::pieces;
@@ -468,16 +469,64 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
 }
 
 use scopeguard::defer;
+#[allow(clippy::too_many_arguments)]
 
-pub fn seal_commit_phase2<Tree>(
+pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     phase1_output: SealCommitPhase1Output<Tree>,
     prover_id: ProverId,
     sector_id: SectorId,
-) -> Result<SealCommitOutput>
-where
-    Tree: 'static + MerkleTreeTrait,
-{
+) -> Result<SealCommitOutput> {
+    info!("seal_commit_phase2:start: {:?}", sector_id);
+
+    let SealCommitPhase1Output {
+        vanilla_proofs,
+        comm_d,
+        comm_r,
+        replica_id,
+        seed,
+        ticket,
+    } = phase1_output;
+
+    ensure!(comm_d != [0; 32], "Invalid all zero commitment (comm_d)");
+    ensure!(comm_r != [0; 32], "Invalid all zero commitment (comm_r)");
+
+    let comm_r_safe = as_safe_commitment(&comm_r, "comm_r")?;
+    let comm_d_safe = DefaultPieceDomain::try_from_bytes(&comm_d)?;
+
+    let public_inputs = stacked::PublicInputs {
+        replica_id,
+        tau: Some(stacked::Tau {
+            comm_d: comm_d_safe,
+            comm_r: comm_r_safe,
+        }),
+        k: None,
+        seed,
+    };
+
+    let groth_params = get_stacked_params::<Tree>(porep_config)?;
+
+    info!(
+        "got groth params ({}) while sealing",
+        u64::from(PaddedBytesAmount::from(porep_config))
+    );
+
+    let compound_setup_params = compound_proof::SetupParams {
+        vanilla_params: setup_params(
+            PaddedBytesAmount::from(porep_config),
+            usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
+        )?,
+        partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
+        priority: false,
+    };
+
+    let compound_public_params = <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
+        StackedDrg<Tree, DefaultPieceHasher>,
+        _,
+    >>::setup(&compound_setup_params)?;
+
+
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
     let gpu_index = select_gpu_device();
@@ -489,28 +538,55 @@ where
         release_gpu_device(gpu_index);
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(num_cpus::get())
-            .build()
-            .unwrap()
-            .install(|| {
-                crate::api::my::custom_c2::<Tree>(
-                    porep_config,
-                    phase1_output,
-                    prover_id,
-                    sector_id,
-                    gpu_index,
-                )
-            })
+        info!("snark_proof:start");
+        let groth_proofs = StackedCompound::<Tree, DefaultPieceHasher>::circuit_proofs(
+            &public_inputs,
+            vanilla_proofs,
+            &compound_public_params.vanilla_params,
+            &groth_params,
+            compound_public_params.priority,
+            gpu_index,
+        )?;
+        info!("snark_proof:finish");
+
+        let proof = MultiProof::new(groth_proofs, &groth_params.vk);
+
+        let mut buf = Vec::with_capacity(
+            SINGLE_PARTITION_PROOF_LEN * usize::from(PoRepProofPartitions::from(porep_config)),
+        );
+
+        proof.write(&mut buf)?;
+
+        // Verification is cheap when parameters are cached,
+        // and it is never correct to return a proof which does not verify.
+        verify_seal_inner::<Tree>(
+            porep_config,
+            comm_r,
+            comm_d,
+            prover_id,
+            sector_id,
+            ticket,
+            seed,
+            &buf,
+            gpu_index
+        )
+            .context("post-seal verification sanity check failed")?;
+
+        let out = SealCommitOutput { proof: buf };
+
+        info!("seal_commit_phase2:finish: {:?}", sector_id);
+        Ok(out)
     }));
 
     match result {
-        Ok(r) => r,
-        Err(e) => {
-            info!("c2 panic, sector: {:?}", sector_id);
-            panic!("{:?}", e);
-        }
+       Ok(r) => r,
+       Err(e) => {
+               info!("c2 panic, sector: {:?}", sector_id);
+               panic!("{:?}", e);
+          }
     }
 }
 
@@ -648,19 +724,7 @@ pub fn verify_seal_inner<Tree: 'static + MerkleTreeTrait>(
     result
 }
 
-/// Verifies the output of some previously-run seal operation.
-///
-/// # Arguments
-///
-/// * `porep_config` - this sector's porep config that contains the number of bytes in this sector.
-/// * `comm_r_in` - commitment to the sector's replica (`comm_r`).
-/// * `comm_d_in` - commitment to the sector's data (`comm_d`).
-/// * `prover_id` - the prover-id that sealed this sector.
-/// * `sector_id` - this sector's sector-id.
-/// * `ticket` - the ticket that was used to generate this sector's replica-id.
-/// * `seed` - the seed used to derive the porep challenges.
-/// * `proof_vec` - the porep circuit proof serialized into a vector of bytes.
-#[allow(clippy::too_many_arguments)]
+
 pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     comm_r_in: Commitment,
@@ -670,20 +734,8 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     ticket: Ticket,
     seed: Ticket,
     proof_vec: &[u8],
-    //gpu_index:usize,
 ) -> Result<bool> {
-    let gpu_index = 0;
-    verify_seal_inner::<Tree>(
-        porep_config,
-        comm_r_in,
-        comm_d_in,
-        prover_id,
-        sector_id,
-        ticket,
-        seed,
-        proof_vec,
-        gpu_index,
-    )
+    verify_seal_inner::<Tree>(porep_config,comm_r_in,comm_d_in,prover_id,sector_id,ticket,seed,proof_vec,0)
 }
 
 /// Verifies a batch of outputs of some previously-run seal operations.

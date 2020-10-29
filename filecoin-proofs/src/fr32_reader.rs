@@ -473,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    //#[ignore]
     fn test_long() {
         use rand::RngCore;
 

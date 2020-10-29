@@ -124,9 +124,5 @@ fn xor_circuit_benchmark(c: &mut Criterion) {
     );
 }
 
-//criterion_group!(benches, xor_benchmark, xor_circuit_benchmark);
-//criterion_main!(benches);
-
-fn main() {
-
-}
+criterion_group!(benches, xor_benchmark, xor_circuit_benchmark);
+criterion_main!(benches);

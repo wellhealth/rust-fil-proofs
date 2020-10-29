@@ -100,9 +100,5 @@ fn blake2s_circuit_benchmark(c: &mut Criterion) {
     );
 }
 
-//criterion_group!(benches, blake2s_benchmark, blake2s_circuit_benchmark);
-//criterion_main!(benches);
-
-fn main() {
-
-}
+criterion_group!(benches, blake2s_benchmark, blake2s_circuit_benchmark);
+criterion_main!(benches);

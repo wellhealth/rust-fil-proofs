@@ -63,8 +63,5 @@ fn preprocessing_benchmark(c: &mut Criterion) {
     );
 }
 
-/*criterion_group!(benches, preprocessing_benchmark);
-criterion_main!(benches);*/
-fn main() {
-
-}
+criterion_group!(benches, preprocessing_benchmark);
+criterion_main!(benches);

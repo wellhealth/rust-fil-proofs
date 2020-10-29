@@ -76,9 +76,5 @@ fn parents_loop_benchmark(cc: &mut Criterion) {
     );
 }
 
-//criterion_group!(benches, parents_loop_benchmark);
-//criterion_main!(benches);
-
-fn main() {
-
-}
+criterion_group!(benches, parents_loop_benchmark);
+criterion_main!(benches);
