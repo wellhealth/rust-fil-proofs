@@ -490,13 +490,19 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     })
             },
             || {
-                Self::create_column_in_memory::<ColumnArity, _>(
-                    rx,
-                    nodes_count,
-                    batch_size,
-                    builder_tx,
-                    replica_path,
-                )
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(11)
+                    .build()
+                    .unwrap()
+                    .install(|| {
+                        Self::create_column_in_memory::<ColumnArity, _>(
+                            rx,
+                            nodes_count,
+                            batch_size,
+                            builder_tx,
+                            replica_path,
+                        )
+                    })
             },
         );
     }
@@ -521,11 +527,14 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 ];
 
             let is_final = node_index + batch_size >= nodes_count;
-            for layer_index in 0..layers {
-                for (index, column) in columns.iter_mut().enumerate() {
-                    column[layer_index] = data[layer_index][index];
-                }
-            }
+            columns
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(index, column)| {
+                    for layer_index in 0..layers {
+                        column[layer_index] = data[layer_index][index];
+                    }
+                });
             let t1 = std::time::Instant::now();
             info!(
                 "{:?} column creation takes {:?}",
