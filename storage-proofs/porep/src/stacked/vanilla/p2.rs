@@ -3,6 +3,7 @@ use neptune::batch_hasher::Batcher;
 use neptune::batch_hasher::BatcherType;
 use std::fs::OpenOptions;
 use std::path::Path;
+use crossbeam::Receiver;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -17,9 +18,15 @@ use super::hash::hash_single_column;
 
 // Batcher<ColumnArity>
 
-pub fn receive_and_generate_tree_c<ColumnArity, TreeArity, P>(
+pub struct ColumnData<ColumnArity> where ColumnArity: 'static + PoseidonArity {
+	data: Vec<GenericArray<Fr, ColumnArity>>,
+	index: usize,
+}
+
+pub fn receive_and_generate_tree_c_gpu<ColumnArity, TreeArity, P>(
     nodes_count: usize,
     gpu_index: usize,
+    column_rx: Receiver<ColumnData<ColumnArity>>,
 ) -> Result<()>
 where
     ColumnArity: 'static + PoseidonArity,
@@ -30,8 +37,11 @@ where
         .with_context(|| format!("failed to create tree_c batcher {}", gpu_index))?
     {
         Batcher::GPU(x) => x,
-        _ => panic!(),
+        Batcher::CPU(_) => panic!("neptune bug, batcher should be GPU"),
     };
+
+
+	column_rx.recv().unwrap();
 
     Ok(())
 }
