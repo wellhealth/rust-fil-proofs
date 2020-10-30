@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::fs::OpenOptions;
+use std::io::Cursor;
 use std::io::Read;
 use std::io::Write;
 use std::marker::PhantomData;
@@ -741,6 +742,16 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     where
         P: AsRef<Path>,
     {
+        use ff::{PrimeField, PrimeFieldRepr};
+        let mut cursor = Cursor::new(Vec::<u8>::with_capacity(
+            (base.len() + tree.len()) * std::mem::size_of::<Fr>(),
+        ));
+
+        for fr in base.iter().chain(tree.iter()).map(|x| x.into_repr()) {
+            fr.write_le(&mut cursor)
+                .with_context(|| format!("cannot write to cursor {:?}", path.as_ref()))?;
+        }
+
         let mut tree_c = OpenOptions::new()
             .write(true)
             .truncate(true)
@@ -748,11 +759,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .open(&path)
             .with_context(|| format!("cannot open file: {:?}", path.as_ref()))?;
 
-        use ff::{PrimeField, PrimeFieldRepr};
-        for fr in base.iter().chain(tree.iter()).map(|x| x.into_repr()) {
-            fr.write_le(&mut tree_c)
-                .with_context(|| format!("cannot write to file {:?}", path.as_ref()))?;
-        }
+        tree_c
+            .write_all(&cursor.into_inner())
+            .with_context(|| format!("cannot write to file: {:?}", path.as_ref()))?;
 
         Ok(())
     }
@@ -793,7 +802,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         };
 
         // This channel will receive batches of columns and add them to the ColumnTreeBuilder.
-        let (builder_tx, builder_rx) = mpsc::sync_channel(0);
+        let (builder_tx, builder_rx) = mpsc::sync_channel(100);
 
         let configs = &configs;
         let replica_path = &replica_path;
