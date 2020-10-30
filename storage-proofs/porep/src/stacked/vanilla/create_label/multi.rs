@@ -302,7 +302,6 @@ fn create_layer_labels(
 
             while producer_val < i {
                 if !printed {
-                    debug!("PRODUCER NOT READY! {}", i);
                     printed = true;
                     _count_not_ready += 1;
                 }
