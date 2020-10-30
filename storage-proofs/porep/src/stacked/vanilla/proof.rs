@@ -469,7 +469,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         P: AsRef<Path> + Send + Sync,
     {
         let bytes_per_item = batch_size * std::mem::size_of::<Fr>() * 11;
-        let sync_size = 32 * 1024 * 1024 * 1024 / bytes_per_item;
+        let sync_size = 16* 1024 * 1024 * 1024 / bytes_per_item;
 
         let replica_path = &replica_path;
         let (tx, rx) = mpsc::sync_channel(sync_size);
@@ -490,19 +490,13 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     })
             },
             || {
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(11)
-                    .build()
-                    .unwrap()
-                    .install(|| {
-                        Self::create_column_in_memory::<ColumnArity, _>(
-                            rx,
-                            nodes_count,
-                            batch_size,
-                            builder_tx,
-                            replica_path,
-                        )
-                    })
+                Self::create_column_in_memory::<ColumnArity, _>(
+                    rx,
+                    nodes_count,
+                    batch_size,
+                    builder_tx,
+                    replica_path,
+                )
             },
         );
     }
@@ -527,14 +521,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 ];
 
             let is_final = node_index + batch_size >= nodes_count;
-            columns
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(index, column)| {
-                    for layer_index in 0..layers {
-                        column[layer_index] = data[layer_index][index];
-                    }
-                });
+            columns.iter_mut().enumerate().for_each(|(index, column)| {
+                for layer_index in 0..layers {
+                    column[layer_index] = data[layer_index][index];
+                }
+            });
             let t1 = std::time::Instant::now();
             info!(
                 "{:?} column creation takes {:?}",
@@ -671,9 +662,13 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .collect::<Vec<_>>();
 
         while i < config_count {
-            info!("{:?}: before builder_rx.recv()", replica_path.as_ref());
-            let (columns, is_final) = builder_rx.recv().expect("failed to recv columns");
-            info!("{:?}: after builder_rx.recv()", replica_path.as_ref());
+            let (columns, is_final) = {
+                let t0 = std::time::Instant::now();
+                let x = builder_rx.recv().expect("failed to recv columns");
+                let t1 = std::time::Instant::now();
+                info!("{:?}: builder_rx : {:?}", replica_path.as_ref(), t1 - t0);
+                x
+            };
 
             // Just add non-final column batches.
             if !is_final {
@@ -744,8 +739,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             config = &configs[i];
         }
         chans.last().unwrap().1.as_ref().unwrap().recv().unwrap();
-
-	}
+    }
 
     fn persist_tree_c<P>(path: P, base: &[Fr], tree: &[Fr]) -> Result<()>
     where
