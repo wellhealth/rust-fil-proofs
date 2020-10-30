@@ -12,6 +12,7 @@ readme = "README.md"
 bench = false
 
 [dependencies]
+scopeguard = "*"
 rand = "0.7"
 merkletree = "0.21.0"
 byteorder = "1"

@@ -4,7 +4,7 @@ use std::io::Read;
 use std::io::Write;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, RwLock};
+use std::sync::mpsc;
 
 use anyhow::Context;
 use bincode::deserialize;
@@ -14,7 +14,7 @@ use merkletree::merkle::{
     get_merkle_tree_cache_size, get_merkle_tree_leafs, get_merkle_tree_len,
     is_merkle_tree_size_valid,
 };
-use merkletree::store::{DiskStore, StoreConfig};
+use merkletree::store::StoreConfig;
 use mpsc::{Receiver, SyncSender};
 use paired::bls12_381::Fr;
 use rayon::prelude::*;
@@ -469,9 +469,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     {
         let bytes_per_item = batch_size * std::mem::size_of::<Fr>() * 11;
         let sync_size = 32 * 1024 * 1024 * 1024 / bytes_per_item;
-        let (tx, rx) = mpsc::sync_channel(sync_size);
 
         let replica_path = &replica_path;
+        let (tx, rx) = mpsc::sync_channel(sync_size);
         rayon::join(
             || {
                 rayon::ThreadPoolBuilder::new()
@@ -533,6 +533,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             );
             builder_tx.send((columns, is_final)).unwrap();
         }
+        info!(
+            "{:?} build column finished for tree-c",
+            replica_path.as_ref(),
+        );
     }
 
     fn read_column_batch_from_file<P>(
@@ -560,10 +564,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 .par_iter_mut()
                 .map(|x| {
                     info!(
-                        "{:?}: start file reading: {}, time: {:?}",
+                        "{:?}: start file reading: {}",
                         replica_path.as_ref(),
                         node_index,
-                        std::time::Instant::now(),
                     );
                     let mut buf_bytes = vec![0u8; chunk_byte_count];
                     x.read_exact(&mut buf_bytes).unwrap();
@@ -592,6 +595,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 t1 - t0
             );
         }
+        info!(
+            "{:?}, read column finished for config",
+            replica_path.as_ref()
+        );
     }
 
     fn create_batch_gpu<ColumnArity, P: AsRef<Path> + Send + Sync>(
@@ -620,7 +627,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         builder_rx: Receiver<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
         max_gpu_tree_batch_size: usize,
         max_gpu_column_batch_size: usize,
-        column_write_batch_size: usize,
+        _column_write_batch_size: usize,
         replica_path: P,
         gpu_index: usize,
     ) where
@@ -628,6 +635,12 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         TreeArity: PoseidonArity,
         P: AsRef<Path> + Send + Sync,
     {
+        defer!({
+            info!(
+                "{:?} receive_and_generate_tree_c finished",
+                replica_path.as_ref()
+            );
+        });
         let mut column_tree_builder = ColumnTreeBuilder::<ColumnArity, TreeArity>::new(
             Some(BatcherType::GPU),
             nodes_count,
@@ -702,53 +715,15 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         );
                         sync_tx.send(()).unwrap();
                     });
+
                     let tree_len = base_data.len() + tree_data.len();
                     assert_eq!(tree_len, config.size.expect("config size failure"));
 
                     let path = StoreConfig::data_path(&config.path, &config.id);
-                    if path.exists() {
-                        if let Err(e) = std::fs::remove_file(&path) {
-                            info!(
-                                "sector: {:?}: cannot delete file: {:?}, error: {}",
-                                replica_path, path, e
-                            );
-                        }
+
+                    if let Err(e) = Self::persist_tree_c(path, &base_data, &tree_data) {
+                        info!("{:?} persist_tree_c failed, error: {:?}", replica_path, e);
                     }
-
-                    // Persist the base and tree data to disk based using the current store config.
-                    let tree_c_store =
-                        DiskStore::<<Tree::Hasher as Hasher>::Domain>::new_with_config(
-                            tree_len,
-                            Tree::Arity::to_usize(),
-                            config.clone(),
-                        )
-                        .expect("failed to create DiskStore for base tree data");
-
-                    let store = Arc::new(RwLock::new(tree_c_store));
-                    let batch_size = std::cmp::min(base_data.len(), column_write_batch_size);
-                    let flatten_and_write_store = |data: &Vec<Fr>, offset| {
-                        data.into_par_iter()
-                            .chunks(column_write_batch_size)
-                            .enumerate()
-                            .try_for_each(|(index, fr_elements)| {
-                                let mut buf = Vec::with_capacity(batch_size * NODE_SIZE);
-
-                                for fr in fr_elements {
-                                    buf.extend(fr_into_bytes(&fr));
-                                }
-                                store
-                                    .write()
-                                    .expect("failed to access store for write")
-                                    .copy_from_slice(&buf[..], offset + (batch_size * index))
-                            })
-                    };
-
-                    flatten_and_write_store(&base_data, 0)
-                        .expect("failed to flatten and write store");
-
-                    let base_offset = base_data.len();
-                    flatten_and_write_store(&tree_data, base_offset)
-                        .expect("failed to flatten and write store");
                 }
             });
 
@@ -760,6 +735,26 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             config = &configs[i];
         }
         chans.last().unwrap().1.as_ref().unwrap().recv().unwrap();
+    }
+
+    fn persist_tree_c<P>(path: P, base: &[Fr], tree: &[Fr]) -> Result<()>
+    where
+        P: AsRef<Path>,
+    {
+        let mut tree_c = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(&path)
+            .with_context(|| format!("cannot open file: {:?}", path.as_ref()))?;
+
+        use ff::{PrimeField, PrimeFieldRepr};
+        for fr in base.iter().chain(tree.iter()).map(|x| x.into_repr()) {
+            fr.write_le(&mut tree_c)
+                .with_context(|| format!("cannot write to file {:?}", path.as_ref()))?;
+        }
+
+        Ok(())
     }
     fn generate_tree_c_gpu_impl<ColumnArity, TreeArity, P>(
         nodes_count: usize,

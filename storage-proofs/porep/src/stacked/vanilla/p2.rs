@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use ff::{PrimeField, PrimeFieldRepr};
 use neptune::batch_hasher::Batcher;
 use neptune::batch_hasher::BatcherType;
@@ -33,7 +34,7 @@ where
     TreeArity: PoseidonArity,
     P: AsRef<Path>,
 {
-    let batcher = match Batcher::<ColumnArity>::new(&BatcherType::GPU, nodes_count, gpu_index)
+    let _batcher = match Batcher::<ColumnArity>::new(&BatcherType::GPU, nodes_count, gpu_index)
         .with_context(|| format!("failed to create tree_c batcher {}", gpu_index))?
     {
         Batcher::GPU(x) => x,
@@ -41,7 +42,7 @@ where
     };
 
 
-	column_rx.recv().unwrap();
+	let _data = column_rx.recv().unwrap();
 
     Ok(())
 }
