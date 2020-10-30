@@ -99,9 +99,9 @@ where
         row_start = new_row_start;
         row_end = new_row_end;
     }
-    let base_row = tree_data[..leaf_count].to_vec();
-    let tree_to_keep = tree_data[tree_data.len() - final_tree_size..].to_vec();
-    Ok((base_row, tree_to_keep))
+    let tree = tree_data[tree_data.len() - final_tree_size..].to_vec();
+    let base = tree_data;
+    Ok((base, tree))
 }
 
 pub fn persist_tree_c<P>(path: P, base: &[Fr], tree: &[Fr]) -> Result<()>

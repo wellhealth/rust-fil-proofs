@@ -637,7 +637,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         builder_rx: Receiver<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
         max_gpu_tree_batch_size: usize,
         max_gpu_column_batch_size: usize,
-        _column_write_batch_size: usize,
         replica_path: P,
         gpu_index: usize,
     ) where
@@ -706,16 +705,12 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     _ => chans[i - 1].1.take(),
                 };
                 move || {
-                    if let Some(x) = sync_rx {
-                        x.recv().unwrap();
-                        info!(
-                            "{:?}, start persisting {}/{}",
-                            replica_path,
-                            i + 1,
-                            config_count
-                        );
-                    }
-
+                    info!(
+                        "{:?}, start persisting {}/{}",
+                        replica_path,
+                        i + 1,
+                        config_count
+                    );
                     defer!({
                         info!(
                             "{:?}, done persisting {}/{}",
@@ -725,13 +720,17 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         );
                         sync_tx.send(()).unwrap();
                     });
+                    if let Some(x) = sync_rx {
+                        x.recv().unwrap();
+                    }
 
                     let tree_len = base_data.len() + tree_data.len();
                     assert_eq!(tree_len, config.size.expect("config size failure"));
 
                     let path = StoreConfig::data_path(&config.path, &config.id);
 
-                    if let Err(e) = Self::persist_tree_c(path, &base_data, &tree_data) {
+                    let r = Self::persist_tree_c(path, &base_data, &tree_data);
+                    if let Err(e) = r.as_ref() {
                         info!("{:?} persist_tree_c failed, error: {:?}", replica_path, e);
                     }
                 }
@@ -745,7 +744,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             config = &configs[i];
         }
         chans.last().unwrap().1.as_ref().unwrap().recv().unwrap();
-    }
+
+	}
 
     fn persist_tree_c<P>(path: P, base: &[Fr], tree: &[Fr]) -> Result<()>
     where
@@ -798,7 +798,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         // FIL_PROOFS_MAX_GPU_COLUMN_BATCH_SIZE, FIL_PROOFS_MAX_GPU_TREE_BATCH_SIZE, and
         // FIL_PROOFS_COLUMN_WRITE_BATCH_SIZE respectively.
 
-        let (max_gpu_column_batch_size, max_gpu_tree_batch_size, column_write_batch_size) = {
+        let (max_gpu_column_batch_size, max_gpu_tree_batch_size) = {
             let settings_lock = settings::SETTINGS
                 .lock()
                 .expect("max_gpu_column_batch_size settings lock failure");
@@ -806,7 +806,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             (
                 settings_lock.max_gpu_column_batch_size as usize,
                 settings_lock.max_gpu_tree_batch_size as usize,
-                settings_lock.column_write_batch_size as usize,
             )
         };
 
@@ -840,7 +839,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         builder_rx,
                         max_gpu_tree_batch_size,
                         max_gpu_column_batch_size,
-                        column_write_batch_size,
                         replica_path,
                         gpu_index,
                     )
