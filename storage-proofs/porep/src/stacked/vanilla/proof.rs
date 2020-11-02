@@ -562,7 +562,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
             let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
 
-            info!("{:?} read from file for node: {}", replica_path, node_index);
+            info!("{:?} read from file for node: [{}]", replica_path, node_index);
             let data = files
                 .par_iter_mut()
                 .map(|x| {
@@ -578,7 +578,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 })
                 .collect::<Result<Vec<_>>>()?;
 
-            info!("{:?} file data collected: {}", replica_path, node_index);
+            info!("{:?} file data collected: [{}]", replica_path, node_index);
             tx.send((node_index, data)).unwrap();
         }
         Ok(())
@@ -777,7 +777,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         };
 
         // This channel will receive batches of columns and add them to the ColumnTreeBuilder.
-        let (builder_tx, builder_rx) = mpsc::sync_channel(100);
+        let (builder_tx, builder_rx) = mpsc::sync_channel(10);
 
         let configs = &configs;
         let replica_path = &replica_path;
