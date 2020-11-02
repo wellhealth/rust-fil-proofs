@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use anyhow::ensure;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Cursor;
@@ -435,7 +436,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         config_counts: usize,
         batch_size: usize,
         paths: &[(PathBuf, String)],
-        mut builder_tx: SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
+        mut builder_tx: SyncSender<(usize, Vec<GenericArray<Fr, ColumnArity>>, bool)>,
         replica_path: P,
     ) -> Result<()>
     where
@@ -458,6 +459,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 batch_size,
                 &mut builder_tx,
                 &mut files,
+                &replica_path.as_ref().to_owned(),
             )?;
         }
         Ok(())
@@ -466,8 +468,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     fn fast_create_batch_for_config<ColumnArity>(
         nodes_count: usize,
         batch_size: usize,
-        builder_tx: &mut SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
+        builder_tx: &mut SyncSender<(usize, Vec<GenericArray<Fr, ColumnArity>>, bool)>,
         files: &mut [File],
+        replica_path: &Path,
     ) -> Result<()>
     where
         ColumnArity: 'static + PoseidonArity,
@@ -483,7 +486,13 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     .build()
                     .unwrap()
                     .install(|| {
-                        Self::read_column_batch_from_file(files, nodes_count, batch_size, tx)
+                        Self::read_column_batch_from_file(
+                            files,
+                            nodes_count,
+                            batch_size,
+                            tx,
+                            replica_path,
+                        )
                     })
             },
             || {
@@ -492,6 +501,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     nodes_count,
                     batch_size,
                     builder_tx,
+                    replica_path,
                 )
             },
         );
@@ -501,19 +511,27 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     }
 
     fn create_column_in_memory<ColumnArity>(
-        rx: Receiver<Vec<Vec<Fr>>>,
+        rx: Receiver<(usize, Vec<Vec<Fr>>)>,
         nodes_count: usize,
         batch_size: usize,
-        builder_tx: &mut SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
+        builder_tx: &mut SyncSender<(usize, Vec<GenericArray<Fr, ColumnArity>>, bool)>,
+        replica_path: &Path,
     ) -> Result<()>
     where
         ColumnArity: 'static + PoseidonArity,
     {
         let layers = ColumnArity::to_usize();
         for node_index in (0..nodes_count).step_by(batch_size) {
-            let data = rx
+            let (node, data) = rx
                 .recv()
                 .map_err(|e| anyhow!("failed to receive column data, err: {:?}", e))?;
+
+            ensure!(node == node_index, "node index mismatch for p2");
+            info!(
+                "{:?} start creating columns for node {}",
+                replica_path, node
+            );
+
             let mut columns: Vec<GenericArray<Fr, ColumnArity>> = vec![
                     GenericArray::<Fr, ColumnArity>::generate(|_i: usize| Fr::zero());
                     data[0].len()
@@ -525,7 +543,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     column[layer_index] = data[layer_index][index];
                 }
             });
-            builder_tx.send((columns, is_final)).unwrap();
+
+            builder_tx.send((node, columns, is_final)).unwrap();
         }
         Ok(())
     }
@@ -534,7 +553,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         files: &mut [File],
         nodes_count: usize,
         batch_size: usize,
-        tx: SyncSender<Vec<Vec<Fr>>>,
+        tx: SyncSender<(usize, Vec<Vec<Fr>>)>,
+        replica_path: &Path,
     ) -> Result<()> {
         use merkletree::merkle::Element;
 
@@ -542,6 +562,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
             let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
 
+            info!("{:?} read from file for node: {}", replica_path, node_index);
             let data = files
                 .par_iter_mut()
                 .map(|x| {
@@ -556,7 +577,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         .collect())
                 })
                 .collect::<Result<Vec<_>>>()?;
-            tx.send(data).unwrap();
+
+            info!("{:?} file data collected: {}", replica_path, node_index);
+            tx.send((node_index, data)).unwrap();
         }
         Ok(())
     }
@@ -565,7 +588,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         nodes_count: usize,
         configs: &[StoreConfig],
         paths: &[(PathBuf, String)],
-        builder_tx: SyncSender<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
+        builder_tx: SyncSender<(usize, Vec<GenericArray<Fr, ColumnArity>>, bool)>,
         batch_size: usize,
         replica_path: P,
     ) -> Result<()>
@@ -585,7 +608,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     fn receive_and_generate_tree_c<ColumnArity, TreeArity, P>(
         nodes_count: usize,
         configs: &[StoreConfig],
-        builder_rx: Receiver<(Vec<GenericArray<Fr, ColumnArity>>, bool)>,
+        builder_rx: Receiver<(usize, Vec<GenericArray<Fr, ColumnArity>>, bool)>,
         max_gpu_tree_batch_size: usize,
         max_gpu_column_batch_size: usize,
         replica_path: P,
@@ -619,19 +642,15 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         let (persist_tx, persist_rx) = channel();
         while i < config_count {
-            let (columns, is_final) = {
-                let t0 = std::time::Instant::now();
-                let x = builder_rx.recv().expect("failed to recv columns");
-                let t1 = std::time::Instant::now();
-                info!("{:?}: builder_rx : {:?}", replica_path.as_ref(), t1 - t0);
-                x
-            };
+            let (node, columns, is_final) = builder_rx.recv().expect("failed to recv columns");
+            info!("{:?} received node [{}]", replica_path.as_ref(), node);
 
             // Just add non-final column batches.
             if !is_final {
                 column_tree_builder
                     .add_columns(&columns)
                     .expect("failed to add columns");
+                info!("{:?} built node [{}]", replica_path.as_ref(), node);
                 continue;
             };
 
