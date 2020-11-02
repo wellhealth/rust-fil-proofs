@@ -476,7 +476,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         ColumnArity: 'static + PoseidonArity,
     {
         let bytes_per_item = batch_size * std::mem::size_of::<Fr>() * 11;
-        let sync_size = 16 * 1024 * 1024 * 1024 / bytes_per_item;
+        let sync_size = 8 * 1024 * 1024 * 1024 / bytes_per_item;
 
         let (tx, rx) = mpsc::sync_channel(sync_size);
         let (r1, r2) = rayon::join(
@@ -562,7 +562,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
             let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
 
-            info!("{:?} read from file for node: [{}]", replica_path, node_index);
+            info!(
+                "{:?} read from file for node: [{}]",
+                replica_path, node_index
+            );
             let data = files
                 .par_iter_mut()
                 .map(|x| {
@@ -580,6 +583,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
             info!("{:?} file data collected: [{}]", replica_path, node_index);
             tx.send((node_index, data)).unwrap();
+            info!("{:?} file data sent: [{}]", replica_path, node_index);
         }
         Ok(())
     }
@@ -658,6 +662,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let (base_data, tree_data) = column_tree_builder
                 .add_final_columns(&columns)
                 .expect("failed to add final columns");
+
+            drop(columns);
 
             assert_eq!(base_data.len(), nodes_count);
             info!(
