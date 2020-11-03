@@ -537,77 +537,93 @@ pub fn c2_stage2(
         .map(|((prover, input_assignment), aux_assignment)| {
             let a_inputs_source = param_a.0.clone();
             let a_aux_source = ((param_a.1).0.clone(), input_assignment.len());
+            let b_input_density = Arc::new(prover.b_input_density);
 
             let a_aux_density = Arc::new(prover.a_aux_density);
-            let a_aux_exps = Arc::new(cpu_compute_exp(aux_assignment.as_slice(), a_aux_density.clone()));
-            let a_inputs = multiexp_full(
-                &worker,
-                a_inputs_source,
-                FullDensity,
-                input_assignment.clone(),
-                &mut multiexp_kern,
-            );
-
-            let a_aux = multiexp_precompute(
-                &worker,
-                a_aux_source,
-                a_aux_density,
-                aux_assignment.clone(),
-                &mut multiexp_kern,
-                a_aux_exps,
-            );
-
-            let b_input_density = Arc::new(prover.b_input_density);
-            let b_input_density_total = b_input_density.get_total_density();
             let b_aux_density = Arc::new(prover.b_aux_density);
-            let b_g1_inputs_source = param_bg1.0.clone();
-            let b_g1_aux_source = ((param_bg1.1).0.clone(), b_input_density_total);
+            let (a_aux_tx, a_aux_rx) = channel();
+            crossbeam::scope(|s| {
+                s.spawn({
+                    let aux_assignment = &aux_assignment;
+                    let a_aux_density = a_aux_density.clone();
+                    let tx = a_aux_tx.clone();
+                    move |_| {
+                        tx.send(cpu_compute_exp(
+                            aux_assignment.as_slice(),
+                            a_aux_density.clone(),
+                        ))
+                        .unwrap();
+                    }
+                });
 
-            let b_g1_inputs = multiexp_sector(
-                &worker,
-                b_g1_inputs_source,
-                b_input_density.clone(),
-                input_assignment.clone(),
-                &mut multiexp_kern,
-                sector_id,
-            );
+                let a_inputs = multiexp_full(
+                    &worker,
+                    a_inputs_source,
+                    FullDensity,
+                    input_assignment.clone(),
+                    &mut multiexp_kern,
+                );
 
-            let b_g1_aux = multiexp_sector(
-                &worker,
-                b_g1_aux_source,
-                b_aux_density.clone(),
-                aux_assignment.clone(),
-                &mut multiexp_kern,
-                sector_id,
-            );
-            let b_g2_inputs_source = param_bg2.0.clone();
-            let b_g2_aux_source = ((param_bg2.1).0.clone(), b_input_density_total);
+                let a_aux = multiexp_precompute(
+                    &worker,
+                    a_aux_source,
+                    a_aux_density,
+                    aux_assignment.clone(),
+                    &mut multiexp_kern,
+                    Arc::new(a_aux_rx.recv().unwrap()),
+                );
 
-            let b_g2_inputs = multiexp_sector(
-                &worker,
-                b_g2_inputs_source,
-                b_input_density,
-                input_assignment.clone(),
-                &mut multiexp_kern,
-                sector_id,
-            );
-            let b_g2_aux = multiexp_sector(
-                &worker,
-                b_g2_aux_source,
-                b_aux_density,
-                aux_assignment.clone(),
-                &mut multiexp_kern,
-                sector_id,
-            );
+                let b_input_density_total = b_input_density.get_total_density();
+                let b_g1_inputs_source = param_bg1.0.clone();
+                let b_g1_aux_source = ((param_bg1.1).0.clone(), b_input_density_total);
 
-            Ok((
-                a_inputs,
-                a_aux,
-                b_g1_inputs,
-                b_g1_aux,
-                b_g2_inputs,
-                b_g2_aux,
-            ))
+                let b_g1_inputs = multiexp_sector(
+                    &worker,
+                    b_g1_inputs_source,
+                    b_input_density.clone(),
+                    input_assignment.clone(),
+                    &mut multiexp_kern,
+                    sector_id,
+                );
+
+                let b_g1_aux = multiexp_sector(
+                    &worker,
+                    b_g1_aux_source,
+                    b_aux_density.clone(),
+                    aux_assignment.clone(),
+                    &mut multiexp_kern,
+                    sector_id,
+                );
+                let b_g2_inputs_source = param_bg2.0.clone();
+                let b_g2_aux_source = ((param_bg2.1).0.clone(), b_input_density_total);
+
+                let b_g2_inputs = multiexp_sector(
+                    &worker,
+                    b_g2_inputs_source,
+                    b_input_density,
+                    input_assignment.clone(),
+                    &mut multiexp_kern,
+                    sector_id,
+                );
+                let b_g2_aux = multiexp_sector(
+                    &worker,
+                    b_g2_aux_source,
+                    b_aux_density,
+                    aux_assignment.clone(),
+                    &mut multiexp_kern,
+                    sector_id,
+                );
+
+                Ok((
+                    a_inputs,
+                    a_aux,
+                    b_g1_inputs,
+                    b_g1_aux,
+                    b_g2_inputs,
+                    b_g2_aux,
+                ))
+            })
+            .unwrap()
         })
         .collect::<Result<Vec<_>, SynthesisError>>()?;
 
