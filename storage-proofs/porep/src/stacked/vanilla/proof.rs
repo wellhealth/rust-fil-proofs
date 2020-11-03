@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use anyhow::ensure;
+use lazy_static::lazy_static;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Cursor;
@@ -819,8 +820,14 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             )
         });
 
-        r1?;
-        r2?;
+        match (r1, r2) {
+            (Ok(_), Ok(_)) => {}
+            (Ok(_), Err(e)) => return Err(e),
+            (Err(e), Ok(_)) => return Err(e),
+            (Err(e1), Err(e2)) => {
+                return Err(anyhow!("tree-c error: {:?}, {:?}", e1, e2));
+            }
+        }
         create_disk_tree::<
             DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>,
         >(configs[0].size.expect("config size failure"), &configs)
@@ -940,16 +947,19 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     where
         TreeArity: PoseidonArity,
     {
-        let num_cpu = num_cpus::get();
-        let cores_for_p1 = settings::SETTINGS
-            .lock()
-            .expect("get p1 cores failure")
-            .cores_for_p1 as usize;
-        rayon::ThreadPoolBuilder::new()
-                .num_threads(num_cpu - 3 - cores_for_p1)
-                .build()
-                .unwrap()
-                .install(|| {
+        lazy_static! {
+            static ref POOL: rayon::ThreadPool = {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(
+                        num_cpus::get()
+                            - 3
+                            - settings::SETTINGS.lock().unwrap().cores_for_p1 as usize,
+                    )
+                    .build()
+                    .unwrap()
+            };
+        };
+        POOL.install(|| {
 
         let (configs, replica_config) = split_config_and_replica(
             tree_r_last_config.clone(),
