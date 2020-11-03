@@ -940,6 +940,17 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     where
         TreeArity: PoseidonArity,
     {
+        let num_cpu = num_cpus::get();
+        let cores_for_p1 = settings::SETTINGS
+            .lock()
+            .expect("get p1 cores failure")
+            .cores_for_p1 as usize;
+        rayon::ThreadPoolBuilder::new()
+                .num_threads(num_cpu - 3 - cores_for_p1)
+                .build()
+                .unwrap()
+                .install(|| {
+
         let (configs, replica_config) = split_config_and_replica(
             tree_r_last_config.clone(),
             replica_path.clone(),
@@ -949,6 +960,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         data.ensure_data()?;
         let last_layer_labels = labels.labels_for_last_layer()?;
+
 
         if settings::SETTINGS
             .lock()
@@ -1158,7 +1170,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             &configs,
             &replica_config,
         )
-        .map(|x| (x, data))
+        .map(|x| (x, data))})
     }
 
     pub(crate) fn transform_and_replicate_layers(
