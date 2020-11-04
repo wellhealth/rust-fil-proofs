@@ -50,7 +50,6 @@ use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
-use scopeguard::defer;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::sync_channel;
 use std::sync::Arc;
@@ -356,16 +355,12 @@ pub fn c2_stage2(
                     .iter()
                     .enumerate()
                     .map(|(index, a)| {
-                        info!("{:?}: convert a to arc: {}", sector_id, index);
                         let mut a = a.into_coeffs();
                         let a_len = a.len() - 1;
                         a.truncate(a_len);
                         (index, a)
                     })
                     .map(|(index, a)| {
-                        defer!({
-                            info!("{:?}: collected Arc for a, index: {}", sector_id, index);
-                        });
                         Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>())
                     })
                     .collect::<Vec<_>>();
@@ -377,14 +372,8 @@ pub fn c2_stage2(
             for (index, prover) in provers.iter_mut().enumerate() {
                 if index >= spawn_index {
                     spawn_index = len + 1;
-                    s.spawn({
-                        let tx_hl = tx_hl.clone();
-                        move |_| {
-                            info!("{:?}: sending params_h", sector_id);
-                            tx_hl.send(params.get_h(0)).unwrap();
-                            info!("{:?}: params_h sent", sector_id);
-                        }
-                    });
+                    let tx_hl = tx_hl.clone();
+                    s.spawn(move |_| tx_hl.send(params.get_h(0)).unwrap());
                 }
                 let mut a =
                     EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.a, Vec::new()))
