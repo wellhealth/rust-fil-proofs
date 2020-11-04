@@ -541,16 +541,23 @@ pub fn c2_stage2(
 
             let a_aux_density = Arc::new(prover.a_aux_density);
             let b_aux_density = Arc::new(prover.b_aux_density);
-            let (a_aux_tx, a_aux_rx) = channel();
+            let (aux_tx, aux_rx) = channel();
             crossbeam::scope(|s| {
                 s.spawn({
                     let aux_assignment = &aux_assignment;
                     let a_aux_density = a_aux_density.clone();
-                    let tx = a_aux_tx.clone();
+                    let b_aux_density = b_aux_density.clone();
+                    let tx = aux_tx.clone();
                     move |_| {
                         tx.send(cpu_compute_exp(
                             aux_assignment.as_slice(),
                             a_aux_density.clone(),
+                        ))
+                        .unwrap();
+
+                        tx.send(cpu_compute_exp(
+                            aux_assignment.as_slice(),
+                            b_aux_density.clone(),
                         ))
                         .unwrap();
                     }
@@ -570,7 +577,7 @@ pub fn c2_stage2(
                     a_aux_density,
                     aux_assignment.clone(),
                     &mut multiexp_kern,
-                    Arc::new(a_aux_rx.recv().unwrap()),
+                    Arc::new(aux_rx.recv().unwrap()),
                 );
 
                 let b_input_density_total = b_input_density.get_total_density();
@@ -586,14 +593,17 @@ pub fn c2_stage2(
                     sector_id,
                 );
 
-                let b_g1_aux = multiexp_sector(
+                let b_exps = Arc::new(aux_rx.recv().unwrap());
+
+                let b_g1_aux = multiexp_precompute(
                     &worker,
                     b_g1_aux_source,
                     b_aux_density.clone(),
                     aux_assignment.clone(),
                     &mut multiexp_kern,
-                    sector_id,
+                    b_exps.clone(),
                 );
+
                 let b_g2_inputs_source = param_bg2.0.clone();
                 let b_g2_aux_source = ((param_bg2.1).0.clone(), b_input_density_total);
 
@@ -605,13 +615,13 @@ pub fn c2_stage2(
                     &mut multiexp_kern,
                     sector_id,
                 );
-                let b_g2_aux = multiexp_sector(
+                let b_g2_aux = multiexp_precompute(
                     &worker,
                     b_g2_aux_source,
                     b_aux_density,
                     aux_assignment.clone(),
                     &mut multiexp_kern,
-                    sector_id,
+                    b_exps,
                 );
 
                 Ok((
