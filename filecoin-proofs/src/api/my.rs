@@ -280,7 +280,7 @@ pub fn c2_stage1<Tree: 'static + MerkleTreeTrait>(
             prover.alloc_input(|| "", || Ok(Fr::one()))?;
             circuit
                 .synthesize(&mut prover)
-                .map_err(|e| anyhow::Error::from(e))?;
+                .map_err(anyhow::Error::from)?;
 
             for i in 0..prover.input_assignment.len() {
                 prover.enforce(|| "", |lc| lc + Variable(Index::Input(i)), |lc| lc, |lc| lc);
@@ -360,7 +360,7 @@ pub fn c2_stage2(
                         a.truncate(a_len);
                         (index, a)
                     })
-                    .map(|(index, a)| {
+                    .map(|(_index, a)| {
                         Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>())
                     })
                     .collect::<Vec<_>>();
