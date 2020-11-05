@@ -296,6 +296,10 @@ where
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+		std::panic::set_hook(Box::new(|_|{
+			let bt = backtrace::Backtrace::new();
+			info!("panic occured, backtrace: {:?}", bt);
+		}));
         StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
             &compound_public_params.vanilla_params,
             labels,
