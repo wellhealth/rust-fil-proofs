@@ -77,12 +77,12 @@ impl<'a, Tree: MerkleTreeTrait, G: Hasher> Circuit<Bls12> for StackedCircuit<'a,
     fn synthesize<CS: ConstraintSystem<Bls12>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
         let StackedCircuit {
             public_params,
-            proofs,
             replica_id,
-            comm_r,
             comm_d,
+            comm_r,
             comm_r_last,
             comm_c,
+            proofs,
             ..
         } = self;
 

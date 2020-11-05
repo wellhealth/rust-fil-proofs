@@ -65,19 +65,6 @@ use crate::PoRep;
 
 pub const TOTAL_PARENTS: usize = 37;
 
-// pub fn join3<O1, O2, O3, R1, R2, R3>(oper_1: O1, oper_2: O2, oper_3: O3) -> (R1, R2, R3)
-// where
-//     O1: FnOnce() -> R1 + Send,
-//     O2: FnOnce() -> R2 + Send,
-//     O3: FnOnce() -> R3 + Send,
-//     R1: Send,
-//     R2: Send,
-//     R3: Send,
-// {
-//     let (r1, (r2, r3)) = rayon::join(oper_1, || (oper_2(), oper_3()));
-//     (r1, r2, r3)
-// }
-
 #[derive(Debug)]
 pub struct StackedDrg<'a, Tree: 'a + MerkleTreeTrait, G: 'a + Hasher> {
     _a: PhantomData<&'a Tree>,
@@ -647,8 +634,15 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         let (persist_tx, persist_rx) = channel();
         while i < config_count {
+            let t0 = std::time::Instant::now();
             let (node, columns, is_final) = builder_rx.recv().expect("failed to recv columns");
-            info!("{:?} received node [{}]", replica_path.as_ref(), node);
+            let t1 = std::time::Instant::now();
+            info!(
+                "{:?} received node [{}] with {:?}",
+                replica_path.as_ref(),
+                node,
+                t1 - t0
+            );
 
             // Just add non-final column batches.
             if !is_final {
@@ -699,7 +693,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
                     let path = StoreConfig::data_path(&config.path, &config.id);
 
-                    let r = Self::persist_tree_c(path, &base_data, &tree_data);
+                    let r =
+                        Self::persist_tree_c(i + 1, path, &base_data, &tree_data, &replica_path);
                     if let Err(e) = r.as_ref() {
                         info!("{:?} persist_tree_c failed, error: {:?}", replica_path, e);
                     }
@@ -721,7 +716,13 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         }
     }
 
-    fn persist_tree_c<P>(path: P, base: &[Fr], tree: &[Fr]) -> Result<()>
+    fn persist_tree_c<P>(
+        index: usize,
+        path: P,
+        base: &[Fr],
+        tree: &[Fr],
+        replica_path: &Path,
+    ) -> Result<()>
     where
         P: AsRef<Path>,
     {
@@ -729,11 +730,19 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let mut cursor = Cursor::new(Vec::<u8>::with_capacity(
             (base.len() + tree.len()) * std::mem::size_of::<Fr>(),
         ));
+        info!(
+            "{:?}.persisting, done: cursor created for tree-c {}",
+            replica_path, index
+        );
 
         for fr in base.iter().chain(tree.iter()).map(|x| x.into_repr()) {
             fr.write_le(&mut cursor)
                 .with_context(|| format!("cannot write to cursor {:?}", path.as_ref()))?;
         }
+        info!(
+            "{:?}.persisting, done: put data into cursor for tree-c {}",
+            replica_path, index
+        );
 
         let mut tree_c = OpenOptions::new()
             .write(true)
@@ -742,13 +751,21 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .open(&path)
             .with_context(|| format!("cannot open file: {:?}", path.as_ref()))?;
 
+        info!(
+            "{:?}.persisting, done: file opened for {}",
+            replica_path, index
+        );
         tree_c
             .write_all(&cursor.into_inner())
             .with_context(|| format!("cannot write to file: {:?}", path.as_ref()))?;
+        info!(
+            "{:?}.persisting, done: file written for {}",
+            replica_path, index
+        );
 
         Ok(())
     }
-    fn generate_tree_c_gpu_impl<ColumnArity, TreeArity, P>(
+    fn generate_tree_c_gpu_official<ColumnArity, TreeArity, P>(
         nodes_count: usize,
         configs: Vec<StoreConfig>,
         labels: &[(PathBuf, String)],
@@ -852,13 +869,21 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         );
         // Build the tree for CommC
         measure_op(GenerateTreeC, || {
-            Self::generate_tree_c_gpu_impl::<ColumnArity, TreeArity, _>(
-                nodes_count,
-                configs,
-                labels,
-                replica_path,
-                gpu_index,
-            )
+            if settings::SETTINGS
+                .lock()
+                .expect("use_gpu_column_builder settings lock failure")
+                .custom_gpu_column_builder
+            {
+                todo!()
+            } else {
+                Self::generate_tree_c_gpu_official::<ColumnArity, TreeArity, _>(
+                    nodes_count,
+                    configs,
+                    labels,
+                    replica_path,
+                    gpu_index,
+                )
+            }
         })
     }
 
@@ -1220,7 +1245,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             Some(t) => {
                 trace!("using existing original data merkle tree");
                 assert_eq!(t.len(), 2 * (data.len() / NODE_SIZE) - 1);
-
                 t
             }
             None => {
