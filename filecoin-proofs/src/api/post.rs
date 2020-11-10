@@ -103,10 +103,14 @@ impl<Tree: 'static + MerkleTreeTrait> PrivateReplicaInfo<Tree> {
             let aux_bytes = std::fs::read(&f_aux_path)
                 .with_context(|| format!("could not read from path={:?}", f_aux_path))?;
 
-            info!("api:start f_aux_path {:?}", f_aux_path);
-            let ret = deserialize(&aux_bytes);
-            info!("api:end f_aux_path {:?}", f_aux_path);
-            ret
+            info!("api:start f_aux_path={:?}", f_aux_path);
+            match deserialize(&aux_bytes) {
+                Ok(o) => Ok(o),
+                Err(e) => {
+                    info!("api:start error {:?}, error f_aux_path={:?}", e, f_aux_path);
+                    Err(e)
+                }
+            }
         }?;
 
         ensure!(replica.exists(), "Sealed replica does not exist");
