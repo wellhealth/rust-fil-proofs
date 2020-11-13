@@ -103,7 +103,13 @@ impl<Tree: 'static + MerkleTreeTrait> PrivateReplicaInfo<Tree> {
             let aux_bytes = std::fs::read(&f_aux_path)
                 .with_context(|| format!("could not read from path={:?}", f_aux_path))?;
 
-            deserialize(&aux_bytes)
+            match deserialize(&aux_bytes) {
+                Ok(o) => Ok(o),
+                Err(e) => {
+                    //info!("api:start error {:?}, error f_aux_path={:?}", e, f_aux_path);
+                    Err(e)
+                }
+            }
         }?;
 
         ensure!(replica.exists(), "Sealed replica does not exist");
@@ -900,6 +906,8 @@ pub fn generate_window_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
     Ok(proof.to_vec()?)
 }
 
+use scopeguard::defer;
+
 // Generates a Window proof-of-spacetime.
 pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     post_config: &PoStConfig,
@@ -907,7 +915,17 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
 ) -> Result<SnarkProof> {
-    let gpu_index = 0;
+    //let gpu_index = 0;
+
+    let gpu_index = super::select_gpu_device();
+
+    info!("select gpu index: {}", gpu_index);
+
+    defer! {
+        info!("release gpu index: {}", gpu_index);
+        super::release_gpu_device(gpu_index);
+    }
+
     generate_window_post_inner(post_config,randomness,replicas,prover_id,gpu_index)
 }
 
@@ -919,6 +937,12 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     gpu_index:usize,
 ) -> Result<SnarkProof> {
+
+    std::panic::set_hook(Box::new(|_| {
+        let bt = backtrace::Backtrace::new();
+        info!("panic occurred, backtrace: {:?}", bt);
+    }));
+
     info!("generate_window_post:start");
     ensure!(
         post_config.typ == PoStType::Window,
