@@ -133,10 +133,7 @@ pub fn custom_c2<Tree: 'static + MerkleTreeTrait>(
     let r_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
     let s_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
 
-    info!(
-        "sector: {}, 此版本使用星际无限C2流程(抽离自bellperson)",
-        sector_id
-    );
+    info!("sector: {}, start C2 with stage1", sector_id);
     let provers = c2_stage1::<Tree>(circuits)?;
     info!("sector: {}, C2 done with stage1 CPU", sector_id);
 
