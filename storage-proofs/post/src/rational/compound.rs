@@ -271,7 +271,7 @@ mod tests {
                 .expect("failed to create groth params");
 
         let proof =
-            RationalPoStCompound::<Tree>::prove(&pub_params, &pub_inputs, &priv_inputs, &gparams)
+            RationalPoStCompound::<Tree>::prove(&pub_params, &pub_inputs, &priv_inputs, &gparams,0)
                 .expect("proving failed");
 
         let (circuit, inputs) =
@@ -287,7 +287,7 @@ mod tests {
         }
 
         let verified =
-            RationalPoStCompound::<Tree>::verify(&pub_params, &pub_inputs, &proof, &NoRequirements)
+            RationalPoStCompound::<Tree>::verify(&pub_params, &pub_inputs, &proof, &NoRequirements,0)
                 .expect("failed while verifying");
 
         assert!(verified);

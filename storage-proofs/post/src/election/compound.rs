@@ -302,11 +302,12 @@ mod tests {
             &pub_inputs,
             &priv_inputs,
             &blank_groth_params,
+            0,
         )
         .expect("failed while proving");
 
         let verified =
-            ElectionPoStCompound::verify(&pub_params, &pub_inputs, &proof, &NoRequirements)
+            ElectionPoStCompound::verify(&pub_params, &pub_inputs, &proof, &NoRequirements,0)
                 .expect("failed while verifying");
 
         assert!(verified);

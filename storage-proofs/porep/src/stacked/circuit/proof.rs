@@ -432,6 +432,7 @@ mod tests {
             None,
             config,
             replica_path.clone(),
+            0,
         )
         .expect("replication failed");
 
@@ -598,6 +599,7 @@ mod tests {
             None,
             config,
             replica_path.clone(),
+            0,
         )
         .expect("replication failed");
 
@@ -685,6 +687,7 @@ mod tests {
             &public_inputs,
             &private_inputs,
             &blank_groth_params,
+            0
         )
         .expect("failed while proving");
 
@@ -695,6 +698,7 @@ mod tests {
             &ChallengeRequirements {
                 minimum_challenges: 1,
             },
+            0,
         )
         .expect("failed while verifying");
 

@@ -94,6 +94,7 @@ fn xor_circuit_benchmark(c: &mut Criterion) {
                         },
                         &groth_params,
                         &mut rng,
+                        0,
                     )
                     .unwrap();
 

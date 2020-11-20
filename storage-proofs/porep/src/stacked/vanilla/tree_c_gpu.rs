@@ -37,6 +37,7 @@ pub fn custom_tree_c_gpu<ColumnArity, TreeArity, Tree>(
     tree_count: usize,
     configs: Vec<StoreConfig>,
     labels: &[(PathBuf, String)],
+    gpu_index:usize,
 ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
 where
     ColumnArity: 'static + PoseidonArity,
@@ -96,6 +97,7 @@ where
                     max_gpu_tree_batch_size,
                     max_gpu_column_batch_size,
                     replica_path,
+                    gpu_index,
                 )
             },
         )
@@ -300,6 +302,7 @@ fn receive_and_generate_tree_c<ColumnArity, TreeArity, P>(
     max_gpu_tree_batch_size: usize,
     max_gpu_column_batch_size: usize,
     replica_path: P,
+    gpu_index:usize,
 ) -> Result<()>
 where
     ColumnArity: 'static + PoseidonArity,
@@ -311,6 +314,7 @@ where
         nodes_count,
         max_gpu_column_batch_size,
         max_gpu_tree_batch_size,
+        gpu_index,
     )
     .expect("failed to create ColumnTreeBuilder");
 

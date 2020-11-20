@@ -11,4 +11,6 @@ members = [
 ]
 
 [patch.crates-io]
-bellperson = { git = "https://github.com/Krysme/bellperson" }
+#bellperson = { git = "https://github.com/Krysme/bellperson" }
+bellperson = { path = "../my-bellman" }
+neptune = { path = "../my-neptune" }

@@ -225,7 +225,7 @@ pub fn run(
                     &replica_info.private_replica_info.cache_dir_path(),
                 )?;
 
-                seal_commit_phase2(cfg, phase1_output, PROVER_ID, *sector_id)
+                seal_commit_phase2(cfg, phase1_output, PROVER_ID, *sector_id,0)
             })
             .expect("failed to prove sector");
 

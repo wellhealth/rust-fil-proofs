@@ -364,6 +364,7 @@ mod tests {
             data_tree,
             config,
             replica_path,
+            0,
         )
         .expect("failed to replicate");
 
@@ -443,6 +444,7 @@ mod tests {
                 &public_inputs,
                 &private_inputs,
                 &gparams,
+                0
             )
             .expect("failed while proving");
 
@@ -451,6 +453,7 @@ mod tests {
                 &public_inputs,
                 &proof,
                 &NoRequirements,
+                0
             )
             .expect("failed while verifying");
 

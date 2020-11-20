@@ -337,6 +337,7 @@ mod tests {
             &pub_inputs,
             &priv_inputs,
             &blank_groth_params,
+            0
         )
         .expect("failed while proving");
 
@@ -347,6 +348,7 @@ mod tests {
             &ChallengeRequirements {
                 minimum_challenge_count: total_sector_count * challenge_count,
             },
+            0
         )
         .expect("failed while verifying");
 

@@ -2,7 +2,9 @@ use std::fs::{self, metadata, File, OpenOptions};
 use std::io::prelude::*;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::panic::AssertUnwindSafe;
 
+use std::sync::Mutex;
 use anyhow::{ensure, Context, Result};
 use bellperson::bls::Fr;
 use bincode::{deserialize, serialize};
@@ -279,14 +281,41 @@ where
         _,
     >>::setup(&compound_setup_params)?;
 
-    let (tau, (p_aux, t_aux)) = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
-        &compound_public_params.vanilla_params,
-        labels,
-        data,
-        data_tree,
-        config,
-        replica_path.as_ref().to_path_buf(),
-    )?;
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //select gpu index
+
+    let gpu_index = select_gpu_device();
+
+    info!("select gpu index: {}", gpu_index);
+
+    defer! {
+        info!("release gpu index: {}", gpu_index);
+        release_gpu_device(gpu_index);
+    }
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+		std::panic::set_hook(Box::new(|_|{
+			let bt = backtrace::Backtrace::new();
+			info!("panic occured, backtrace: {:?}", bt);
+		}));
+        StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
+            &compound_public_params.vanilla_params,
+            labels,
+            data,
+            data_tree,
+            config,
+            replica_path.as_ref().to_path_buf(),
+            gpu_index,
+        )
+    }));
+
+    let (tau, (p_aux, t_aux)) = match result {
+        Ok(r) => r?,
+        Err(e) => {
+            info!("{:?}: p2 panic, error: {:?}", replica_path.as_ref(), e);
+            panic!("error: {:?}", e);
+        }
+    };
 
     let comm_r = commitment_from_fr(tau.comm_r.into());
 
@@ -440,12 +469,15 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     Ok(out)
 }
 
+use scopeguard::defer;
+
 #[allow(clippy::too_many_arguments)]
 pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     phase1_output: SealCommitPhase1Output<Tree>,
     prover_id: ProverId,
     sector_id: SectorId,
+    gpu_index:usize,
 ) -> Result<SealCommitOutput> {
     info!("seal_commit_phase2:start: {:?}", sector_id);
 
@@ -503,6 +535,7 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
         &compound_public_params.vanilla_params,
         &groth_params,
         compound_public_params.priority,
+        gpu_index,
     )?;
     info!("snark_proof:finish");
 
@@ -562,7 +595,7 @@ pub fn compute_comm_d(sector_size: SectorSize, piece_infos: &[PieceInfo]) -> Res
 /// * `seed` - the seed used to derive the porep challenges.
 /// * `proof_vec` - the porep circuit proof serialized into a vector of bytes.
 #[allow(clippy::too_many_arguments)]
-pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
+pub fn verify_seal_inner<Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     comm_r_in: Commitment,
     comm_d_in: Commitment,
@@ -571,6 +604,7 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     ticket: Ticket,
     seed: Ticket,
     proof_vec: &[u8],
+    gpu_index: usize,
 ) -> Result<bool> {
     info!("verify_seal:start: {:?}", sector_id);
     ensure!(comm_d_in != [0; 32], "Invalid all zero commitment (comm_d)");
@@ -636,11 +670,50 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
                     .get(&u64::from(SectorSize::from(porep_config)))
                     .expect("unknown sector size") as usize,
             },
+            gpu_index,
         )
     };
 
     info!("verify_seal:finish: {:?}", sector_id);
     result
+}
+
+/// Verifies the output of some previously-run seal operation.
+///
+/// # Arguments
+///
+/// * `porep_config` - this sector's porep config that contains the number of bytes in this sector.
+/// * `comm_r_in` - commitment to the sector's replica (`comm_r`).
+/// * `comm_d_in` - commitment to the sector's data (`comm_d`).
+/// * `prover_id` - the prover-id that sealed this sector.
+/// * `sector_id` - this sector's sector-id.
+/// * `ticket` - the ticket that was used to generate this sector's replica-id.
+/// * `seed` - the seed used to derive the porep challenges.
+/// * `proof_vec` - the porep circuit proof serialized into a vector of bytes.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
+    porep_config: PoRepConfig,
+    comm_r_in: Commitment,
+    comm_d_in: Commitment,
+    prover_id: ProverId,
+    sector_id: SectorId,
+    ticket: Ticket,
+    seed: Ticket,
+    proof_vec: &[u8],
+    //gpu_index:usize,
+) -> Result<bool> {
+    let gpu_index = 0;
+    verify_seal_inner::<Tree>(
+        porep_config,
+        comm_r_in,
+        comm_d_in,
+        prover_id,
+        sector_id,
+        ticket,
+        seed,
+        proof_vec,
+        gpu_index,
+    )
 }
 
 /// Verifies a batch of outputs of some previously-run seal operations.
@@ -666,6 +739,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
     seeds: &[Ticket],
     proof_vecs: &[&[u8]],
 ) -> Result<bool> {
+    let gpu_index: usize = 0;
     info!("verify_batch_seal:start");
     ensure!(!comm_r_ins.is_empty(), "Cannot prove empty batch");
     let l = comm_r_ins.len();
@@ -755,6 +829,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
                 .get(&u64::from(SectorSize::from(porep_config)))
                 .expect("unknown sector size") as usize,
         },
+        gpu_index,
     )
     .map_err(Into::into);
 
@@ -766,9 +841,10 @@ pub fn fauxrep<R: AsRef<Path>, S: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
     out_path: S,
+    gpu_index: usize,
 ) -> Result<Commitment> {
     let mut rng = rand::thread_rng();
-    fauxrep_aux::<_, R, S, Tree>(&mut rng, porep_config, cache_path, out_path)
+    fauxrep_aux::<_, R, S, Tree>(&mut rng, porep_config, cache_path, out_path, gpu_index)
 }
 
 pub fn fauxrep_aux<
@@ -781,6 +857,7 @@ pub fn fauxrep_aux<
     porep_config: PoRepConfig,
     cache_path: R,
     out_path: S,
+    gpu_index: usize,
 ) -> Result<Commitment> {
     let sector_bytes = PaddedBytesAmount::from(porep_config).0;
 
@@ -796,6 +873,7 @@ pub fn fauxrep_aux<
         out_path,
         &cache_path,
         sector_bytes as usize,
+        gpu_index,
     )?;
 
     let p_aux_path = cache_path.as_ref().join(CacheKey::PAux.to_string());
@@ -1118,4 +1196,80 @@ where
     };
     info!("seal_pre_commit_phase1_layer:finish: {:?}", sector_id);
     Ok(out)
+}
+
+#[derive(Debug)]
+pub struct Queue<T> {
+    qdata: Vec<T>,
+}
+
+impl<T> Queue<T> {
+    fn new() -> Self {
+        Queue { qdata: Vec::new() }
+    }
+
+    fn push(&mut self, item: T) {
+        self.qdata.push(item);
+    }
+
+    fn pop(&mut self) -> Option<T> {
+        let l = self.qdata.len();
+
+        if l > 0 {
+            let v = self.qdata.remove(0);
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    fn len(&mut self) -> usize {
+        self.qdata.len()
+    }
+}
+
+#[cfg(feature = "gpu")]
+lazy_static::lazy_static! {
+    //pub static ref GPU_NVIDIA_DEVICES: Vec<Device> = get_devices(GPU_NVIDIA_PLATFORM_NAME).unwrap_or_default();
+    //pub static ref GPU_NVIDIA_DEVICES: Vec<Device> = get_devices(GPU_NVIDIA_PLATFORM_NAME).unwrap_or_default();
+    pub static ref GPU_NVIDIA_DEVICES_QUEUE:  Mutex<Queue<usize>> = Mutex::new(Queue::new());
+}
+
+static mut N: i32 = 0;
+
+pub fn select_gpu_device() -> usize {
+    let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
+    let GPU_NVIDIA_DEVICES_SIZE = 1;
+    unsafe {
+        if N == 0 {
+
+            for i in 0..GPU_NVIDIA_DEVICES_SIZE{
+                queue.push(i)
+            }
+
+            N = 1;
+            info!("init gpu finished: {}", N);
+        }
+    }
+
+    if queue.len() == 0 {
+        return 0;
+    }
+
+    queue.pop().unwrap()
+
+    /* let device_info = queue.pop().unwrap()
+
+    let index = device_info.index;
+
+    log::info!("select gpu index: {}", index);
+
+    queue.push(device_info);
+
+    return index;*/
+}
+
+pub fn release_gpu_device(gpu_index: usize) {
+    let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
+    queue.push(gpu_index);
 }

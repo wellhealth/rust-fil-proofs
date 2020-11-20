@@ -382,6 +382,7 @@ mod tests {
             None,
             config,
             replica_path,
+            0
         )
         .expect("failed to replicate");
 

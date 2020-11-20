@@ -519,11 +519,11 @@ mod tests {
             .expect("failed to generate groth params");
 
         let proof =
-            PoRCompound::<Tree>::prove(&public_params, &public_inputs, &private_inputs, &gparams)
+            PoRCompound::<Tree>::prove(&public_params, &public_inputs, &private_inputs, &gparams,0)
                 .expect("failed while proving");
 
         let verified =
-            PoRCompound::<Tree>::verify(&public_params, &public_inputs, &proof, &NoRequirements)
+            PoRCompound::<Tree>::verify(&public_params, &public_inputs, &proof, &NoRequirements,0)
                 .expect("failed while verifying");
         assert!(verified);
 
@@ -846,11 +846,12 @@ mod tests {
                 &public_inputs,
                 &private_inputs,
                 &blank_groth_params,
+                0,
             )
             .expect("failed while proving");
 
             let verified =
-                PoRCompound::verify(&public_params, &public_inputs, &proof, &NoRequirements)
+                PoRCompound::verify(&public_params, &public_inputs, &proof, &NoRequirements,0)
                     .expect("failed while verifying");
 
             assert!(verified);

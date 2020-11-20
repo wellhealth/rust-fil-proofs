@@ -30,6 +30,7 @@ impl<'a, 'c, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> PoRep<'a, Tre
         data_tree: Option<BinaryMerkleTree<G>>,
         config: StoreConfig,
         replica_path: PathBuf,
+        gpu_index:usize
     ) -> Result<(Self::Tau, Self::ProverAux)> {
         let (tau, p_aux, t_aux) = Self::transform_and_replicate_layers(
             &pp.graph,
@@ -39,6 +40,7 @@ impl<'a, 'c, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> PoRep<'a, Tre
             data_tree,
             config,
             replica_path,
+            gpu_index,
         )?;
 
         Ok((tau, (p_aux, t_aux)))
