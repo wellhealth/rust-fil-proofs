@@ -1239,11 +1239,10 @@ static mut N: i32 = 0;
 
 pub fn select_gpu_device() -> usize {
     let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
-    let GPU_NVIDIA_DEVICES_SIZE = 1;
     unsafe {
         if N == 0 {
 
-            for i in 0..GPU_NVIDIA_DEVICES_SIZE{
+            for i in 0..bellperson::gpu::gpu_count(){
                 queue.push(i)
             }
 
