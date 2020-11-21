@@ -188,7 +188,6 @@ fn main() -> Result<()> {
                 skip_commit_phase1,
                 skip_commit_phase2,
                 test_resume,
-                0
             )?;
         }
         ("winning-post", Some(m)) => {

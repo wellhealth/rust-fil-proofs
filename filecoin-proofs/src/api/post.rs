@@ -251,7 +251,6 @@ pub fn generate_winning_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
     randomness: &ChallengeSeed,
     prover_id: ProverId,
     vanilla_proofs: Vec<FallbackPoStSectorProof<Tree>>,
-    gpu_index:usize,
 ) -> Result<SnarkProof> {
     info!("generate_winning_post_with_vanilla:start");
     ensure!(
@@ -307,12 +306,25 @@ pub fn generate_winning_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
         &vanilla_proofs,
     )?;
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //select gpu index
+
+    let gpu_index = super::select_gpu_device();
+
+    info!("select gpu index: {}", gpu_index);
+
+    defer! {
+            info!("release gpu index: {}", gpu_index);
+            super::release_gpu_device(gpu_index);
+        }
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
     let proof = fallback::FallbackPoStCompound::prove_with_vanilla(
         &pub_params,
         &pub_inputs,
         partitioned_proofs,
         &groth_params,
-        gpu_index,
+        gpu_index
     )?;
     let proof = proof.to_vec()?;
 
@@ -808,13 +820,37 @@ pub fn partition_vanilla_proofs<Tree: MerkleTreeTrait>(
     Ok(partition_proofs)
 }
 
+
 /// Generates a Window proof-of-spacetime with provided vanilla proofs.
 pub fn generate_window_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
     post_config: &PoStConfig,
     randomness: &ChallengeSeed,
     prover_id: ProverId,
     vanilla_proofs: Vec<FallbackPoStSectorProof<Tree>>,
-    gpu_index:usize,
+) -> Result<SnarkProof> {
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //select gpu index
+
+    let gpu_index = super::select_gpu_device();
+
+    info!("select gpu index: {}", gpu_index);
+
+    defer! {
+            info!("release gpu index: {}", gpu_index);
+            super::release_gpu_device(gpu_index);
+        }
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    generate_window_post_with_vanilla_inner(post_config,randomness,prover_id,vanilla_proofs, gpu_index)
+}
+
+/// Generates a Window proof-of-spacetime with provided vanilla proofs.
+fn generate_window_post_with_vanilla_inner<Tree: 'static + MerkleTreeTrait>(
+    post_config: &PoStConfig,
+    randomness: &ChallengeSeed,
+    prover_id: ProverId,
+    vanilla_proofs: Vec<FallbackPoStSectorProof<Tree>>,
+    gpu_index:usize
 ) -> Result<SnarkProof> {
     info!("generate_window_post_with_vanilla:start");
     ensure!(
@@ -867,6 +903,9 @@ pub fn generate_window_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
         partitions,
         &vanilla_proofs,
     )?;
+
+
+
 
     let proof = fallback::FallbackPoStCompound::prove_with_vanilla(
         &pub_params,

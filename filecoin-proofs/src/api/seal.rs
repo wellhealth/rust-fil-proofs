@@ -477,94 +477,116 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
     phase1_output: SealCommitPhase1Output<Tree>,
     prover_id: ProverId,
     sector_id: SectorId,
-    gpu_index:usize,
 ) -> Result<SealCommitOutput> {
     info!("seal_commit_phase2:start: {:?}", sector_id);
 
-    let SealCommitPhase1Output {
-        vanilla_proofs,
-        comm_d,
-        comm_r,
-        replica_id,
-        seed,
-        ticket,
-    } = phase1_output;
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //select gpu index
+    let gpu_index = select_gpu_device();
 
-    ensure!(comm_d != [0; 32], "Invalid all zero commitment (comm_d)");
-    ensure!(comm_r != [0; 32], "Invalid all zero commitment (comm_r)");
+    log::info!("select gpu index: {}", gpu_index);
 
-    let comm_r_safe = as_safe_commitment(&comm_r, "comm_r")?;
-    let comm_d_safe = DefaultPieceDomain::try_from_bytes(&comm_d)?;
+    defer! {
+        log::info!("release gpu index: {}", gpu_index);
+        release_gpu_device(gpu_index);
+    }
 
-    let public_inputs = stacked::PublicInputs {
-        replica_id,
-        tau: Some(stacked::Tau {
-            comm_d: comm_d_safe,
-            comm_r: comm_r_safe,
-        }),
-        k: None,
-        seed,
-    };
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
 
-    let groth_params = get_stacked_params::<Tree>(porep_config)?;
+        let SealCommitPhase1Output {
+            vanilla_proofs,
+            comm_d,
+            comm_r,
+            replica_id,
+            seed,
+            ticket,
+        } = phase1_output;
 
-    info!(
-        "got groth params ({}) while sealing",
-        u64::from(PaddedBytesAmount::from(porep_config))
-    );
+        ensure!(comm_d != [0; 32], "Invalid all zero commitment (comm_d)");
+        ensure!(comm_r != [0; 32], "Invalid all zero commitment (comm_r)");
 
-    let compound_setup_params = compound_proof::SetupParams {
-        vanilla_params: setup_params(
-            PaddedBytesAmount::from(porep_config),
-            usize::from(PoRepProofPartitions::from(porep_config)),
-            porep_config.porep_id,
-        )?,
-        partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
-        priority: false,
-    };
+        let comm_r_safe = as_safe_commitment(&comm_r, "comm_r")?;
+        let comm_d_safe = DefaultPieceDomain::try_from_bytes(&comm_d)?;
 
-    let compound_public_params = <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
-        StackedDrg<Tree, DefaultPieceHasher>,
-        _,
-    >>::setup(&compound_setup_params)?;
+        let public_inputs = stacked::PublicInputs {
+            replica_id,
+            tau: Some(stacked::Tau {
+                comm_d: comm_d_safe,
+                comm_r: comm_r_safe,
+            }),
+            k: None,
+            seed,
+        };
 
-    info!("snark_proof:start");
-    let groth_proofs = StackedCompound::<Tree, DefaultPieceHasher>::circuit_proofs(
-        &public_inputs,
-        vanilla_proofs,
-        &compound_public_params.vanilla_params,
-        &groth_params,
-        compound_public_params.priority,
-        gpu_index,
-    )?;
-    info!("snark_proof:finish");
+        let groth_params = get_stacked_params::<Tree>(porep_config)?;
 
-    let proof = MultiProof::new(groth_proofs, &groth_params.pvk);
+        info!(
+            "got groth params ({}) while sealing",
+            u64::from(PaddedBytesAmount::from(porep_config))
+        );
 
-    let mut buf = Vec::with_capacity(
-        SINGLE_PARTITION_PROOF_LEN * usize::from(PoRepProofPartitions::from(porep_config)),
-    );
+        let compound_setup_params = compound_proof::SetupParams {
+            vanilla_params: setup_params(
+                PaddedBytesAmount::from(porep_config),
+                usize::from(PoRepProofPartitions::from(porep_config)),
+                porep_config.porep_id,
+            )?,
+            partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
+            priority: false,
+        };
 
-    proof.write(&mut buf)?;
+        let compound_public_params = <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
+            StackedDrg<Tree, DefaultPieceHasher>,
+            _,
+        >>::setup(&compound_setup_params)?;
 
-    // Verification is cheap when parameters are cached,
-    // and it is never correct to return a proof which does not verify.
-    verify_seal::<Tree>(
-        porep_config,
-        comm_r,
-        comm_d,
-        prover_id,
-        sector_id,
-        ticket,
-        seed,
-        &buf,
-    )
-    .context("post-seal verification sanity check failed")?;
+        info!("snark_proof:start");
+        let groth_proofs = StackedCompound::<Tree, DefaultPieceHasher>::circuit_proofs(
+            &public_inputs,
+            vanilla_proofs,
+            &compound_public_params.vanilla_params,
+            &groth_params,
+            compound_public_params.priority,
+            gpu_index,
+        )?;
+        info!("snark_proof:finish");
 
-    let out = SealCommitOutput { proof: buf };
+        let proof = MultiProof::new(groth_proofs, &groth_params.pvk);
 
-    info!("seal_commit_phase2:finish: {:?}", sector_id);
-    Ok(out)
+        let mut buf = Vec::with_capacity(
+            SINGLE_PARTITION_PROOF_LEN * usize::from(PoRepProofPartitions::from(porep_config)),
+        );
+
+        proof.write(&mut buf)?;
+
+        // Verification is cheap when parameters are cached,
+        // and it is never correct to return a proof which does not verify.
+        verify_seal::<Tree>(
+            porep_config,
+            comm_r,
+            comm_d,
+            prover_id,
+            sector_id,
+            ticket,
+            seed,
+            &buf,
+        )
+        .context("post-seal verification sanity check failed")?;
+
+        info!("seal_commit_phase2:finish: {:?}", sector_id);
+
+        let out = SealCommitOutput { proof: buf };
+
+        Ok(out)
+    }));
+
+    match result {
+        Ok(r) => r,
+        Err(e) => {
+            info!("c2 panic, sector: {:?}", sector_id);
+            panic!("{:?}", e);
+        }
+    }
 }
 
 /// Computes a sectors's `comm_d` given its pieces.
@@ -1026,7 +1048,7 @@ where
         //利用unsealed文件，生成unsealed.index文件
         let filename = format!("tree.index");
         let new_path = in_path.as_ref().with_file_name(filename);
-        println!("newPath is {:?}", new_path);
+        info!("newPath is {:?}", new_path);
         //创建文件并保存中间结果
         let mut outputfile = OpenOptions::new()
             .create(true)

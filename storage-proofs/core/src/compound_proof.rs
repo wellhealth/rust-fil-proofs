@@ -11,6 +11,7 @@ use crate::parameter_cache::{CacheableParameters, ParameterSetMetadata};
 use crate::partitions;
 use crate::proof::ProofScheme;
 
+
 #[derive(Clone)]
 pub struct SetupParams<'a, S: ProofScheme<'a>> {
     pub vanilla_params: <S as ProofScheme<'a>>::SetupParams,
@@ -109,8 +110,9 @@ where
         pub_in: &S::PublicInputs,
         vanilla_proofs: Vec<S::Proof>,
         groth_params: &'b groth16::MappedParameters<Bls12>,
-        gpu_index:usize,
+        gpu_index:usize
     ) -> Result<MultiProof<'b>> {
+
         let partition_count = Self::partition_count(pub_params);
 
         // This will always run at least once, since there cannot be zero partitions.
@@ -161,6 +163,8 @@ where
 
         let proofs: Vec<_> = multi_proof.circuit_proofs.iter().collect();
         let res = groth16::verify_proofs_batch(&pvk, &mut rand::rngs::OsRng, &proofs, &inputs,gpu_index)?;
+
+
         Ok(res)
     }
 

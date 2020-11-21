@@ -344,7 +344,6 @@ pub fn run_window_post_bench<Tree: 'static + MerkleTreeTrait>(
     skip_commit_phase1: bool,
     skip_commit_phase2: bool,
     test_resume: bool,
-    gpu_index:usize
 ) -> anyhow::Result<()> {
     let (
         (seal_pre_commit_phase1_cpu_time_ms, seal_pre_commit_phase1_wall_time_ms),
@@ -482,7 +481,7 @@ pub fn run_window_post_bench<Tree: 'static + MerkleTreeTrait>(
         };
 
         let seal_commit_phase2_measurement = measure(|| {
-            seal_commit_phase2::<Tree>(porep_config, commit_phase1_output, PROVER_ID, sector_id,gpu_index)
+            seal_commit_phase2::<Tree>(porep_config, commit_phase1_output, PROVER_ID, sector_id)
         })
         .expect("failed in seal_commit_phase2");
 
@@ -582,7 +581,6 @@ pub fn run(
     skip_commit_phase1: bool,
     skip_commit_phase2: bool,
     test_resume: bool,
-    gpu_index:usize
 ) -> anyhow::Result<()> {
     info!("Benchy Window PoSt: sector-size={}, preserve_cache={}, skip_precommit_phase1={}, skip_precommit_phase2={}, skip_commit_phase1={}, skip_commit_phase2={}, test_resume={}", sector_size, preserve_cache, skip_precommit_phase1, skip_precommit_phase2, skip_commit_phase1, skip_commit_phase2, test_resume);
 
@@ -625,6 +623,5 @@ pub fn run(
         skip_commit_phase1,
         skip_commit_phase2,
         test_resume,
-        gpu_index,
     )
 }
