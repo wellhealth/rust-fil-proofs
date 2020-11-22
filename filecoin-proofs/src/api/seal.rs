@@ -205,6 +205,10 @@ where
     R: AsRef<Path>,
     S: AsRef<Path>,
 {
+    std::panic::set_hook(Box::new(|_| {
+        let bt = backtrace::Backtrace::new();
+        info!("panic occured, backtrace: {:?}", bt);
+    }));
     info!("seal_pre_commit_phase2:start");
 
     // Sanity check all input path types.
@@ -294,28 +298,23 @@ where
         info!("release gpu index: {}", gpu_index);
         release_gpu_device(gpu_index);
     }
+
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-		std::panic::set_hook(Box::new(|_|{
-			let bt = backtrace::Backtrace::new();
-			info!("panic occured, backtrace: {:?}", bt);
-		}));
-        StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
-            &compound_public_params.vanilla_params,
-            labels,
-            data,
-            data_tree,
-            config,
-            replica_path.as_ref().to_path_buf(),
-            gpu_index,
-        )
-    }));
+    let result = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
+        &compound_public_params.vanilla_params,
+        labels,
+        data,
+        data_tree,
+        config,
+        replica_path.as_ref().to_path_buf(),
+        gpu_index,
+    );
 
     let (tau, (p_aux, t_aux)) = match result {
-        Ok(r) => r?,
+        Ok(r) => r,
         Err(e) => {
-            info!("{:?}: p2 panic, error: {:?}", replica_path.as_ref(), e);
-            panic!("error: {:?}", e);
+            info!("{:?}", e);
+            return Err(e);
         }
     };
 
