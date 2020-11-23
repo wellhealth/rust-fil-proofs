@@ -5,6 +5,7 @@ use log::info;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
@@ -96,4 +97,57 @@ where
         .with_context(|| format!("{:?}, cannot read file to get comm_d", replica_path))?;
 
     Ok(SealPreCommitOutput { comm_r, comm_d })
+}
+
+pub fn p2_sub<Tree: 'static + MerkleTreeTrait>() -> Result<()> {
+    let param_folder = &settings::SETTINGS.param_folder;
+
+    let p2_param = Path::new(param_folder).join("p2-param");
+
+    let infile =
+        File::open(&p2_param).with_context(|| format!("cannot open file {:?}", p2_param))?;
+
+    let data = serde_json::from_reader::<_, P2Param<Tree>>(infile)
+        .context("failed to deserialize p2 params")?;
+
+    let P2Param {
+        porep_config,
+        phase1_output,
+        cache_path,
+        replica_path,
+    } = data;
+    let out = super::seal_pre_commit_phase2(
+        porep_config,
+        phase1_output,
+        cache_path,
+        replica_path.clone(),
+    )?;
+
+    let p2_output = Path::new(param_folder).join("p2-output");
+
+    let mut out_file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(&p2_output)
+        .with_context(|| {
+            format!(
+                "{:?}: cannot open file: {:?} for output",
+                replica_path, p2_output
+            )
+        })?;
+
+    out_file.write_all(&out.comm_r).with_context(|| {
+        format!(
+            "{:?} cannot write comm_r to file: {:?}",
+            replica_path, p2_output
+        )
+    })?;
+    out_file.write_all(&out.comm_d).with_context(|| {
+        format!(
+            "{:?} cannot write comm_d to file: {:?}",
+            replica_path, p2_output
+        )
+    })?;
+    Ok(())
 }
