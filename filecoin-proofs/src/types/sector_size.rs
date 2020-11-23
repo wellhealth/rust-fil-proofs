@@ -1,6 +1,8 @@
 use crate::fr32::to_unpadded_bytes;
 use crate::types::*;
+use serde::{Serialize, Deserialize};
 
+#[derive(Serialize, Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SectorSize(pub u64);
 
