@@ -377,9 +377,8 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
         //for (j, (pub_sectors_chunk, priv_sectors_chunk)) in
         let partition_proofs = pub_inputs
             .sectors
-            .par_iter()
-            .chunks(num_sectors_per_chunk)
-            .zip(priv_inputs.sectors.par_iter().chunks(num_sectors_per_chunk))
+            .par_chunks(num_sectors_per_chunk)
+            .zip(priv_inputs.sectors.par_chunks(num_sectors_per_chunk))
             .enumerate().map(|(j, (pub_sectors_chunk, priv_sectors_chunk))|
         {
             info!("proving partition {}", j);
