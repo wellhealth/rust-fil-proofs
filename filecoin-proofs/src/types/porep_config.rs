@@ -6,8 +6,9 @@ use storage_proofs::porep::stacked::{StackedCircuit, StackedCompound};
 
 use crate::constants::DefaultPieceHasher;
 use crate::types::*;
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PoRepConfig {
     pub sector_size: SectorSize,
     pub partitions: PoRepProofPartitions,

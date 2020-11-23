@@ -38,6 +38,8 @@ pub(crate) mod util;
 pub use self::post::*;
 pub use self::seal::*;
 
+pub mod process;
+
 use storage_proofs::pieces::generate_piece_commitment_bytes_from_source;
 
 /// Unseals the sector at `sealed_path` and returns the bytes for a piece
