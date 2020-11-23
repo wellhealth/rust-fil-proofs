@@ -5,6 +5,8 @@ use log::info;
 use rand::{rngs::OsRng, RngCore};
 use rayon::prelude::*;
 
+use std::time::Instant;
+
 use crate::error::Result;
 use crate::multi_proof::MultiProof;
 use crate::parameter_cache::{CacheableParameters, ParameterSetMetadata};
@@ -72,12 +74,15 @@ where
         groth_params: &'b groth16::MappedParameters<Bls12>,
         gpu_index:usize
     ) -> Result<MultiProof<'b>> {
+
+        let now = Instant::now();
+
         let partition_count = Self::partition_count(pub_params);
 
         // This will always run at least once, since there cannot be zero partitions.
         ensure!(partition_count > 0, "There must be partitions");
 
-        info!("vanilla_proofs:start");
+        info!("window vanilla_proofs:start");
         let vanilla_proofs = S::prove_all_partitions(
             &pub_params.vanilla_params,
             &pub_in,
@@ -85,13 +90,17 @@ where
             partition_count,
         )?;
 
-        info!("vanilla_proofs:finish");
+        info!("window vanilla_proofs:finish");
+        info!("window vanilla_proofs:finish: {:?}", now.elapsed().as_secs());
 
+        let now = Instant::now();
         let sanity_check =
             S::verify_all_partitions(&pub_params.vanilla_params, &pub_in, &vanilla_proofs)?;
         ensure!(sanity_check, "sanity check failed");
+        info!("sanity check failed:{:?} ", now.elapsed().as_secs());
 
-        info!("snark_proof:start");
+        let now = Instant::now();
+        info!("window snark_proof:start");
         let groth_proofs = Self::circuit_proofs(
             pub_in,
             vanilla_proofs,
@@ -100,8 +109,9 @@ where
             pub_params.priority,
             gpu_index,
         )?;
-        info!("snark_proof:finish");
+        info!("window snark_proof:finish");
 
+        info!("window  snark_proof:finish:{:?} ", now.elapsed().as_secs());
         Ok(MultiProof::new(groth_proofs, &groth_params.pvk))
     }
 
