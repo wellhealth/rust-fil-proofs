@@ -408,7 +408,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
 
                 let mut inclusion_proofs = Vec::new();
 
-                let challengesRet =
+                let challenges_ret =
 
                 std::panic::catch_unwind(AssertUnwindSafe(|| {
 
@@ -449,9 +449,9 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                     })
                         .collect::<Vec<_>>()
                 }));
-                let ret =  match challengesRet {
+                let ret =  match challenges_ret {
                     Ok(o) => o,
-                    Err(e) => {
+                    Err(_e) => {
                         error!("prove_all_partitions faulty sector id: {:?}, please remove it from windowPost by update disable attribute to true", sector_id);
                         continue
                     },
