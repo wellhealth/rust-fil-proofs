@@ -5,7 +5,7 @@ use anyhow::ensure;
 use bellperson::bls::Fr;
 use byteorder::{ByteOrder, LittleEndian};
 use generic_array::typenum::Unsigned;
-use log::{error, trace};
+use log::{error, trace,info};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -19,6 +19,7 @@ use storage_proofs_core::{
     sector::*,
     util::{default_rows_to_discard, NODE_SIZE},
 };
+use std::panic::AssertUnwindSafe;
 
 #[derive(Debug, Clone)]
 pub struct SetupParams {
@@ -324,6 +325,8 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
         pub_inputs: &'b Self::PublicInputs,
         priv_inputs: &'b Self::PrivateInputs,
     ) -> Result<Self::Proof> {
+        info!("vanilla.rs prove");
+
         let proofs = Self::prove_all_partitions(pub_params, pub_inputs, priv_inputs, 1)?;
         let k = match pub_inputs.k {
             None => 0,
@@ -346,6 +349,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
         priv_inputs: &'b Self::PrivateInputs,
         partition_count: usize,
     ) -> Result<Vec<Self::Proof>> {
+        info!("vanilla.rs prove_all_partitions");
         ensure!(
             priv_inputs.sectors.len() == pub_inputs.sectors.len(),
             "inconsistent number of private and public sectors {} != {}",
@@ -375,7 +379,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
             .zip(priv_inputs.sectors.chunks(num_sectors_per_chunk))
             .enumerate()
         {
-            trace!("proving partition {}", j);
+            info!("proving partition {}", j);
 
             let mut proofs = Vec::with_capacity(num_sectors_per_chunk);
 
@@ -389,7 +393,9 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                 let tree_leafs = tree.leafs();
                 let rows_to_discard = default_rows_to_discard(tree_leafs, Tree::Arity::to_usize());
 
-                trace!(
+                info!("proving sector_id {}", sector_id);
+
+                info!(
                     "Generating proof for tree leafs {} and arity {}",
                     tree_leafs,
                     Tree::Arity::to_usize(),
@@ -401,7 +407,12 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                 challenge_hasher.update(&u64::from(sector_id).to_le_bytes()[..]);
 
                 let mut inclusion_proofs = Vec::new();
-                for proof_or_fault in (0..pub_params.challenge_count)
+
+                let challengesRet =
+
+                std::panic::catch_unwind(AssertUnwindSafe(|| {
+
+                    (0..pub_params.challenge_count)
                     .into_par_iter()
                     .map(|n| {
                         let challenge_index = ((j * num_sectors_per_chunk + i)
@@ -428,15 +439,25 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                                             &priv_sector.comm_r_last,
                                         )
                                 {
-                                    Ok(ProofOrFault::Proof(proof))
+                                    ProofOrFault::Proof(proof)
                                 } else {
-                                    Ok(ProofOrFault::Fault(sector_id))
+                                    ProofOrFault::Fault(sector_id)
                                 }
                             }
-                            Err(_) => Ok(ProofOrFault::Fault(sector_id)),
+                            Err(_) => ProofOrFault::Fault(sector_id),
                         }
                     })
-                    .collect::<Result<Vec<_>>>()?
+                        .collect::<Vec<_>>()
+                }));
+                let ret =  match challengesRet {
+                    Ok(o) => o,
+                    Err(e) => {
+                        error!("prove_all_partitions faulty sector id: {:?}, please remove it from windowPost by update disable attribute to true", sector_id);
+                        continue
+                    },
+                };
+
+                for proof_or_fault in ret
                 {
                     match proof_or_fault {
                         ProofOrFault::Proof(proof) => {
