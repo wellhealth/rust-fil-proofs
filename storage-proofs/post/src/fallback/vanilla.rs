@@ -1,15 +1,17 @@
 use std::collections::BTreeSet;
 use std::marker::PhantomData;
+use std::sync::Mutex;
 
 use anyhow::ensure;
 use bellperson::bls::Fr;
 use byteorder::{ByteOrder, LittleEndian};
 use generic_array::typenum::Unsigned;
-use log::{error, trace,info};
+use log::{error, info, trace};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use std::panic::AssertUnwindSafe;
 use storage_proofs_core::{
     error::{Error, Result},
     hasher::{Domain, HashFunction, Hasher},
@@ -19,7 +21,6 @@ use storage_proofs_core::{
     sector::*,
     util::{default_rows_to_discard, NODE_SIZE},
 };
-use std::panic::AssertUnwindSafe;
 
 #[derive(Debug, Clone)]
 pub struct SetupParams {
@@ -368,16 +369,18 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
             num_sectors_per_chunk,
         );
 
-        let mut partition_proofs = Vec::new();
+        // let mut partition_proofs = Vec::new();
 
         // Use `BTreeSet` so failure result will be canonically ordered (sorted).
-        let mut faulty_sectors = BTreeSet::new();
+        let faulty_sectors = Mutex::new(BTreeSet::new());
 
-        for (j, (pub_sectors_chunk, priv_sectors_chunk)) in pub_inputs
+        //for (j, (pub_sectors_chunk, priv_sectors_chunk)) in
+        let partition_proofs = pub_inputs
             .sectors
+            .par_iter()
             .chunks(num_sectors_per_chunk)
-            .zip(priv_inputs.sectors.chunks(num_sectors_per_chunk))
-            .enumerate()
+            .zip(priv_inputs.sectors.par_iter().chunks(num_sectors_per_chunk))
+            .enumerate().map(|(j, (pub_sectors_chunk, priv_sectors_chunk))|
         {
             info!("proving partition {}", j);
 
@@ -408,64 +411,60 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
 
                 let mut inclusion_proofs = Vec::new();
 
-                let challenges_ret =
-
-                std::panic::catch_unwind(AssertUnwindSafe(|| {
-
+                let challenges_ret = std::panic::catch_unwind(AssertUnwindSafe(|| {
                     (0..pub_params.challenge_count)
-                    .into_par_iter()
-                    .map(|n| {
-                        let challenge_index = ((j * num_sectors_per_chunk + i)
-                            * pub_params.challenge_count
-                            + n) as u64;
-                        let challenged_leaf_start =
-                            generate_leaf_challenge_inner::<<Tree::Hasher as Hasher>::Domain>(
-                                challenge_hasher.clone(),
-                                pub_params,
-                                challenge_index,
-                            );
+                        .into_par_iter()
+                        .map(|n| {
+                            let challenge_index = ((j * num_sectors_per_chunk + i)
+                                * pub_params.challenge_count
+                                + n) as u64;
+                            let challenged_leaf_start =
+                                generate_leaf_challenge_inner::<<Tree::Hasher as Hasher>::Domain>(
+                                    challenge_hasher.clone(),
+                                    pub_params,
+                                    challenge_index,
+                                );
 
-                        let proof = tree.gen_cached_proof(
-                            challenged_leaf_start as usize,
-                            Some(rows_to_discard),
-                        );
-                        match proof {
-                            Ok(proof) => {
-                                if proof.validate(challenged_leaf_start as usize)
-                                    && proof.root() == priv_sector.comm_r_last
-                                    && pub_sector.comm_r
-                                        == <Tree::Hasher as Hasher>::Function::hash2(
-                                            &priv_sector.comm_c,
-                                            &priv_sector.comm_r_last,
-                                        )
-                                {
-                                    ProofOrFault::Proof(proof)
-                                } else {
-                                    ProofOrFault::Fault(sector_id)
+                            let proof = tree.gen_cached_proof(
+                                challenged_leaf_start as usize,
+                                Some(rows_to_discard),
+                            );
+                            match proof {
+                                Ok(proof) => {
+                                    if proof.validate(challenged_leaf_start as usize)
+                                        && proof.root() == priv_sector.comm_r_last
+                                        && pub_sector.comm_r
+                                            == <Tree::Hasher as Hasher>::Function::hash2(
+                                                &priv_sector.comm_c,
+                                                &priv_sector.comm_r_last,
+                                            )
+                                    {
+                                        ProofOrFault::Proof(proof)
+                                    } else {
+                                        ProofOrFault::Fault(sector_id)
+                                    }
                                 }
+                                Err(_) => ProofOrFault::Fault(sector_id),
                             }
-                            Err(_) => ProofOrFault::Fault(sector_id),
-                        }
-                    })
+                        })
                         .collect::<Vec<_>>()
                 }));
-                let ret =  match challenges_ret {
+                let ret = match challenges_ret {
                     Ok(o) => o,
                     Err(_e) => {
                         error!("prove_all_partitions faulty sector id: {:?}, please remove it from windowPost by update disable attribute to true", sector_id);
-                        continue
-                    },
+                        continue;
+                    }
                 };
 
-                for proof_or_fault in ret
-                {
+                for proof_or_fault in ret {
                     match proof_or_fault {
                         ProofOrFault::Proof(proof) => {
                             inclusion_proofs.push(proof);
                         }
                         ProofOrFault::Fault(sector_id) => {
                             error!("faulty sector: {:?}", sector_id);
-                            faulty_sectors.insert(sector_id);
+                            faulty_sectors.lock().unwrap().insert(sector_id);
                         }
                     }
                 }
@@ -483,8 +482,10 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                 proofs.push(proofs[proofs.len() - 1].clone());
             }
 
-            partition_proofs.push(Proof { sectors: proofs });
-        }
+			Proof{ sectors: proofs}
+        }).collect();
+
+        let faulty_sectors = faulty_sectors.into_inner().expect("cannot take lock");
 
         if faulty_sectors.is_empty() {
             Ok(partition_proofs)
