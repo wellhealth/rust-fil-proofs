@@ -1,3 +1,4 @@
+use crate::constants::*;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
@@ -73,20 +74,24 @@ where
         cache_path,
         replica_path: replica_path.clone(),
     };
+    let uuid = get_uuid();
 
-    let p2_param = Path::new(param_folder).join("p2-param");
+    let in_path = Path::new(param_folder).join(&uuid);
     let p2 = Path::new(program_folder).join("p2");
+    let out_path = Path::new(param_folder).join(&uuid);
 
     let infile = OpenOptions::new()
         .write(true)
         .truncate(true)
         .create(true)
-        .open(&p2_param)
+        .open(&in_path)
         .with_context(|| format!("cannot open file to pass p2 parameter"))?;
 
     serde_json::to_writer(infile, &data).with_context(|| format!("cannot sealize to infile"))?;
 
     let mut p2_process = process::Command::new(&p2)
+        .arg(&uuid)
+        .arg(u64::from(porep_config.sector_size).to_string())
         .spawn()
         .with_context(|| format!("{:?}, cannot start {:?} ", replica_path, p2))?;
 
@@ -104,11 +109,10 @@ where
             bail!("{:?} p2 crashed", replica_path);
         }
     }
-    let p2_output = Path::new(param_folder).join("p2-output");
 
     let mut comm_r = [0u8; 32];
     let mut comm_d = [0u8; 32];
-    let mut output = File::open(p2_output)
+    let mut output = File::open(out_path)
         .with_context(|| format!("{:?}: cannot open file to fetch output", replica_path))?;
 
     output
@@ -122,11 +126,58 @@ where
     Ok(SealPreCommitOutput { comm_r, comm_d })
 }
 
-pub fn p2_sub<Tree: 'static + MerkleTreeTrait>() -> Result<()> {
-    let uuid = std::env::args().skip(1).next().context("cannot get path")?;
+pub fn c2_sub_launcher() -> Result<()> {
+    let mut args = std::env::args().skip(1).take(2);
+    let uuid = args.next().context("cannot get uuid parameter")?;
+    let shape = args
+        .next()
+        .context("cannot get shape parameter")?
+        .parse()
+        .context("cannot parse shape")?;
+
+    match shape {
+        SECTOR_SIZE_2_KIB => c2_sub::<SectorShape2KiB>(&uuid),
+        SECTOR_SIZE_4_KIB => c2_sub::<SectorShape4KiB>(&uuid),
+        SECTOR_SIZE_16_KIB => c2_sub::<SectorShape16KiB>(&uuid),
+        SECTOR_SIZE_32_KIB => c2_sub::<SectorShape32KiB>(&uuid),
+        SECTOR_SIZE_8_MIB => c2_sub::<SectorShape8MiB>(&uuid),
+        SECTOR_SIZE_16_MIB => c2_sub::<SectorShape16MiB>(&uuid),
+        SECTOR_SIZE_512_MIB => c2_sub::<SectorShape512MiB>(&uuid),
+        SECTOR_SIZE_1_GIB => c2_sub::<SectorShape1GiB>(&uuid),
+        SECTOR_SIZE_32_GIB => c2_sub::<SectorShape32GiB>(&uuid),
+        SECTOR_SIZE_64_GIB => c2_sub::<SectorShape64GiB>(&uuid),
+        _ => bail!("shape not recognized"),
+    }
+}
+
+pub fn p2_sub_launcher() -> Result<()> {
+    let mut args = std::env::args().skip(1).take(2);
+    let uuid = args.next().context("cannot get uuid parameter")?;
+    let shape = args
+        .next()
+        .context("cannot get shape parameter")?
+        .parse()
+        .context("cannot parse shape")?;
+
+    match shape {
+        SECTOR_SIZE_2_KIB => p2_sub::<SectorShape2KiB>(&uuid),
+        SECTOR_SIZE_4_KIB => p2_sub::<SectorShape4KiB>(&uuid),
+        SECTOR_SIZE_16_KIB => p2_sub::<SectorShape16KiB>(&uuid),
+        SECTOR_SIZE_32_KIB => p2_sub::<SectorShape32KiB>(&uuid),
+        SECTOR_SIZE_8_MIB => p2_sub::<SectorShape8MiB>(&uuid),
+        SECTOR_SIZE_16_MIB => p2_sub::<SectorShape16MiB>(&uuid),
+        SECTOR_SIZE_512_MIB => p2_sub::<SectorShape512MiB>(&uuid),
+        SECTOR_SIZE_1_GIB => p2_sub::<SectorShape1GiB>(&uuid),
+        SECTOR_SIZE_32_GIB => p2_sub::<SectorShape32GiB>(&uuid),
+        SECTOR_SIZE_64_GIB => p2_sub::<SectorShape64GiB>(&uuid),
+        _ => bail!("shape not recognized"),
+    }
+}
+
+pub fn p2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
     let param_folder = &settings::SETTINGS.param_folder;
-    let in_path = Path::new(param_folder).join(&uuid);
-    let out_path = Path::new(param_folder).join(&uuid);
+    let in_path = Path::new(param_folder).join(uuid);
+    let out_path = Path::new(param_folder).join(uuid);
 
     let infile = File::open(&in_path).with_context(|| format!("cannot open file {:?}", in_path))?;
 
@@ -208,6 +259,7 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
 
     let mut c2_process = process::Command::new(&c2_program_path)
         .arg(&uuid)
+        .arg(u64::from(porep_config.sector_size).to_string())
         .spawn()
         .with_context(|| format!("{:?}, cannot start {:?} ", sector_id, c2_program_path))?;
 
@@ -235,8 +287,7 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     Ok(SealCommitOutput { proof })
 }
 
-pub fn c2_sub<Tree: 'static + MerkleTreeTrait>() -> Result<()> {
-    let uuid = std::env::args().skip(1).next().context("cannot get path")?;
+pub fn c2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
     let param_folder = &settings::SETTINGS.param_folder;
     let in_path = Path::new(param_folder).join(&uuid);
     let out_path = Path::new(param_folder).join(&uuid);
@@ -264,6 +315,7 @@ pub fn c2_sub<Tree: 'static + MerkleTreeTrait>() -> Result<()> {
 
     out_file
         .write_all(&out.proof)
-        .with_context(|| format!("{:?}: cannot write to output file ", sector_id))?;
+        .with_context(|| format!("{:?}: cannot write to output file", sector_id))?;
+
     Ok(())
 }
