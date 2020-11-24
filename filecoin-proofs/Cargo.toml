@@ -9,6 +9,7 @@ repository = "https://github.com/filecoin-project/rust-fil-proofs"
 readme = "README.md"
 
 [dependencies]
+uuid = { version = "*", features = ["serde", "v4"] }
 backtrace = "*"
 storage-proofs = { version = "^5.0.0", path = "../storage-proofs", default-features = false }
 bitvec = "0.17"
