@@ -904,9 +904,6 @@ fn generate_window_post_with_vanilla_inner<Tree: 'static + MerkleTreeTrait>(
         &vanilla_proofs,
     )?;
 
-
-
-
     let proof = fallback::FallbackPoStCompound::prove_with_vanilla(
         &pub_params,
         &pub_inputs,
