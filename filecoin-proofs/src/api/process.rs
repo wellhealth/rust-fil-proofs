@@ -176,8 +176,9 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         prover_id,
         sector_id,
     };
-
-    let uuid: String = Uuid::new_v4().to_hyphenated().into();
+    let mut buffer = Uuid::encode_buffer();
+    let uuid = Uuid::new_v4().to_hyphenated().encode_upper(&mut buffer);
+    let uuid = uuid.to_owned();
     let param_folder = &settings::SETTINGS.param_folder;
     let c2_param = Path::new(param_folder).join(&uuid);
 
