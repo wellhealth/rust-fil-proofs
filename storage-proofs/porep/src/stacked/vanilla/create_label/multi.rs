@@ -2,6 +2,8 @@ use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
+use std::sync::mpsc::channel;
+use std::sync::RwLock;
 use std::sync::{Arc, MutexGuard};
 
 use anyhow::{Context, Result};
@@ -55,7 +57,7 @@ fn fill_buffer(
     parents_cache: &CacheReader<u32>,
     mut cur_parent: &[u32], // parents for this node
     layer_labels: &UnsafeSlice<u32>,
-    exp_labels: Option<&UnsafeSlice<u32>>, // None for layer0
+    exp_labels: Option<&[u32]>, // None for layer0
     buf: &mut [u8],
     base_parent_missing: &mut BitMask,
 ) {
@@ -107,9 +109,9 @@ fn fill_buffer(
     if let Some(exp_labels) = exp_labels {
         // Read from each of the expander parent nodes
         for k in BASE_DEGREE..DEGREE {
-            let parent_data = unsafe {
+            let parent_data = {
                 let offset = cur_parent[0] as usize * NODE_WORDS;
-                &exp_labels.as_slice()[offset..offset + NODE_WORDS]
+                &exp_labels[offset..offset + NODE_WORDS]
             };
             let a = SHA_BLOCK_SIZE + (NODE_SIZE * k);
             buf[a..a + NODE_SIZE].copy_from_slice(parent_data.as_byte_slice());
@@ -137,7 +139,7 @@ fn fill_buffer(
 fn create_label_runner(
     parents_cache: &CacheReader<u32>,
     layer_labels: &UnsafeSlice<u32>,
-    exp_labels: Option<&UnsafeSlice<u32>>, // None for layer 0
+    exp_labels: Option<&[u32]>, // None for layer 0
     num_nodes: u64,
     cur_producer: &AtomicU64,
     cur_awaiting: &AtomicU64,
@@ -202,7 +204,7 @@ fn create_layer_labels(
     parents_cache: &CacheReader<u32>,
     replica_id: &[u8],
     layer_labels: &mut MmapMut,
-    exp_labels: Option<&mut MmapMut>,
+    exp_labels: Option<&[u32]>,
     num_nodes: u64,
     cur_layer: u32,
     core_group: Arc<Option<MutexGuard<Vec<CoreIndex>>>>,
@@ -239,8 +241,7 @@ fn create_layer_labels(
 
     // These UnsafeSlices are managed through the 3 Atomics above, to minimize any locking overhead.
     let layer_labels = UnsafeSlice::from_slice(layer_labels.as_mut_slice_of::<u32>().unwrap());
-    let exp_labels =
-        exp_labels.map(|m| UnsafeSlice::from_slice(m.as_mut_slice_of::<u32>().unwrap()));
+    // let exp_labels = exp_labels.map(|m| m.as_slice_of::<u32>().unwrap());
     let base_parent_missing = UnsafeSlice::from_slice(&mut base_parent_missing);
 
     thread::scope(|s| {
@@ -248,7 +249,7 @@ fn create_layer_labels(
 
         for i in 0..num_producers {
             let layer_labels = &layer_labels;
-            let exp_labels = exp_labels.as_ref();
+            // let exp_labels = exp_labels.as_ref();
             let cur_producer = &cur_producer;
             let cur_awaiting = &cur_awaiting;
             let ring_buf = &ring_buf;
@@ -447,62 +448,85 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     });
 
     // NOTE: this means we currently keep 2x sector size around, to improve speed
-    let (parents_cache, mut layer_labels, mut exp_labels) = setup_create_label_memory(
+    let (parents_cache, mut layer_labels, exp_labels) = setup_create_label_memory(
         sector_size,
         DEGREE,
         Some(default_cache_size as usize),
         &parents_cache.path,
     )?;
+    let exp_labels = RwLock::new(exp_labels);
 
-    for (layer, layer_state) in (1..=layers).zip(layer_states.iter()) {
-        info!("Layer {}", layer);
+    let (err_tx, err_rx) = channel();
+    crossbeam::scope(|s| -> Result<()> {
+        for (layer, layer_state) in (1..=layers).zip(layer_states.iter()) {
+            info!("Layer {}", layer);
 
-        if layer_state.generated {
-            info!("skipping layer {}, already generated", layer);
+            if layer_state.generated {
+                info!("skipping layer {}, already generated", layer);
 
-            // load the already generated layer into exp_labels
-            super::read_layer(&layer_state.config, &mut exp_labels)?;
-            continue;
+                // load the already generated layer into exp_labels
+                super::read_layer(&layer_state.config, &mut (exp_labels.write().unwrap()))?;
+                continue;
+            }
+
+            // Cache reset happens in two parts.
+            // The second part (the finish) happens before each layer but the first.
+            if layers != 1 {
+                parents_cache.finish_reset()?;
+            }
+
+            {
+                let exp_labels = exp_labels.read().unwrap();
+                let exp_labels = exp_labels.as_slice_of::<u32>().unwrap();
+                create_layer_labels(
+                    &parents_cache,
+                    &replica_id.as_ref(),
+                    &mut layer_labels,
+                    if layer == 1 { None } else { Some(exp_labels) },
+                    node_count,
+                    layer as u32,
+                    core_group.clone(),
+                )?;
+            }
+            // Cache reset happens in two parts.
+            // The first part (the start) happens after each layer but the last.
+            if layer != layers {
+                parents_cache.start_reset()?;
+            }
+
+            std::mem::swap(&mut layer_labels, &mut exp_labels.write().unwrap());
+            {
+                let layer_config = &layer_state.config;
+
+                info!("  storing labels on disk");
+                let exp_labels = &exp_labels;
+                let (tx, rx) = channel();
+                s.spawn({
+                    let err_tx = err_tx.clone();
+                    move |_| {
+                        let input = &exp_labels.read().unwrap()[..];
+                        tx.send(()).unwrap();
+                        if let Err(e) = super::write_layer(input, layer_config)
+                            .context("failed to store labels")
+                        {
+                            err_tx.send(e).unwrap();
+                        }
+                    }
+                });
+                rx.recv().unwrap();
+
+                info!(
+                    "  generated layer {} store with id {}",
+                    layer, layer_config.id
+                );
+            }
         }
+        Ok(())
+    }).expect("generate label panic")?;
 
-        // Cache reset happens in two parts.
-        // The second part (the finish) happens before each layer but the first.
-        if layers != 1 {
-            parents_cache.finish_reset()?;
-        }
-
-        create_layer_labels(
-            &parents_cache,
-            &replica_id.as_ref(),
-            &mut layer_labels,
-            if layer == 1 {
-                None
-            } else {
-                Some(&mut exp_labels)
-            },
-            node_count,
-            layer as u32,
-            core_group.clone(),
-        )?;
-
-        // Cache reset happens in two parts.
-        // The first part (the start) happens after each layer but the last.
-        if layer != layers {
-            parents_cache.start_reset()?;
-        }
-
-        std::mem::swap(&mut layer_labels, &mut exp_labels);
-        {
-            let layer_config = &layer_state.config;
-
-            info!("  storing labels on disk");
-            super::write_layer(&exp_labels, layer_config).context("failed to store labels")?;
-
-            info!(
-                "  generated layer {} store with id {}",
-                layer, layer_config.id
-            );
-        }
+    match err_rx.iter().collect::<Vec<_>>().into_iter().next() {
+        Some(e) => return Err(e),
+        None => {}
     }
 
     Ok((
@@ -568,7 +592,7 @@ pub fn create_labels_for_decoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
             if layer == 1 {
                 None
             } else {
-                Some(&mut exp_labels)
+                Some(exp_labels.as_slice_of::<u32>().unwrap())
             },
             node_count,
             layer as u32,
