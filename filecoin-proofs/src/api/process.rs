@@ -46,6 +46,12 @@ struct C2Param<Tree: 'static + MerkleTreeTrait> {
     sector_id: SectorId,
 }
 
+fn get_uuid() -> String {
+    let mut buffer = Uuid::encode_buffer();
+    let uuid = Uuid::new_v4().to_hyphenated().encode_upper(&mut buffer);
+    uuid.to_owned()
+}
+
 pub fn p2<R, S, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     phase1_output: SealPreCommitPhase1Output<Tree>,
@@ -116,7 +122,12 @@ where
     Ok(SealPreCommitOutput { comm_r, comm_d })
 }
 
-pub fn p2_sub<Tree: 'static + MerkleTreeTrait>(in_path: &Path, out_path: &Path) -> Result<()> {
+pub fn p2_sub<Tree: 'static + MerkleTreeTrait>() -> Result<()> {
+    let uuid = std::env::args().skip(1).next().context("cannot get path")?;
+    let param_folder = &settings::SETTINGS.param_folder;
+    let in_path = Path::new(param_folder).join(&uuid);
+    let out_path = Path::new(param_folder).join(&uuid);
+
     let infile = File::open(&in_path).with_context(|| format!("cannot open file {:?}", in_path))?;
 
     let data = serde_json::from_reader::<_, P2Param<Tree>>(infile)
@@ -177,9 +188,11 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         sector_id,
     };
 
-    let uuid: String = Uuid::new_v4().to_hyphenated().into();
+    let uuid = get_uuid();
+
     let param_folder = &settings::SETTINGS.param_folder;
-    let c2_param = Path::new(param_folder).join(&uuid);
+    let in_path = Path::new(param_folder).join(&uuid);
+    let out_path = Path::new(param_folder).join(&uuid);
 
     let program_folder = &settings::SETTINGS.program_folder;
     let c2_program_path = Path::new(program_folder).join("c2");
@@ -188,7 +201,7 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         .write(true)
         .truncate(true)
         .create(true)
-        .open(c2_param)
+        .open(&in_path)
         .with_context(|| format!("cannot open file to pass c2 parameter"))?;
 
     serde_json::to_writer(infile, &data).with_context(|| format!("cannot sealize to infile"))?;
@@ -213,9 +226,8 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         }
     }
 
-    let c2_output = Path::new(param_folder).join(&uuid);
     let mut proof = vec![];
-    let mut outfile = File::open(c2_output)
+    let mut outfile = File::open(out_path)
         .with_context(|| format!("{:?}, cannot open c2 output file for reuslt", sector_id))?;
     outfile
         .read_to_end(&mut proof)
@@ -223,7 +235,12 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     Ok(SealCommitOutput { proof })
 }
 
-pub fn c2_sub<Tree: 'static + MerkleTreeTrait>(in_path: &Path, out_path: &Path) -> Result<()> {
+pub fn c2_sub<Tree: 'static + MerkleTreeTrait>() -> Result<()> {
+    let uuid = std::env::args().skip(1).next().context("cannot get path")?;
+    let param_folder = &settings::SETTINGS.param_folder;
+    let in_path = Path::new(param_folder).join(&uuid);
+    let out_path = Path::new(param_folder).join(&uuid);
+
     let infile = File::open(&in_path).with_context(|| format!("cannot open file {:?}", in_path))?;
 
     let data = serde_json::from_reader::<_, C2Param<Tree>>(infile)
