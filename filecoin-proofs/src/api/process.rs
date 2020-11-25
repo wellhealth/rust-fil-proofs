@@ -89,6 +89,7 @@ where
 
     serde_json::to_writer(infile, &data).with_context(|| format!("cannot sealize to infile"))?;
 
+	info!("start p2 with program: {:?}", p2);
     let mut p2_process = process::Command::new(&p2)
         .arg(&uuid)
         .arg(u64::from(porep_config.sector_size).to_string())
