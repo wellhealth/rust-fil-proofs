@@ -117,7 +117,7 @@ where
 
     let mut comm_r = [0u8; 32];
     let mut comm_d = [0u8; 32];
-    let mut output = File::open(out_path)
+    let mut output = File::open(&out_path)
         .with_context(|| format!("{:?}: cannot open file to fetch output", replica_path))?;
 
     output
@@ -128,7 +128,7 @@ where
         .read_exact(&mut comm_d)
         .with_context(|| format!("{:?}, cannot read file to get comm_d", replica_path))?;
 
-	drop(&out_file);
+	drop(&output);
 	let _ = std::fs::remove_file(out_path);
     Ok(SealPreCommitOutput { comm_r, comm_d })
 }
