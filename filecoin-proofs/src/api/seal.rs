@@ -197,7 +197,11 @@ pub fn seal_pre_commit_phase2<R, S, Tree: 'static + MerkleTreeTrait>(
     phase1_output: SealPreCommitPhase1Output<Tree>,
     cache_path: S,
     replica_path: R,
-) -> Result<SealPreCommitOutput> {
+) -> Result<SealPreCommitOutput>
+where
+    R: AsRef<Path>,
+    S: AsRef<Path>,
+{
     super::process::p2(porep_config, phase1_output, cache_path, replica_path)
 }
 
