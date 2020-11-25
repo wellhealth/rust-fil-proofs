@@ -309,14 +309,14 @@ pub fn generate_winning_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
 
-    let gpu_index = super::select_gpu_device();
+    let gpu_index = super::select_gpu_device().context("cannot get gpu index")?;
 
     info!("select gpu index: {}", gpu_index);
 
     defer! {
-            info!("release gpu index: {}", gpu_index);
-            super::release_gpu_device(gpu_index);
-        }
+        info!("release gpu index: {}", gpu_index);
+        super::release_gpu_device(gpu_index);
+    }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     let proof = fallback::FallbackPoStCompound::prove_with_vanilla(
@@ -324,7 +324,7 @@ pub fn generate_winning_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
         &pub_inputs,
         partitioned_proofs,
         &groth_params,
-        gpu_index
+        gpu_index,
     )?;
     let proof = proof.to_vec()?;
 
@@ -339,7 +339,7 @@ pub fn generate_winning_post_inner<Tree: 'static + MerkleTreeTrait>(
     randomness: &ChallengeSeed,
     replicas: &[(SectorId, PrivateReplicaInfo<Tree>)],
     prover_id: ProverId,
-    gpu_index:usize,
+    gpu_index: usize,
 ) -> Result<SnarkProof> {
     info!("generate_winning_post:start");
     ensure!(
@@ -437,7 +437,7 @@ pub fn generate_winning_post<Tree: 'static + MerkleTreeTrait>(
     //gpu_index:usize,
 ) -> Result<SnarkProof> {
     let gpu_index = 0;
-    generate_winning_post_inner::<Tree>(post_config,randomness,replicas,prover_id,gpu_index)
+    generate_winning_post_inner::<Tree>(post_config, randomness, replicas, prover_id, gpu_index)
 }
 
 /// Given some randomness and the length of available sectors, generates the challenged sector.
@@ -600,10 +600,16 @@ pub fn verify_winning_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &[(SectorId, PublicReplicaInfo)],
     prover_id: ProverId,
     proof: &[u8],
-
 ) -> Result<bool> {
     let gpu_index = 0;
-    verify_winning_post_inner::<Tree>(post_config,randomness,replicas,prover_id, proof,gpu_index)
+    verify_winning_post_inner::<Tree>(
+        post_config,
+        randomness,
+        replicas,
+        prover_id,
+        proof,
+        gpu_index,
+    )
 }
 
 /// Verifies a winning proof-of-spacetime.
@@ -617,7 +623,7 @@ pub fn verify_winning_post_inner<Tree: 'static + MerkleTreeTrait>(
     replicas: &[(SectorId, PublicReplicaInfo)],
     prover_id: ProverId,
     proof: &[u8],
-    gpu_index:usize,
+    gpu_index: usize,
 ) -> Result<bool> {
     info!("verify_winning_post:start");
 
@@ -820,7 +826,6 @@ pub fn partition_vanilla_proofs<Tree: MerkleTreeTrait>(
     Ok(partition_proofs)
 }
 
-
 /// Generates a Window proof-of-spacetime with provided vanilla proofs.
 pub fn generate_window_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
     post_config: &PoStConfig,
@@ -831,17 +836,23 @@ pub fn generate_window_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
 
-    let gpu_index = super::select_gpu_device();
+    let gpu_index = super::select_gpu_device().context("cannot get gpu index")?;
 
     info!("select gpu index: {}", gpu_index);
 
     defer! {
-            info!("release gpu index: {}", gpu_index);
-            super::release_gpu_device(gpu_index);
-        }
+        info!("release gpu index: {}", gpu_index);
+        super::release_gpu_device(gpu_index);
+    }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    generate_window_post_with_vanilla_inner(post_config,randomness,prover_id,vanilla_proofs, gpu_index)
+    generate_window_post_with_vanilla_inner(
+        post_config,
+        randomness,
+        prover_id,
+        vanilla_proofs,
+        gpu_index,
+    )
 }
 
 /// Generates a Window proof-of-spacetime with provided vanilla proofs.
@@ -850,7 +861,7 @@ fn generate_window_post_with_vanilla_inner<Tree: 'static + MerkleTreeTrait>(
     randomness: &ChallengeSeed,
     prover_id: ProverId,
     vanilla_proofs: Vec<FallbackPoStSectorProof<Tree>>,
-    gpu_index:usize
+    gpu_index: usize,
 ) -> Result<SnarkProof> {
     info!("generate_window_post_with_vanilla:start");
     ensure!(
@@ -928,7 +939,7 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
 ) -> Result<SnarkProof> {
     //let gpu_index = 0;
 
-    let gpu_index = super::select_gpu_device();
+    let gpu_index = super::select_gpu_device().context("cannot get gpu index")?;
 
     info!("select gpu index: {}", gpu_index);
 
@@ -937,7 +948,7 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
         super::release_gpu_device(gpu_index);
     }
 
-    generate_window_post_inner(post_config,randomness,replicas,prover_id,gpu_index)
+    generate_window_post_inner(post_config, randomness, replicas, prover_id, gpu_index)
 }
 
 /// Generates a Window proof-of-spacetime.
@@ -946,9 +957,8 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     randomness: &ChallengeSeed,
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
-    gpu_index:usize,
+    gpu_index: usize,
 ) -> Result<SnarkProof> {
-
     std::panic::set_hook(Box::new(|_| {
         let bt = backtrace::Backtrace::new();
         info!("panic occurred, backtrace: {:?}", bt);
@@ -962,7 +972,11 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
 
     let now = Instant::now();
 
-    info!("generate_window_post0:{:?} {:?}", prover_id, now.elapsed().as_secs());
+    info!(
+        "generate_window_post0:{:?} {:?}",
+        prover_id,
+        now.elapsed().as_secs()
+    );
 
     let randomness_safe = as_safe_commitment(randomness, "randomness")?;
     let prover_id_safe = as_safe_commitment(&prover_id, "prover_id")?;
@@ -982,19 +996,23 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     let groth_params = get_post_params::<Tree>(&post_config)?;
     info!("generate_window_post: pub_sectors & priv_sectors (begin)");
 
-    info!("generate_window_post1:{:?} {:?}", prover_id, now.elapsed().as_secs());
+    info!(
+        "generate_window_post1:{:?} {:?}",
+        prover_id,
+        now.elapsed().as_secs()
+    );
     /*
-    let trees: Vec<_> = replicas
-        .iter()
-        .map(|(sector_id, replica)| {
-            replica
-                .merkle_tree(post_config.sector_size)
-                .with_context(|| {
-                    format!("generate_window_post: merkle_tree failed: {:?}", sector_id)
-                })
-        })
-	.collect::<Result<_>>()?;
-   */
+     let trees: Vec<_> = replicas
+         .iter()
+         .map(|(sector_id, replica)| {
+             replica
+                 .merkle_tree(post_config.sector_size)
+                 .with_context(|| {
+                     format!("generate_window_post: merkle_tree failed: {:?}", sector_id)
+                 })
+         })
+     .collect::<Result<_>>()?;
+    */
 
     use rayon::prelude::*;
 
@@ -1007,10 +1025,13 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
                     format!("generate_window_post: merkle_tree failed: {:?}", sector_id)
                 })
         })
-	.collect::<Result<_>>()?;	
-	
+        .collect::<Result<_>>()?;
 
-    info!("generate_window_post2:{:?} {:?}", prover_id, now.elapsed().as_secs());
+    info!(
+        "generate_window_post2:{:?} {:?}",
+        prover_id,
+        now.elapsed().as_secs()
+    );
     let mut pub_sectors = Vec::with_capacity(sector_count);
     let mut priv_sectors = Vec::with_capacity(sector_count);
 
@@ -1034,7 +1055,11 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     }
     info!("generate_window_post: pub_sectors & priv_sectors (end)");
 
-    info!("generate_window_post3:{:?} {:?}", prover_id, now.elapsed().as_secs());
+    info!(
+        "generate_window_post3:{:?} {:?}",
+        prover_id,
+        now.elapsed().as_secs()
+    );
 
     let pub_inputs = fallback::PublicInputs {
         randomness: randomness_safe,
@@ -1048,7 +1073,11 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         sectors: &priv_sectors,
     };
 
-    info!("generate_window_post4:{:?} {:?}", prover_id, now.elapsed().as_secs());
+    info!(
+        "generate_window_post4:{:?} {:?}",
+        prover_id,
+        now.elapsed().as_secs()
+    );
     info!("generate_window_post:fallback::FallbackPoStCompound(begin)");
     let proof = fallback::FallbackPoStCompound::prove(
         &pub_params,
@@ -1058,7 +1087,11 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         gpu_index,
     )?;
 
-    info!("generate_window_post5:{:?} {:?}", prover_id, now.elapsed().as_secs());
+    info!(
+        "generate_window_post5:{:?} {:?}",
+        prover_id,
+        now.elapsed().as_secs()
+    );
 
     info!("generate_window_post:finish");
 
@@ -1072,10 +1105,16 @@ pub fn verify_window_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &BTreeMap<SectorId, PublicReplicaInfo>,
     prover_id: ProverId,
     proof: &[u8],
-
 ) -> Result<bool> {
     let gpu_index = 0;
-    verify_window_post_inner::<Tree>(post_config,randomness,replicas,prover_id,proof,gpu_index)
+    verify_window_post_inner::<Tree>(
+        post_config,
+        randomness,
+        replicas,
+        prover_id,
+        proof,
+        gpu_index,
+    )
 }
 
 /// Verifies a window proof-of-spacetime.
@@ -1085,7 +1124,7 @@ pub fn verify_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     replicas: &BTreeMap<SectorId, PublicReplicaInfo>,
     prover_id: ProverId,
     proof: &[u8],
-    gpu_index:usize,
+    gpu_index: usize,
 ) -> Result<bool> {
     info!("verify_window_post:start");
 

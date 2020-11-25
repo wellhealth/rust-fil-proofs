@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fs::{self, metadata, File, OpenOptions};
 use std::io::prelude::*;
 use std::marker::PhantomData;
@@ -43,6 +44,10 @@ use crate::types::{
     SealCommitOutput, SealCommitPhase1Output, SealPreCommitOutput, SealPreCommitPhase1Output,
     SectorSize, Ticket, BINARY_ARITY,
 };
+
+
+
+pub const SHENSUANYUN_GPU_INDEX: &str = "SHENSUANYUN_GPU_INDEX";
 
 #[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1<R, S, T, Tree: 'static + MerkleTreeTrait>(
@@ -297,7 +302,10 @@ where
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
 
-    let gpu_index = select_gpu_device();
+    let gpu_index = std::env::var(SHENSUANYUN_GPU_INDEX)
+        .with_context(|| format!("{:?}: cannot get gpu index from env", replica_path.as_ref()))?
+        .parse()
+        .with_context(|| format!("{:?}: wrong gpu index", replica_path.as_ref(),))?;
 
     info!("select gpu index: {}", gpu_index);
 
@@ -483,14 +491,14 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
 }
 
 use scopeguard::defer;
- pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
-     porep_config: PoRepConfig,
-     phase1_output: SealCommitPhase1Output<Tree>,
-     prover_id: ProverId,
-     sector_id: SectorId,
- ) -> Result<SealCommitOutput> {
-	 super::process::c2(porep_config, phase1_output, prover_id, sector_id)
- }
+pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
+    porep_config: PoRepConfig,
+    phase1_output: SealCommitPhase1Output<Tree>,
+    prover_id: ProverId,
+    sector_id: SectorId,
+) -> Result<SealCommitOutput> {
+    super::process::c2(porep_config, phase1_output, prover_id, sector_id)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn official_c2<Tree: 'static + MerkleTreeTrait>(
@@ -503,8 +511,10 @@ pub fn official_c2<Tree: 'static + MerkleTreeTrait>(
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
-    let gpu_index = select_gpu_device();
-
+    let gpu_index = std::env::var(SHENSUANYUN_GPU_INDEX)
+        .with_context(|| format!("{:?}: cannot get gpu index from env", sector_id))?
+        .parse()
+        .with_context(|| format!("{:?}: wrong gpu index", sector_id))?;
     log::info!("select gpu index: {}", gpu_index);
 
     defer! {
@@ -1241,76 +1251,18 @@ where
     Ok(out)
 }
 
-#[derive(Debug)]
-pub struct Queue<T> {
-    qdata: Vec<T>,
-}
-
-impl<T> Queue<T> {
-    fn new() -> Self {
-        Queue { qdata: Vec::new() }
-    }
-
-    fn push(&mut self, item: T) {
-        self.qdata.push(item);
-    }
-
-    fn pop(&mut self) -> Option<T> {
-        let l = self.qdata.len();
-
-        if l > 0 {
-            let v = self.qdata.remove(0);
-            Some(v)
-        } else {
-            None
-        }
-    }
-
-    fn len(&mut self) -> usize {
-        self.qdata.len()
-    }
-}
-
 #[cfg(feature = "gpu")]
 lazy_static::lazy_static! {
-    //pub static ref GPU_NVIDIA_DEVICES: Vec<Device> = get_devices(GPU_NVIDIA_PLATFORM_NAME).unwrap_or_default();
-    //pub static ref GPU_NVIDIA_DEVICES: Vec<Device> = get_devices(GPU_NVIDIA_PLATFORM_NAME).unwrap_or_default();
-    pub static ref GPU_NVIDIA_DEVICES_QUEUE:  Mutex<Queue<usize>> = Mutex::new(Queue::new());
+    pub static ref GPU_NVIDIA_DEVICES_QUEUE:  Mutex<VecDeque<usize>> = Mutex::new((0..bellperson::gpu::gpu_count()).collect());
 }
 
-static mut N: i32 = 0;
-
-pub fn select_gpu_device() -> usize {
-    let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
-    unsafe {
-        if N == 0 {
-            for i in 0..bellperson::gpu::gpu_count() {
-                queue.push(i)
-            }
-
-            N = 1;
-            info!("init gpu finished: {}", N);
-        }
-    }
-
-    if queue.len() == 0 {
-        return 0;
-    }
-
-    queue.pop().unwrap()
-
-    /* let device_info = queue.pop().unwrap()
-
-    let index = device_info.index;
-
-    log::info!("select gpu index: {}", index);
-
-    queue.push(device_info);
-
-    return index;*/
+pub fn select_gpu_device() -> Option<usize> {
+    GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap().pop_front()
 }
 
 pub fn release_gpu_device(gpu_index: usize) {
-    let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
-    queue.push(gpu_index);
+    GPU_NVIDIA_DEVICES_QUEUE
+        .lock()
+        .unwrap()
+        .push_back(gpu_index)
 }

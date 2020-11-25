@@ -1,4 +1,5 @@
 use crate::constants::*;
+use crate::select_gpu_device;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
@@ -67,6 +68,13 @@ where
     R: AsRef<Path>,
     S: AsRef<Path>,
 {
+    let gpu_index = select_gpu_device()
+        .with_context(|| format!("{:?}: cannot select gpu device", replica_path.as_ref()))?;
+    std::env::set_var(
+        crate::api::seal::SHENSUANYUN_GPU_INDEX,
+        &gpu_index.to_string(),
+    );
+
     let cache_path = cache_path.as_ref().to_owned();
     let replica_path = replica_path.as_ref().to_owned();
     let param_folder = get_param_folder().context("cannot get param folder")?;
@@ -251,7 +259,12 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         prover_id,
         sector_id,
     };
-
+    let gpu_index = select_gpu_device()
+        .with_context(|| format!("{:?}: cannot select gpu device", sector_id))?;
+    std::env::set_var(
+        crate::api::seal::SHENSUANYUN_GPU_INDEX,
+        &gpu_index.to_string(),
+    );
     let uuid = get_uuid();
 
     let param_folder = get_param_folder().context("cannot get param folder")?;
