@@ -315,7 +315,8 @@ pub fn c2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
 
     let out = super::official_c2(porep_config, phase1_output, prover_id, sector_id)?;
 
-    std::fs::write(out_path, &out.proof);
+    std::fs::write(out_path, &out.proof)
+        .with_context(|| format!("{:?}: cannot write result to file", sector_id))?;
 
     Ok(())
 }
