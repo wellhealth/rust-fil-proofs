@@ -511,19 +511,21 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                         {
                             err_tx.send(e).unwrap();
                         }
+
+                        info!(
+                            "  generated layer {} store with id {}",
+                            layer, layer_config.id
+                        );
                     }
                 });
                 rx.recv().unwrap();
-
-                info!(
-                    "  generated layer {} store with id {}",
-                    layer, layer_config.id
-                );
             }
         }
         Ok(())
-    }).expect("generate label panic")?;
+    })
+    .expect("generate label panic")?;
 
+    drop(err_tx);
     match err_rx.iter().collect::<Vec<_>>().into_iter().next() {
         Some(e) => return Err(e),
         None => {}
