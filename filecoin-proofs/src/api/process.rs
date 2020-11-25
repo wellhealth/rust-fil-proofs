@@ -128,6 +128,8 @@ where
         .read_exact(&mut comm_d)
         .with_context(|| format!("{:?}, cannot read file to get comm_d", replica_path))?;
 
+	drop(&out_file);
+	let _ = std::fs::remove_file(out_path);
     Ok(SealPreCommitOutput { comm_r, comm_d })
 }
 
@@ -291,8 +293,10 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         }
     }
 
-    let proof = std::fs::read(out_path)
+    let proof = std::fs::read(&out_path)
         .with_context(|| format!("{:?}, cannot open c2 output file for reuslt", sector_id))?;
+
+	let _ = std::fs::remove_file(out_path);
     Ok(SealCommitOutput { proof })
 }
 
