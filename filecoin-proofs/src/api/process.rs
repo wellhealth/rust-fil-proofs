@@ -87,6 +87,7 @@ where
         .open(&in_path)
         .with_context(|| format!("cannot open file to pass p2 parameter"))?;
 
+	info!("{:?}: writing parameter to file: {:?}", replica_path, in_path);
     serde_json::to_writer(infile, &data).with_context(|| format!("cannot sealize to infile"))?;
 
 	info!("start p2 with program: {:?}", p2);
