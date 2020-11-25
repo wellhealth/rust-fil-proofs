@@ -4,6 +4,7 @@ use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
 use log::info;
+use scopeguard::defer;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
@@ -70,6 +71,11 @@ where
 {
     let gpu_index = select_gpu_device()
         .with_context(|| format!("{:?}: cannot select gpu device", replica_path.as_ref()))?;
+    defer! {
+
+        info!("release gpu index: {}", gpu_index);
+        super::release_gpu_device(gpu_index);
+    };
     std::env::set_var(
         crate::api::seal::SHENSUANYUN_GPU_INDEX,
         &gpu_index.to_string(),
@@ -261,6 +267,10 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     };
     let gpu_index = select_gpu_device()
         .with_context(|| format!("{:?}: cannot select gpu device", sector_id))?;
+    defer! {
+        info!("release gpu index: {}", gpu_index);
+        super::release_gpu_device(gpu_index);
+    };
     std::env::set_var(
         crate::api::seal::SHENSUANYUN_GPU_INDEX,
         &gpu_index.to_string(),
