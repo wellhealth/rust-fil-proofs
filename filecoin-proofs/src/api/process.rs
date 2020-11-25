@@ -83,7 +83,7 @@ where
     let uuid = get_uuid();
 
     let in_path = Path::new(&param_folder).join(&uuid);
-    let p2 = Path::new(program_folder).join("p2");
+    let p2 = Path::new(program_folder).join("lotus-p2");
     let out_path = Path::new(&param_folder).join(&uuid);
 
     let infile = OpenOptions::new()
@@ -261,7 +261,7 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     let out_path = Path::new(&param_folder).join(&uuid);
 
     let program_folder = &settings::SETTINGS.program_folder;
-    let c2_program_path = Path::new(program_folder).join("c2");
+    let c2_program_path = Path::new(program_folder).join("lotus-c2");
 
     let infile = OpenOptions::new()
         .write(true)
