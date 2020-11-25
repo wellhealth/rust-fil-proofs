@@ -8,7 +8,7 @@ use filecoin_proofs::types::PaddedBytesAmount;
 use filecoin_proofs::types::SectorSize;
 use filecoin_proofs::types::*;
 use filecoin_proofs::{
-    clear_cache, constants::DefaultOctLCTree, seal_commit_phase1, seal_commit_phase2,
+    clear_cache, constants::DefaultOctLCTree, seal_commit_phase1, official_c2,
     validate_cache_for_commit, PoRepConfig,
 };
 use log::info;
@@ -225,7 +225,7 @@ pub fn run(
                     &replica_info.private_replica_info.cache_dir_path(),
                 )?;
 
-                seal_commit_phase2(cfg, phase1_output, PROVER_ID, *sector_id)
+                official_c2(cfg, phase1_output, PROVER_ID, *sector_id)
             })
             .expect("failed to prove sector");
 

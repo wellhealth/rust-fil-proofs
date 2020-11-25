@@ -483,9 +483,17 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
 }
 
 use scopeguard::defer;
+ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
+     porep_config: PoRepConfig,
+     phase1_output: SealCommitPhase1Output<Tree>,
+     prover_id: ProverId,
+     sector_id: SectorId,
+ ) -> Result<SealCommitOutput> {
+	 super::process::c2(porep_config, phase1_output, prover_id, sector_id)
+ }
 
 #[allow(clippy::too_many_arguments)]
-pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
+pub fn official_c2<Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     phase1_output: SealCommitPhase1Output<Tree>,
     prover_id: ProverId,

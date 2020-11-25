@@ -87,10 +87,13 @@ where
         .open(&in_path)
         .with_context(|| format!("cannot open file to pass p2 parameter"))?;
 
-	info!("{:?}: writing parameter to file: {:?}", replica_path, in_path);
+    info!(
+        "{:?}: writing parameter to file: {:?}",
+        replica_path, in_path
+    );
     serde_json::to_writer(infile, &data).with_context(|| format!("cannot sealize to infile"))?;
 
-	info!("start p2 with program: {:?}", p2);
+    info!("start p2 with program: {:?}", p2);
     let mut p2_process = process::Command::new(&p2)
         .arg(&uuid)
         .arg(u64::from(porep_config.sector_size).to_string())
@@ -255,15 +258,23 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         .truncate(true)
         .create(true)
         .open(&in_path)
-        .with_context(|| format!("cannot open file to pass c2 parameter"))?;
+        .with_context(|| format!("{:?}: cannot open file to pass in c2 parameter", sector_id))?;
 
-    serde_json::to_writer(infile, &data).with_context(|| format!("cannot sealize to infile"))?;
+    info!("{:?}: writing parameter to file: {:?}", sector_id, in_path);
+    serde_json::to_writer(infile, &data)
+        .with_context(|| format!("{:?}: cannot sealize to infile", sector_id))?;
 
+    info!("start c2 with program: {:?}", c2_program_path);
     let mut c2_process = process::Command::new(&c2_program_path)
         .arg(&uuid)
         .arg(u64::from(porep_config.sector_size).to_string())
         .spawn()
-        .with_context(|| format!("{:?}, cannot start {:?} ", sector_id, c2_program_path))?;
+        .with_context(|| {
+            format!(
+                "{:?}, cannot start program {:?} ",
+                sector_id, c2_program_path
+            )
+        })?;
 
     let status = c2_process.wait().expect("c2 is not running");
     match status.code() {
@@ -306,7 +317,7 @@ pub fn c2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
         sector_id,
     } = data;
 
-    let out = super::seal_commit_phase2(porep_config, phase1_output, prover_id, sector_id)?;
+    let out = super::official_c2(porep_config, phase1_output, prover_id, sector_id)?;
 
     let mut out_file = OpenOptions::new()
         .write(true)

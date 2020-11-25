@@ -19,7 +19,7 @@ use filecoin_proofs::types::{
 };
 use filecoin_proofs::{
     add_piece, generate_piece_commitment, generate_window_post, seal_commit_phase1,
-    seal_commit_phase2, seal_pre_commit_phase1, official_p2, validate_cache_for_commit,
+    official_c2, seal_pre_commit_phase1, official_p2, validate_cache_for_commit,
     validate_cache_for_precommit_phase2, verify_window_post, with_shape, PoStType,
     PrivateReplicaInfo, PublicReplicaInfo,
 };
@@ -481,7 +481,7 @@ pub fn run_window_post_bench<Tree: 'static + MerkleTreeTrait>(
         };
 
         let seal_commit_phase2_measurement = measure(|| {
-            seal_commit_phase2::<Tree>(porep_config, commit_phase1_output, PROVER_ID, sector_id)
+            official_c2::<Tree>(porep_config, commit_phase1_output, PROVER_ID, sector_id)
         })
         .expect("failed in seal_commit_phase2");
 

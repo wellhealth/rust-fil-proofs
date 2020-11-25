@@ -775,7 +775,7 @@ fn proof_and_unseal<Tree: 'static + MerkleTreeTrait>(
 
     clear_cache::<Tree>(cache_dir_path)?;
 
-    let commit_output = seal_commit_phase2(config, phase1_output, prover_id, sector_id)?;
+    let commit_output = official_c2(config, phase1_output, prover_id, sector_id)?;
 
     let _ = unseal_range::<_, _, _, Tree>(
         config,
