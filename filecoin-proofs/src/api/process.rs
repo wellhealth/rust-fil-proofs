@@ -291,12 +291,8 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         }
     }
 
-    let mut proof = vec![];
-    let mut outfile = File::open(out_path)
+    let proof = std::fs::read(out_path)
         .with_context(|| format!("{:?}, cannot open c2 output file for reuslt", sector_id))?;
-    outfile
-        .read_to_end(&mut proof)
-        .with_context(|| format!("{:?}, cannot read from c2 output file", sector_id))?;
     Ok(SealCommitOutput { proof })
 }
 
@@ -319,16 +315,7 @@ pub fn c2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
 
     let out = super::official_c2(porep_config, phase1_output, prover_id, sector_id)?;
 
-    let mut out_file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(out_path)
-        .with_context(|| format!("{:?}: cannot open output file", sector_id))?;
-
-    out_file
-        .write_all(&out.proof)
-        .with_context(|| format!("{:?}: cannot write to output file", sector_id))?;
+    std::fs::write(out_path, &out.proof);
 
     Ok(())
 }
