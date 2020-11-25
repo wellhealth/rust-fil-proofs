@@ -191,7 +191,7 @@ pub fn p2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
         replica_path,
     } = data;
 
-    let out = super::seal_pre_commit_phase2(
+    let out = super::official_p2(
         porep_config,
         phase1_output,
         cache_path,

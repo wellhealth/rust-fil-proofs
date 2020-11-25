@@ -296,7 +296,7 @@ fn run_resumable_seal<Tree: 'static + MerkleTreeTrait>(
             "recreated layers don't match original ones"
         );
     } else {
-        let pre_commit_output = seal_pre_commit_phase2(
+        let pre_commit_output = official_p2(
             config,
             phase1_output,
             cache_dir.path(),
@@ -849,7 +849,7 @@ fn create_seal<R: Rng, Tree: 'static + MerkleTreeTrait>(
         &sealed_sector_file,
     )?;
 
-    let pre_commit_output = seal_pre_commit_phase2(
+    let pre_commit_output = official_p2(
         config,
         phase1_output,
         cache_dir.path(),

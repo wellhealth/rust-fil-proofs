@@ -10,7 +10,7 @@ use filecoin_proofs::types::{
     MerkleTreeTrait, PaddedBytesAmount, PoRepConfig, SectorSize, UnpaddedBytesAmount,
 };
 use filecoin_proofs::{
-    add_piece, seal_pre_commit_phase1, seal_pre_commit_phase2, validate_cache_for_precommit_phase2,
+    add_piece, seal_pre_commit_phase1, official_p2, validate_cache_for_precommit_phase2,
     PieceInfo, PoRepProofPartitions, PrivateReplicaInfo, PublicReplicaInfo, SealPreCommitOutput,
 };
 use storage_proofs::sector::SectorId;
@@ -197,7 +197,7 @@ pub fn create_replicas<Tree: 'static + MerkleTreeTrait>(
                     &sealed_files[i],
                     &phase1,
                 )?;
-                seal_pre_commit_phase2(porep_config, phase1, &cache_dirs[i], &sealed_files[i])
+                official_p2(porep_config, phase1, &cache_dirs[i], &sealed_files[i])
             })
             .collect::<Result<Vec<_>, _>>()
     })

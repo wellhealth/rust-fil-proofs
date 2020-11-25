@@ -1,16 +1,16 @@
 use std::fs::{self, metadata, File, OpenOptions};
 use std::io::prelude::*;
 use std::marker::PhantomData;
-use std::path::{Path, PathBuf};
 use std::panic::AssertUnwindSafe;
+use std::path::{Path, PathBuf};
 
-use std::sync::Mutex;
 use anyhow::{ensure, Context, Result};
 use bellperson::bls::Fr;
 use bincode::{deserialize, serialize};
 use log::{info, trace};
 use memmap::MmapOptions;
 use merkletree::store::{DiskStore, Store, StoreConfig};
+use std::sync::Mutex;
 use storage_proofs::cache_key::CacheKey;
 use storage_proofs::compound_proof::{self, CompoundProof};
 use storage_proofs::drgraph::Graph;
@@ -192,8 +192,17 @@ where
     Ok(out)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase2<R, S, Tree: 'static + MerkleTreeTrait>(
+    porep_config: PoRepConfig,
+    phase1_output: SealPreCommitPhase1Output<Tree>,
+    cache_path: S,
+    replica_path: R,
+) -> Result<SealPreCommitOutput> {
+    super::process::p2(porep_config, phase1_output, cache_path, replica_path)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn official_p2<R, S, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     phase1_output: SealPreCommitPhase1Output<Tree>,
     cache_path: S,
@@ -294,10 +303,10 @@ where
     }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-		std::panic::set_hook(Box::new(|_|{
-			let bt = backtrace::Backtrace::new();
-			info!("panic occured, backtrace: {:?}", bt);
-		}));
+        std::panic::set_hook(Box::new(|_| {
+            let bt = backtrace::Backtrace::new();
+            info!("panic occured, backtrace: {:?}", bt);
+        }));
         StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
             &compound_public_params.vanilla_params,
             labels,
@@ -492,7 +501,6 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
     }
 
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-
         let SealCommitPhase1Output {
             vanilla_proofs,
             comm_d,
@@ -535,10 +543,11 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
             priority: false,
         };
 
-        let compound_public_params = <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
-            StackedDrg<Tree, DefaultPieceHasher>,
-            _,
-        >>::setup(&compound_setup_params)?;
+        let compound_public_params =
+            <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
+                StackedDrg<Tree, DefaultPieceHasher>,
+                _,
+            >>::setup(&compound_setup_params)?;
 
         info!("snark_proof:start");
         let groth_proofs = StackedCompound::<Tree, DefaultPieceHasher>::circuit_proofs(
@@ -1263,8 +1272,7 @@ pub fn select_gpu_device() -> usize {
     let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
     unsafe {
         if N == 0 {
-
-            for i in 0..bellperson::gpu::gpu_count(){
+            for i in 0..bellperson::gpu::gpu_count() {
                 queue.push(i)
             }
 
