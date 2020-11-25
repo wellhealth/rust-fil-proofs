@@ -56,8 +56,8 @@ impl Default for Settings {
             multicore_sdr_producers: 3,
             multicore_sdr_producer_stride: 128,
             multicore_sdr_lookahead: 800,
-            param_folder: Default::default(),
-            program_folder: Default::default(),
+            param_folder: ".".to_owned(),
+            program_folder: ".".to_owned(),
         }
     }
 }
