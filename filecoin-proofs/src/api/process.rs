@@ -53,6 +53,10 @@ fn get_uuid() -> String {
     uuid.to_owned()
 }
 
+fn get_param_folder() -> Option<PathBuf> {
+    Some(Path::new(&std::env::var("WORKER_PATH").ok()?).join("param"))
+}
+
 pub fn p2<R, S, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     phase1_output: SealPreCommitPhase1Output<Tree>,
@@ -65,8 +69,8 @@ where
 {
     let cache_path = cache_path.as_ref().to_owned();
     let replica_path = replica_path.as_ref().to_owned();
-    let param_folder = &settings::SETTINGS.param_folder;
-    std::fs::create_dir_all(param_folder)
+    let param_folder = get_param_folder().context("cannot get param folder")?;
+    std::fs::create_dir_all(&param_folder)
         .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
     let program_folder = &settings::SETTINGS.program_folder;
 
@@ -78,9 +82,9 @@ where
     };
     let uuid = get_uuid();
 
-    let in_path = Path::new(param_folder).join(&uuid);
+    let in_path = Path::new(&param_folder).join(&uuid);
     let p2 = Path::new(program_folder).join("p2");
-    let out_path = Path::new(param_folder).join(&uuid);
+    let out_path = Path::new(&param_folder).join(&uuid);
 
     let infile = OpenOptions::new()
         .write(true)
@@ -184,9 +188,9 @@ pub fn p2_sub_launcher() -> Result<()> {
 }
 
 pub fn p2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
-    let param_folder = &settings::SETTINGS.param_folder;
-    let in_path = Path::new(param_folder).join(uuid);
-    let out_path = Path::new(param_folder).join(uuid);
+    let param_folder = get_param_folder().context("cannot get param folder")?;
+    let in_path = Path::new(&param_folder).join(uuid);
+    let out_path = Path::new(&param_folder).join(uuid);
 
     let infile = File::open(&in_path).with_context(|| format!("cannot open file {:?}", in_path))?;
 
@@ -250,11 +254,11 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
 
     let uuid = get_uuid();
 
-    let param_folder = &settings::SETTINGS.param_folder;
-    std::fs::create_dir_all(param_folder)
+    let param_folder = get_param_folder().context("cannot get param folder")?;
+    std::fs::create_dir_all(&param_folder)
         .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
-    let in_path = Path::new(param_folder).join(&uuid);
-    let out_path = Path::new(param_folder).join(&uuid);
+    let in_path = Path::new(&param_folder).join(&uuid);
+    let out_path = Path::new(&param_folder).join(&uuid);
 
     let program_folder = &settings::SETTINGS.program_folder;
     let c2_program_path = Path::new(program_folder).join("c2");
@@ -305,9 +309,9 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
 }
 
 pub fn c2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
-    let param_folder = &settings::SETTINGS.param_folder;
-    let in_path = Path::new(param_folder).join(&uuid);
-    let out_path = Path::new(param_folder).join(&uuid);
+    let param_folder = get_param_folder().context("cannot get param_folder")?;
+    let in_path = Path::new(&param_folder).join(&uuid);
+    let out_path = Path::new(&param_folder).join(&uuid);
 
     let infile = File::open(&in_path).with_context(|| format!("cannot open file {:?}", in_path))?;
 
