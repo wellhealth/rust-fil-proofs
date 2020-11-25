@@ -66,6 +66,8 @@ where
     let cache_path = cache_path.as_ref().to_owned();
     let replica_path = replica_path.as_ref().to_owned();
     let param_folder = &settings::SETTINGS.param_folder;
+    std::fs::create_dir_all(param_folder)
+        .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
     let program_folder = &settings::SETTINGS.program_folder;
 
     let data = P2Param {
@@ -128,8 +130,8 @@ where
         .read_exact(&mut comm_d)
         .with_context(|| format!("{:?}, cannot read file to get comm_d", replica_path))?;
 
-	drop(&output);
-	let _ = std::fs::remove_file(out_path);
+    drop(&output);
+    let _ = std::fs::remove_file(out_path);
     Ok(SealPreCommitOutput { comm_r, comm_d })
 }
 
@@ -249,6 +251,8 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     let uuid = get_uuid();
 
     let param_folder = &settings::SETTINGS.param_folder;
+    std::fs::create_dir_all(param_folder)
+        .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
     let in_path = Path::new(param_folder).join(&uuid);
     let out_path = Path::new(param_folder).join(&uuid);
 
@@ -296,7 +300,7 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     let proof = std::fs::read(&out_path)
         .with_context(|| format!("{:?}, cannot open c2 output file for reuslt", sector_id))?;
 
-	let _ = std::fs::remove_file(out_path);
+    let _ = std::fs::remove_file(out_path);
     Ok(SealCommitOutput { proof })
 }
 
