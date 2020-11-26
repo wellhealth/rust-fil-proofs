@@ -1257,12 +1257,19 @@ lazy_static::lazy_static! {
 }
 
 pub fn select_gpu_device() -> Option<usize> {
-    GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap().pop_front()
+    if bellperson::gpu::gpu_count() == 0{
+        Some(0)
+    }
+    else{
+        GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap().pop_front()
+    }
 }
 
 pub fn release_gpu_device(gpu_index: usize) {
-    GPU_NVIDIA_DEVICES_QUEUE
-        .lock()
-        .unwrap()
-        .push_back(gpu_index)
+    if bellperson::gpu::gpu_count() > 0 {
+        GPU_NVIDIA_DEVICES_QUEUE
+            .lock()
+            .unwrap()
+            .push_back(gpu_index)
+    }
 }

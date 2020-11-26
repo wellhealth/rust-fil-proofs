@@ -4,7 +4,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Once;
 use log::{info};
-use anyhow::Result;
+use anyhow::{Result, Context};
 use bellperson::bls::Fr;
 use ff::Field;
 use rand::{Rng, SeedableRng};
@@ -651,7 +651,7 @@ fn window_post<Tree: 'static + MerkleTreeTrait>(
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
 
-    let gpu_index = select_gpu_device();
+    let gpu_index = select_gpu_device().context("cannot get gpu index")?;
 
     info!("select gpu index: {}", gpu_index);
 
