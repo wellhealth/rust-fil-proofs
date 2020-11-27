@@ -37,7 +37,7 @@ pub fn custom_tree_c_gpu<ColumnArity, TreeArity, Tree>(
     tree_count: usize,
     configs: Vec<StoreConfig>,
     labels: &[(PathBuf, String)],
-    gpu_index:usize,
+    gpu_index: usize,
 ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
 where
     ColumnArity: 'static + PoseidonArity,
@@ -72,12 +72,7 @@ where
     let configs = &configs;
     let replica_path = &replica_path;
 
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(64)
-        .build()
-        .unwrap();
-
-    let (r1, r2) = pool.install(|| {
+    let (r1, r2) = {
         rayon::join(
             move || {
                 create_batch_gpu::<ColumnArity, Tree>(
@@ -101,7 +96,7 @@ where
                 )
             },
         )
-    });
+    };
 
     match (r1, r2) {
         (Ok(_), Ok(_)) => {}
@@ -168,21 +163,7 @@ where
 
     let (tx, rx) = mpsc::sync_channel(sync_size);
     let (r1, r2) = rayon::join(
-        || {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(11)
-                .build()
-                .unwrap()
-                .install(|| {
-                    read_column_batch_from_file::<Tree>(
-                        files,
-                        nodes_count,
-                        batch_size,
-                        tx,
-                        replica_path,
-                    )
-                })
-        },
+        || read_column_batch_from_file::<Tree>(files, nodes_count, batch_size, tx, replica_path),
         || {
             create_column_in_memory::<ColumnArity>(
                 rx,
@@ -302,7 +283,7 @@ fn receive_and_generate_tree_c<ColumnArity, TreeArity, P>(
     max_gpu_tree_batch_size: usize,
     max_gpu_column_batch_size: usize,
     replica_path: P,
-    gpu_index:usize,
+    gpu_index: usize,
 ) -> Result<()>
 where
     ColumnArity: 'static + PoseidonArity,
