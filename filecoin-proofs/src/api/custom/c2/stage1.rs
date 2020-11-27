@@ -1,9 +1,12 @@
 use bellperson::bls::Bls12;
 use bellperson::bls::Fr;
 use bellperson::gadgets::num;
+use bellperson::gadgets::Assignment;
 use bellperson::groth16::ProvingAssignment;
 use bellperson::ConstraintSystem;
+use bellperson::Index;
 use bellperson::SynthesisError;
+use bellperson::Variable;
 use num::AllocatedNum;
 use storage_proofs::gadgets::constraint;
 use storage_proofs::hasher::HashFunction;
@@ -60,7 +63,7 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
     })?;
 
     // make comm_r a public input
-    comm_r_num.inputize(cs.namespace(|| "comm_r_input"))?;
+    num_inputize(&comm_r_num, cs)?;
 
     // Allocate comm_r_last as Fr
     let comm_r_last_num = num_alloc(cs, || {
@@ -93,9 +96,9 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
         );
     }
 
-    for (i, proof) in proofs.into_iter().enumerate() {
+    for proof in proofs.into_iter() {
         proof.synthesize(
-            &mut cs.namespace(|| format!("challenge_{}", i)),
+            cs.namespace(|| ""),
             public_params.layer_challenges.layers(),
             &comm_d_num,
             &comm_c_num,
@@ -115,7 +118,8 @@ where
     F: FnOnce() -> Result<Fr, SynthesisError>,
 {
     let mut new_value = None;
-    let var = cs.alloc(
+    let var = cs_alloc(
+        cs,
         || "num",
         || {
             let tmp = value()?;
@@ -130,4 +134,39 @@ where
         value: new_value,
         variable: var,
     })
+}
+
+fn cs_alloc<F, A, AR>(
+    x: &mut ProvingAssignment<Bls12>,
+    _: A,
+    f: F,
+) -> Result<Variable, SynthesisError>
+where
+    F: FnOnce() -> Result<Fr, SynthesisError>,
+    A: FnOnce() -> AR,
+    AR: Into<String>,
+{
+    x.aux_assignment.push(f()?);
+    x.a_aux_density.add_element();
+    x.b_aux_density.add_element();
+
+    Ok(Variable(Index::Aux(x.aux_assignment.len() - 1)))
+}
+
+pub fn num_inputize(
+    num: &AllocatedNum<Bls12>,
+    cs: &mut ProvingAssignment<Bls12>,
+) -> Result<(), SynthesisError>
+where
+{
+    let input = cs.alloc_input(|| "input variable", || Ok(*num.value.get()?))?;
+
+    cs.enforce(
+        || "enforce input is correct",
+        |lc| lc + input,
+        |lc| lc + <ProvingAssignment<Bls12> as ConstraintSystem<Bls12>>::one(),
+        |lc| lc + num.variable,
+    );
+
+    Ok(())
 }
