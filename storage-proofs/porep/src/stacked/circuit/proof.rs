@@ -29,15 +29,15 @@ use crate::stacked::StackedDrg;
 /// * `params` - parameters for the curve
 ///
 pub struct StackedCircuit<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> {
-    public_params: <StackedDrg<'a, Tree, G> as ProofScheme<'a>>::PublicParams,
-    replica_id: Option<<Tree::Hasher as Hasher>::Domain>,
-    comm_d: Option<G::Domain>,
-    comm_r: Option<<Tree::Hasher as Hasher>::Domain>,
-    comm_r_last: Option<<Tree::Hasher as Hasher>::Domain>,
-    comm_c: Option<<Tree::Hasher as Hasher>::Domain>,
+    pub public_params: <StackedDrg<'a, Tree, G> as ProofScheme<'a>>::PublicParams,
+    pub replica_id: Option<<Tree::Hasher as Hasher>::Domain>,
+    pub comm_d: Option<G::Domain>,
+    pub comm_r: Option<<Tree::Hasher as Hasher>::Domain>,
+    pub comm_r_last: Option<<Tree::Hasher as Hasher>::Domain>,
+    pub comm_c: Option<<Tree::Hasher as Hasher>::Domain>,
 
     // one proof per challenge
-    proofs: Vec<Proof<Tree, G>>,
+    pub proofs: Vec<Proof<Tree, G>>,
 }
 
 impl<'a, Tree: MerkleTreeTrait, G: Hasher> CircuitComponent for StackedCircuit<'a, Tree, G> {

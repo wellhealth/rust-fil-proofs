@@ -265,16 +265,6 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         prover_id,
         sector_id,
     };
-    let gpu_index = select_gpu_device()
-        .with_context(|| format!("{:?}: cannot select gpu device", sector_id))?;
-    defer! {
-        info!("release gpu index: {}", gpu_index);
-        super::release_gpu_device(gpu_index);
-    };
-    std::env::set_var(
-        crate::api::seal::SHENSUANYUN_GPU_INDEX,
-        &gpu_index.to_string(),
-    );
     let uuid = get_uuid();
 
     let param_folder = get_param_folder().context("cannot get param folder")?;
@@ -297,6 +287,16 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     serde_json::to_writer(infile, &data)
         .with_context(|| format!("{:?}: cannot sealize to infile", sector_id))?;
 
+    let gpu_index = select_gpu_device()
+        .with_context(|| format!("{:?}: cannot select gpu device", sector_id))?;
+    std::env::set_var(
+        crate::api::seal::SHENSUANYUN_GPU_INDEX,
+        &gpu_index.to_string(),
+    );
+    defer! {
+        info!("release gpu index: {}", gpu_index);
+        super::release_gpu_device(gpu_index);
+    };
     info!("start c2 with program: {:?}", c2_program_path);
     let mut c2_process = process::Command::new(&c2_program_path)
         .arg(&uuid)
