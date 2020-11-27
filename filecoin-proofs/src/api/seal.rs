@@ -1257,6 +1257,21 @@ lazy_static::lazy_static! {
 }
 
 pub fn select_gpu_device() -> Option<usize> {
+    /*
+    let key = "LOTUS_LOCAL_DEBUG";
+
+    match std::env::var(key) {
+         Ok(_val) => {
+             return Some(0);
+         },
+         Err(_e) => {},
+    }*/
+
+    /*    if let _val = std::env::var(key){
+        info!("-----------------------------------------LOTUS_LOCAL_DEBUG");
+        Some(0)
+    }*/
+
     if bellperson::gpu::gpu_count() == 0{
         Some(0)
     }
