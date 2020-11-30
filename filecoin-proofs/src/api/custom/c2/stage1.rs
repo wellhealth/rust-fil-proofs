@@ -25,7 +25,7 @@ use storage_proofs::porep::stacked::StackedCircuit;
 use storage_proofs::util::reverse_bit_numbering;
 
 pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
-    s: StackedCircuit<'static, Tree, DefaultPieceHasher>,
+    circuit: StackedCircuit<'static, Tree, DefaultPieceHasher>,
     cs: &mut ProvingAssignment<Bls12>,
 ) -> Result<(), SynthesisError> {
     let StackedCircuit {
@@ -37,7 +37,7 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
         comm_c,
         proofs,
         ..
-    } = s;
+    } = circuit;
 
     // Allocate replica_id
     let replica_id_num = num_alloc(cs, || {
@@ -180,7 +180,7 @@ where
 }
 
 pub fn proof_synthesize<Tree: 'static + MerkleTreeTrait>(
-    x: Proof<Tree, DefaultPieceHasher>,
+    proof: Proof<Tree, DefaultPieceHasher>,
     cs: &mut ProvingAssignment<Bls12>,
     layers: usize,
     comm_d: &num::AllocatedNum<Bls12>,
@@ -197,7 +197,7 @@ pub fn proof_synthesize<Tree: 'static + MerkleTreeTrait>(
         drg_parents_proofs,
         exp_parents_proofs,
         ..
-    } = x;
+    } = proof;
 
     assert!(!drg_parents_proofs.is_empty());
     assert!(!exp_parents_proofs.is_empty());
@@ -205,7 +205,7 @@ pub fn proof_synthesize<Tree: 'static + MerkleTreeTrait>(
     // -- verify initial data layer
 
     // PrivateInput: data_leaf
-    let data_leaf_num = num::AllocatedNum::alloc(cs.namespace(|| "data_leaf"), || {
+    let data_leaf_num = num_alloc(cs, || {
         data_leaf.ok_or_else(|| SynthesisError::AssignmentMissing)
     })?;
 

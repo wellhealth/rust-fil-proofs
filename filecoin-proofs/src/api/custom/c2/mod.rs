@@ -84,6 +84,17 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     let provers: Vec<ProvingAssignment<Bls12>> = c2_stage1(circuits)
         .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
 
+    for (index, item) in provers.iter().enumerate() {
+        let al = item.a.len();
+        let bl = item.b.len();
+        let cl = item.c.len();
+
+        info!(
+            "item: {}, a.len() -> {}, b.len() -> {}, c.len() -> {}",
+            index, al, bl, cl
+        );
+    }
+
     let proofs = stage2(provers, &params, r_s, s_s, gpu_index, sector_id)?;
 
     let groth_proofs = proofs
@@ -242,8 +253,7 @@ fn stage2(
     sector_id: SectorId,
 ) -> Result<Vec<Proof<Bls12>>> {
     let worker = Worker::new();
-    let input_len = provers[0].input_assignment.len();
-    let vk = params.get_vk(input_len)?;
+    let vk = &params.vk;
     let n = provers[0].a.len();
 
     // Make sure all circuits have the same input len.
@@ -573,11 +583,11 @@ fn stage2(
     info!("{:?}, done inputs", sector_id);
     drop(multiexp_kern);
     let proofs = h_s
-        .into_iter()
-        .zip(l_s.into_iter())
-        .zip(inputs.into_iter())
-        .zip(r_s.into_iter())
-        .zip(s_s.into_iter())
+        .into_par_iter()
+        .zip(l_s.into_par_iter())
+        .zip(inputs.into_par_iter())
+        .zip(r_s.into_par_iter())
+        .zip(s_s.into_par_iter())
         .map(
             |(
                 (((h, l), (a_inputs, a_aux, b_g1_inputs, b_g1_aux, b_g2_inputs, b_g2_aux)), r),
