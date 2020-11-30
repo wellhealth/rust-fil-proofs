@@ -436,7 +436,13 @@ pub fn generate_winning_post<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     //gpu_index:usize,
 ) -> Result<SnarkProof> {
-    let gpu_index = 0;
+    let gpu_index = super::select_gpu_device();
+
+    let gpu_index = match gpu_index {
+        Some(o) => o,
+        None =>   0,
+    };
+
     generate_winning_post_inner::<Tree>(post_config, randomness, replicas, prover_id, gpu_index)
 }
 
@@ -939,7 +945,12 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
 ) -> Result<SnarkProof> {
     //let gpu_index = 0;
 
-    let gpu_index = super::select_gpu_device().context("cannot get gpu index")?;
+    let gpu_index = super::select_gpu_device();
+
+    let gpu_index = match gpu_index {
+        Some(o) => o,
+        None =>   0,
+    };
 
     info!("select gpu index: {}", gpu_index);
 
