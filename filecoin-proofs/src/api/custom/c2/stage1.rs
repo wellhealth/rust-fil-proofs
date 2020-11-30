@@ -1,6 +1,10 @@
+use crate::types::stacked::circuit::params::enforce_inclusion;
+use crate::DefaultPieceHasher;
 use bellperson::bls::Bls12;
 use bellperson::bls::Fr;
+use bellperson::gadgets::boolean::Boolean;
 use bellperson::gadgets::num;
+use bellperson::gadgets::uint32;
 use bellperson::gadgets::Assignment;
 use bellperson::groth16::ProvingAssignment;
 use bellperson::ConstraintSystem;
@@ -9,13 +13,16 @@ use bellperson::SynthesisError;
 use bellperson::Variable;
 use num::AllocatedNum;
 use storage_proofs::gadgets::constraint;
+use storage_proofs::gadgets::encode::encode;
+use storage_proofs::gadgets::uint64;
 use storage_proofs::hasher::HashFunction;
 use storage_proofs::hasher::Hasher;
 use storage_proofs::merkle::MerkleTreeTrait;
+use storage_proofs::porep::stacked::circuit::hash::hash_single_column;
+use storage_proofs::porep::stacked::create_label_circuit as create_label;
+use storage_proofs::porep::stacked::params::Proof;
 use storage_proofs::porep::stacked::StackedCircuit;
 use storage_proofs::util::reverse_bit_numbering;
-
-use crate::DefaultPieceHasher;
 
 pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
     s: StackedCircuit<'static, Tree, DefaultPieceHasher>,
@@ -40,7 +47,7 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
     })?;
 
     // make replica_id a public input
-    replica_id_num.inputize(cs.namespace(|| "replica_id_input"))?;
+    num_inputize(&replica_id_num, cs)?;
 
     let replica_id_bits =
         reverse_bit_numbering(replica_id_num.to_bits_le(cs.namespace(|| "replica_id_bits"))?);
@@ -53,7 +60,7 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
     })?;
 
     // make comm_d a public input
-    comm_d_num.inputize(cs.namespace(|| "comm_d_input"))?;
+    num_inputize(&comm_d_num, cs)?;
 
     // Allocate comm_r as Fr
     let comm_r_num = num_alloc(cs, || {
@@ -97,8 +104,9 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
     }
 
     for proof in proofs.into_iter() {
-        proof.synthesize(
-            cs.namespace(|| ""),
+        proof_synthesize(
+            proof,
+            cs,
             public_params.layer_challenges.layers(),
             &comm_d_num,
             &comm_c_num,
@@ -167,6 +175,187 @@ where
         |lc| lc + <ProvingAssignment<Bls12> as ConstraintSystem<Bls12>>::one(),
         |lc| lc + num.variable,
     );
+
+    Ok(())
+}
+
+pub fn proof_synthesize<Tree: 'static + MerkleTreeTrait>(
+    x: Proof<Tree, DefaultPieceHasher>,
+    cs: &mut ProvingAssignment<Bls12>,
+    layers: usize,
+    comm_d: &num::AllocatedNum<Bls12>,
+    comm_c: &num::AllocatedNum<Bls12>,
+    comm_r_last: &num::AllocatedNum<Bls12>,
+    replica_id: &[Boolean],
+) -> Result<(), SynthesisError> {
+    let Proof {
+        comm_d_path,
+        data_leaf,
+        challenge,
+        comm_r_last_path,
+        comm_c_path,
+        drg_parents_proofs,
+        exp_parents_proofs,
+        ..
+    } = x;
+
+    assert!(!drg_parents_proofs.is_empty());
+    assert!(!exp_parents_proofs.is_empty());
+
+    // -- verify initial data layer
+
+    // PrivateInput: data_leaf
+    let data_leaf_num = num::AllocatedNum::alloc(cs.namespace(|| "data_leaf"), || {
+        data_leaf.ok_or_else(|| SynthesisError::AssignmentMissing)
+    })?;
+
+    // enforce inclusion of the data leaf in the tree D
+    enforce_inclusion(
+        cs.namespace(|| "comm_d_inclusion"),
+        comm_d_path,
+        comm_d,
+        &data_leaf_num,
+    )?;
+
+    // -- verify replica column openings
+
+    // Private Inputs for the DRG parent nodes.
+    let mut drg_parents = Vec::with_capacity(layers);
+
+    for (i, parent) in drg_parents_proofs.into_iter().enumerate() {
+        let (parent_col, inclusion_path) =
+            parent.alloc(cs.namespace(|| format!("drg_parent_{}_num", i)))?;
+        assert_eq!(layers, parent_col.len());
+
+        // calculate column hash
+        let val = parent_col.hash(cs.namespace(|| format!("drg_parent_{}_constraint", i)))?;
+        // enforce inclusion of the column hash in the tree C
+        enforce_inclusion(
+            cs.namespace(|| format!("drg_parent_{}_inclusion", i)),
+            inclusion_path,
+            comm_c,
+            &val,
+        )?;
+        drg_parents.push(parent_col);
+    }
+
+    // Private Inputs for the Expander parent nodes.
+    let mut exp_parents = Vec::new();
+
+    for (i, parent) in exp_parents_proofs.into_iter().enumerate() {
+        let (parent_col, inclusion_path) =
+            parent.alloc(cs.namespace(|| format!("exp_parent_{}_num", i)))?;
+        assert_eq!(layers, parent_col.len());
+
+        // calculate column hash
+        let val = parent_col.hash(cs.namespace(|| format!("exp_parent_{}_constraint", i)))?;
+        // enforce inclusion of the column hash in the tree C
+        enforce_inclusion(
+            cs.namespace(|| format!("exp_parent_{}_inclusion", i)),
+            inclusion_path,
+            comm_c,
+            &val,
+        )?;
+        exp_parents.push(parent_col);
+    }
+
+    // -- Verify labeling and encoding
+
+    // stores the labels of the challenged column
+    let mut column_labels = Vec::new();
+
+    // PublicInput: challenge index
+    let challenge_num = uint64::UInt64::alloc(cs.namespace(|| "challenge"), challenge)?;
+    challenge_num.pack_into_input(cs.namespace(|| "challenge input"))?;
+
+    for layer in 1..=layers {
+        let layer_num = uint32::UInt32::constant(layer as u32);
+
+        let mut cs = cs.namespace(|| format!("labeling_{}", layer));
+
+        // Collect the parents
+        let mut parents = Vec::new();
+
+        // all layers have drg parents
+        for parent_col in &drg_parents {
+            let parent_val_num = parent_col.get_value(layer);
+            let parent_val_bits = reverse_bit_numbering(
+                parent_val_num
+                    .to_bits_le(cs.namespace(|| format!("drg_parent_{}_bits", parents.len())))?,
+            );
+            parents.push(parent_val_bits);
+        }
+
+        // the first layer does not contain expander parents
+        if layer > 1 {
+            for parent_col in &exp_parents {
+                // subtract 1 from the layer index, as the exp parents, are shifted by one, as they
+                // do not store a value for the first layer
+                let parent_val_num = parent_col.get_value(layer - 1);
+                let parent_val_bits =
+                    reverse_bit_numbering(parent_val_num.to_bits_le(
+                        cs.namespace(|| format!("exp_parent_{}_bits", parents.len())),
+                    )?);
+                parents.push(parent_val_bits);
+            }
+        }
+
+        // Duplicate parents, according to the hashing algorithm.
+        let mut expanded_parents = parents.clone();
+        if layer > 1 {
+            expanded_parents.extend_from_slice(&parents); // 28
+            expanded_parents.extend_from_slice(&parents[..9]); // 37
+        } else {
+            // layer 1 only has drg parents
+            expanded_parents.extend_from_slice(&parents); // 12
+            expanded_parents.extend_from_slice(&parents); // 18
+            expanded_parents.extend_from_slice(&parents); // 24
+            expanded_parents.extend_from_slice(&parents); // 30
+            expanded_parents.extend_from_slice(&parents); // 36
+            expanded_parents.push(parents[0].clone()); // 37
+        };
+
+        // Reconstruct the label
+        let label = create_label(
+            cs.namespace(|| "create_label"),
+            replica_id,
+            expanded_parents,
+            layer_num,
+            challenge_num.clone(),
+        )?;
+        column_labels.push(label);
+    }
+
+    // -- encoding node
+    {
+        // encode the node
+
+        // key is the last label
+        let key = &column_labels[column_labels.len() - 1];
+        let encoded_node = encode(cs.namespace(|| "encode_node"), key, &data_leaf_num)?;
+
+        // verify inclusion of the encoded node
+        enforce_inclusion(
+            cs.namespace(|| "comm_r_last_data_inclusion"),
+            comm_r_last_path,
+            comm_r_last,
+            &encoded_node,
+        )?;
+    }
+
+    // -- ensure the column hash of the labels is included
+    {
+        // calculate column_hash
+        let column_hash = hash_single_column(cs.namespace(|| "c_x_column_hash"), &column_labels)?;
+
+        // enforce inclusion of the column hash in the tree C
+        enforce_inclusion(
+            cs.namespace(|| "c_x_inclusion"),
+            comm_c_path,
+            comm_c,
+            &column_hash,
+        )?;
+    }
 
     Ok(())
 }

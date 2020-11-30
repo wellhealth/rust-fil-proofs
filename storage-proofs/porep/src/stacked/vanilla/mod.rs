@@ -9,7 +9,7 @@ mod cores;
 pub mod create_label;
 mod encoding_proof;
 mod graph;
-pub(crate) mod hash;
+pub mod hash;
 mod labeling_proof;
 mod memory_handling;
 mod params;

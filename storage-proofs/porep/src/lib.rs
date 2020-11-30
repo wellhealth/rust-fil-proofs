@@ -6,7 +6,7 @@
 pub mod drg;
 pub mod stacked;
 
-mod encode;
+pub mod encode;
 
 use std::path::PathBuf;
 

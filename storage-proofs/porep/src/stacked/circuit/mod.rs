@@ -1,8 +1,8 @@
 mod column;
 mod column_proof;
 mod create_label;
-mod hash;
-mod params;
+pub mod hash;
+pub mod params;
 mod proof;
 
 pub use self::create_label::*;

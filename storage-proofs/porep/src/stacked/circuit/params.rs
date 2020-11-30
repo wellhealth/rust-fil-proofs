@@ -290,7 +290,7 @@ where
 }
 
 /// Enforce the inclusion of the given path, to the given leaf and the root.
-fn enforce_inclusion<H, U, V, W, CS: ConstraintSystem<Bls12>>(
+pub fn enforce_inclusion<H, U, V, W, CS: ConstraintSystem<Bls12>>(
     cs: CS,
     path: AuthPath<H, U, V, W>,
     root: &num::AllocatedNum<Bls12>,

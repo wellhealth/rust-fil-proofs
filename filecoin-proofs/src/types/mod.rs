@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use storage_proofs::hasher::Hasher;
-use storage_proofs::porep::stacked;
+pub use storage_proofs::porep::stacked;
 use storage_proofs::post::fallback::*;
 use storage_proofs::sector::*;
 
