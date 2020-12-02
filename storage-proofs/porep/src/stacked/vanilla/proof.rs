@@ -783,7 +783,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                             nodes_count,
                             max_gpu_tree_batch_size,
                             tree_r_last_config.rows_to_discard,
-                            gpu_index
+                            gpu_index,
                         )
                         .expect("failed to create TreeBuilder");
 
@@ -909,7 +909,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         data_tree: Option<BinaryMerkleTree<G>>,
         config: StoreConfig,
         replica_path: PathBuf,
-        gpu_index:usize,
+        gpu_index: usize,
     ) -> Result<TransformedLayers<Tree, G>> {
         // Generate key layers.
         let labels = measure_op(EncodeWindowTimeAll, || {
@@ -939,7 +939,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         config: StoreConfig,
         replica_path: PathBuf,
         label_configs: Labels<Tree>,
-        gpu_index:usize,
+        gpu_index: usize,
     ) -> Result<TransformedLayers<Tree, G>> {
         trace!("transform_and_replicate_layers");
         let nodes_count = graph.size();
@@ -1096,7 +1096,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         tree_r_last_config.clone(),
                         replica_path.clone(),
                         &labels,
-                        gpu_index
+                        gpu_index,
                     )
                     .context("failed to generate tree_r_last")
                 });
@@ -1161,7 +1161,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         data_tree: BinaryMerkleTree<G>,
         config: StoreConfig,
         replica_path: PathBuf,
-        gpu_index:usize,
+        gpu_index: usize,
     ) -> Result<(
         <Self as PoRep<'a, Tree::Hasher, G>>::Tau,
         <Self as PoRep<'a, Tree::Hasher, G>>::ProverAux,
@@ -1190,7 +1190,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         tree_count: usize,
         tree_r_last_config: StoreConfig,
         replica_path: PathBuf,
-        gpu_index:usize
+        gpu_index: usize,
     ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         TreeArity: PoseidonArity,
@@ -1211,7 +1211,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 nodes_count,
                 max_gpu_tree_batch_size,
                 tree_r_last_config.rows_to_discard,
-                gpu_index
+                gpu_index,
             )
             .expect("failed to create TreeBuilder");
 
@@ -1302,7 +1302,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         replica_path: R,
         cache_path: S,
         sector_size: usize,
-        gpu_index:usize
+        gpu_index: usize,
     ) -> Result<(
         <Tree::Hasher as Hasher>::Domain,
         PersistentAux<<Tree::Hasher as Hasher>::Domain>,
@@ -1818,7 +1818,7 @@ mod tests {
             None,
             config,
             replica_path.clone(),
-            0
+            0,
         )
         .expect("replication failed");
 
