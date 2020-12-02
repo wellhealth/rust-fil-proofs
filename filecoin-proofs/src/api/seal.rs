@@ -303,7 +303,7 @@ where
     //select gpu index
 
     let gpu_index = std::env::var(SHENSUANYUN_GPU_INDEX)
-        .with_context(|| format!("{:?}: cannot get gpu index from env", replica_path.as_ref()))?
+        .unwrap_or_else(|_|"0".to_string())
         .parse()
         .with_context(|| format!("{:?}: wrong gpu index", replica_path.as_ref(),))?;
 
@@ -512,7 +512,7 @@ pub fn official_c2<Tree: 'static + MerkleTreeTrait>(
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
     let gpu_index = std::env::var(SHENSUANYUN_GPU_INDEX)
-        .with_context(|| format!("{:?}: cannot get gpu index from env", sector_id))?
+        .unwrap_or_else(|_| "0".to_string())
         .parse()
         .with_context(|| format!("{:?}: wrong gpu index", sector_id))?;
     log::info!("select gpu index: {}", gpu_index);
