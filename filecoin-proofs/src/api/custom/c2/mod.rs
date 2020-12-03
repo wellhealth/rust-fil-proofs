@@ -84,17 +84,6 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     let provers: Vec<ProvingAssignment<Bls12>> = c2_stage1(circuits)
         .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
 
-    for (index, item) in provers.iter().enumerate() {
-        let al = item.a.len();
-        let bl = item.b.len();
-        let cl = item.c.len();
-
-        info!(
-            "item: {}, a.len() -> {}, b.len() -> {}, c.len() -> {}",
-            index, al, bl, cl
-        );
-    }
-
     let proofs = stage2(provers, &params, r_s, s_s, gpu_index, sector_id)?;
 
     let groth_proofs = proofs
