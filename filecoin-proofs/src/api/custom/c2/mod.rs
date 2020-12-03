@@ -66,7 +66,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     sector_id: SectorId,
 ) -> Result<SealCommitOutput> {
     let gpu_index =
-        super::get_gpu_index().with_context(|| format!("{:?}: cannot get gpu index", sector_id))?;
+        super::get_gpu_index().unwrap_or(0);
 
     let mut rng = OsRng;
     let C2PreparationData {
