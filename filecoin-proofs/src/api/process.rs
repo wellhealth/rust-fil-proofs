@@ -178,6 +178,7 @@ pub fn c2_sub_launcher() -> Result<()> {
 }
 
 pub fn p2_sub_launcher() -> Result<()> {
+	info!("started p2_sub_launcher");
     let mut args = std::env::args().skip(1).take(2);
     let uuid = args.next().context("cannot get uuid parameter")?;
     let shape = args
@@ -186,6 +187,7 @@ pub fn p2_sub_launcher() -> Result<()> {
         .parse()
         .context("cannot parse shape")?;
 
+	info!("got uuid and shape from parent process");
     match shape {
         SECTOR_SIZE_2_KIB => p2_sub::<SectorShape2KiB>(&uuid),
         SECTOR_SIZE_4_KIB => p2_sub::<SectorShape4KiB>(&uuid),
@@ -202,14 +204,18 @@ pub fn p2_sub_launcher() -> Result<()> {
 }
 
 pub fn p2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
+	info!("started p2_sub");
     let param_folder = get_param_folder().context("cannot get param folder")?;
     let in_path = Path::new(&param_folder).join(uuid);
     let out_path = Path::new(&param_folder).join(uuid);
 
+	info!("path calculated");
     let infile = File::open(&in_path).with_context(|| format!("cannot open file {:?}", in_path))?;
+	info!("infile opened");
 
     let data = serde_json::from_reader::<_, P2Param<Tree>>(infile)
         .context("failed to deserialize p2 params")?;
+	info!("read data from {:?}", in_path);
 
     let P2Param {
         porep_config,
