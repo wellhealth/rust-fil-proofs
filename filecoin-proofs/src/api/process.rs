@@ -121,6 +121,9 @@ where
         .with_context(|| format!("{:?}, cannot start {:?} ", replica_path, p2))?;
 
     let status = p2_process.wait().expect("p2 is not running");
+    defer!({
+        let _ = std::fs::remove_file(&out_path);
+    });
     match status.code() {
         Some(0) => {
             info!("{:?} p2 finished", replica_path);
@@ -149,7 +152,6 @@ where
         .with_context(|| format!("{:?}, cannot read file to get comm_d", replica_path))?;
 
     drop(&output);
-    let _ = std::fs::remove_file(out_path);
     Ok(SealPreCommitOutput { comm_r, comm_d })
 }
 
@@ -178,7 +180,7 @@ pub fn c2_sub_launcher() -> Result<()> {
 }
 
 pub fn p2_sub_launcher() -> Result<()> {
-	info!("started p2_sub_launcher");
+    info!("started p2_sub_launcher");
     let mut args = std::env::args().skip(1).take(2);
     let uuid = args.next().context("cannot get uuid parameter")?;
     let shape = args
@@ -187,7 +189,7 @@ pub fn p2_sub_launcher() -> Result<()> {
         .parse()
         .context("cannot parse shape")?;
 
-	info!("got uuid and shape from parent process");
+    info!("got uuid and shape from parent process");
     match shape {
         SECTOR_SIZE_2_KIB => p2_sub::<SectorShape2KiB>(&uuid),
         SECTOR_SIZE_4_KIB => p2_sub::<SectorShape4KiB>(&uuid),
@@ -204,18 +206,18 @@ pub fn p2_sub_launcher() -> Result<()> {
 }
 
 pub fn p2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
-	info!("started p2_sub");
+    info!("started p2_sub");
     let param_folder = get_param_folder().context("cannot get param folder")?;
     let in_path = Path::new(&param_folder).join(uuid);
     let out_path = Path::new(&param_folder).join(uuid);
 
-	info!("path calculated");
+    info!("path calculated");
     let infile = File::open(&in_path).with_context(|| format!("cannot open file {:?}", in_path))?;
-	info!("infile opened");
+    info!("infile opened");
 
     let data = serde_json::from_reader::<_, P2Param<Tree>>(infile)
         .context("failed to deserialize p2 params")?;
-	info!("read data from {:?}", in_path);
+    info!("read data from {:?}", in_path);
 
     let P2Param {
         porep_config,
@@ -265,7 +267,6 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     sector_id: SectorId,
 ) -> Result<SealCommitOutput> {
-
     let data = C2Param {
         porep_config,
         phase1_output,
@@ -304,7 +305,10 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         info!("release gpu index: {}", gpu_index);
         super::release_gpu_device(gpu_index);
     };
-    info!("{:?}: start c2 with program: {:?}", sector_id, c2_program_path);
+    info!(
+        "{:?}: start c2 with program: {:?}",
+        sector_id, c2_program_path
+    );
     let mut c2_process = process::Command::new(&c2_program_path)
         .arg(&uuid)
         .arg(u64::from(porep_config.sector_size).to_string())
@@ -317,6 +321,11 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         })?;
 
     let status = c2_process.wait().expect("c2 is not running");
+
+    defer!({
+        let _ = std::fs::remove_file(&out_path);
+    });
+
     match status.code() {
         Some(0) => {
             info!("{:?} c2 finished", sector_id);
@@ -334,7 +343,6 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     let proof = std::fs::read(&out_path)
         .with_context(|| format!("{:?}, cannot open c2 output file for reuslt", sector_id))?;
 
-    let _ = std::fs::remove_file(out_path);
     Ok(SealCommitOutput { proof })
 }
 
