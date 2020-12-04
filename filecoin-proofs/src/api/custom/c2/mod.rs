@@ -65,8 +65,8 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     sector_id: SectorId,
 ) -> Result<SealCommitOutput> {
-    let gpu_index =
-        super::get_gpu_index().unwrap_or(0);
+    info!("{:?}: c2 procedure started", sector_id);
+    let gpu_index = super::get_gpu_index().unwrap_or(0);
 
     let mut rng = OsRng;
     let C2PreparationData {
@@ -77,6 +77,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
         comm_d,
         seed,
     } = init(porep_config, phase1_output, sector_id)?;
+    info!("{:?}: c2 initialized", sector_id);
 
     let r_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
     let s_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
@@ -84,6 +85,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     let provers: Vec<ProvingAssignment<Bls12>> = c2_stage1(circuits)
         .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
 
+    info!("{:?}: c2 stage1 finished", sector_id);
     let proofs = stage2(provers, &params, r_s, s_s, gpu_index, sector_id)?;
 
     let groth_proofs = proofs

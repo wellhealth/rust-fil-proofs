@@ -259,6 +259,7 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     sector_id: SectorId,
 ) -> Result<SealCommitOutput> {
+
     let data = C2Param {
         porep_config,
         phase1_output,
@@ -297,7 +298,7 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         info!("release gpu index: {}", gpu_index);
         super::release_gpu_device(gpu_index);
     };
-    info!("start c2 with program: {:?}", c2_program_path);
+    info!("{:?}: start c2 with program: {:?}", sector_id, c2_program_path);
     let mut c2_process = process::Command::new(&c2_program_path)
         .arg(&uuid)
         .arg(u64::from(porep_config.sector_size).to_string())

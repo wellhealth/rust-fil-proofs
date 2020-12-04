@@ -45,8 +45,6 @@ use crate::types::{
     SectorSize, Ticket, BINARY_ARITY,
 };
 
-
-
 pub const SHENSUANYUN_GPU_INDEX: &str = "SHENSUANYUN_GPU_INDEX";
 
 #[allow(clippy::too_many_arguments)]
@@ -303,16 +301,16 @@ where
     //select gpu index
 
     let gpu_index = std::env::var(SHENSUANYUN_GPU_INDEX)
-        .unwrap_or_else(|_|"0".to_string())
+        .unwrap_or_else(|_| "0".to_string())
         .parse()
         .with_context(|| format!("{:?}: wrong gpu index", replica_path.as_ref(),))?;
 
     info!("select gpu index: {}", gpu_index);
 
-    defer! {
+    defer!({
         info!("release gpu index: {}", gpu_index);
         release_gpu_device(gpu_index);
-    }
+    });
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         std::panic::set_hook(Box::new(|_| {
@@ -1272,10 +1270,9 @@ pub fn select_gpu_device() -> Option<usize> {
         Some(0)
     }*/
 
-    if bellperson::gpu::gpu_count() == 0{
+    if bellperson::gpu::gpu_count() == 0 {
         Some(0)
-    }
-    else{
+    } else {
         GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap().pop_front()
     }
 }
