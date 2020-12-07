@@ -1,4 +1,5 @@
-#[derive(Clone, Copy, Debug)]
+use serde::{Serialize, Deserialize};
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PoRepProofPartitions(pub u8);
 
 impl From<PoRepProofPartitions> for usize {

@@ -3,7 +3,6 @@ use std::io::prelude::*;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 
-use std::sync::Mutex;
 
 use anyhow::{ensure, Context, Result};
 use bincode::{deserialize, serialize};
@@ -294,10 +293,6 @@ where
 
     info!("select gpu index: {}", gpu_index);
 
-    defer! {
-        info!("release gpu index: {}", gpu_index);
-        release_gpu_device(gpu_index);
-    }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     let result = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
@@ -470,7 +465,6 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     Ok(out)
 }
 
-use scopeguard::defer;
 
 pub fn seal_commit_phase2<Tree>(
     porep_config: PoRepConfig,
@@ -487,10 +481,6 @@ where
 
     log::info!("select gpu index: {}", gpu_index);
 
-    defer! {
-        log::info!("release gpu index: {}", gpu_index);
-        release_gpu_device(gpu_index);
-    }
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         rayon::ThreadPoolBuilder::new()
@@ -1172,79 +1162,10 @@ where
     Ok(out)
 }
 
-#[derive(Debug)]
-pub struct Queue<T> {
-    qdata: Vec<T>,
-}
-
-impl<T> Queue<T> {
-    fn new() -> Self {
-        Queue { qdata: Vec::new() }
-    }
-
-    fn push(&mut self, item: T) {
-        self.qdata.push(item);
-    }
-
-    fn pop(&mut self) -> Option<T> {
-        let l = self.qdata.len();
-
-        if l > 0 {
-            let v = self.qdata.remove(0);
-            Some(v)
-        } else {
-            None
-        }
-    }
-
-    fn len(&mut self) -> usize {
-        self.qdata.len()
-    }
-}
-
-#[cfg(feature = "gpu")]
-lazy_static::lazy_static! {
-    //pub static ref GPU_NVIDIA_DEVICES: Vec<Device> = get_devices(GPU_NVIDIA_PLATFORM_NAME).unwrap_or_default();
-    //pub static ref GPU_NVIDIA_DEVICES: Vec<Device> = get_devices(GPU_NVIDIA_PLATFORM_NAME).unwrap_or_default();
-    pub static ref GPU_NVIDIA_DEVICES_QUEUE:  Mutex<Queue<usize>> = Mutex::new(Queue::new());
-}
-
-static mut N: i32 = 0;
-
 pub fn select_gpu_device() -> usize {
-    let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
-
-    unsafe {
-        if N == 0 {
-            let devices = &bellperson::gpu::GPU_NVIDIA_DEVICES;
-
-            for i in 0..devices.len() {
-                queue.push(i)
-            }
-
-            N = 1;
-            info!("init gpu finished: {}", N);
-        }
-    }
-
-    if queue.len() == 0 {
-        return 0;
-    }
-
-    queue.pop().unwrap()
-
-    /* let device_info = queue.pop().unwrap()
-
-    let index = device_info.index;
-
-    log::info!("select gpu index: {}", index);
-
-    queue.push(device_info);
-
-    return index;*/
+    std::env::var("SHENSUANYUN_GPU_INDEX")
+        .unwrap_or_else(|_| "0".to_string())
+        .parse()
+        .unwrap_or(0)
 }
 
-pub fn release_gpu_device(gpu_index: usize) {
-    let mut queue = GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap();
-    queue.push(gpu_index);
-}

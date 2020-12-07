@@ -906,7 +906,6 @@ pub fn generate_window_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
     Ok(proof.to_vec()?)
 }
 
-use scopeguard::defer;
 
 // Generates a Window proof-of-spacetime.
 pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
@@ -920,11 +919,6 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     let gpu_index = super::select_gpu_device();
 
     info!("select gpu index: {}", gpu_index);
-
-    defer! {
-        info!("release gpu index: {}", gpu_index);
-        super::release_gpu_device(gpu_index);
-    }
 
     generate_window_post_inner(post_config,randomness,replicas,prover_id,gpu_index)
 }
