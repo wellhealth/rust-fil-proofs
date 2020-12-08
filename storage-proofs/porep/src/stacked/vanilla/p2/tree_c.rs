@@ -20,24 +20,30 @@ use paired::bls12_381::Fr;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
-use std::convert::TryInto;
-use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
+use std::{convert::TryInto, sync::mpsc::Receiver};
+use std::{fs::File, sync::mpsc::channel};
 use storage_proofs_core::hasher::PoseidonArity;
+
+struct Channels {
+    txs: Vec<std::sync::mpsc::Sender<(usize, Vec<Fr>)>>,
+    rxs: Vec<std::sync::mpsc::Receiver<(usize, Vec<Fr>)>>,
+}
 
 pub fn custom_tree_c<ColumnArity, TreeArity>(
     nodes_count: usize,
-    configs: Vec<StoreConfig>,
+    configs: &[StoreConfig],
     labels: &[(PathBuf, String)],
     replica_path: &Path,
     gpu_index: usize,
+    tree_r_done: Receiver<()>,
 ) -> Result<()>
 where
     ColumnArity: PoseidonArity + 'static,
-    TreeArity: PoseidonArity + 'static,
+    TreeArity: PoseidonArity,
 {
     let (max_gpu_column_batch_size, max_gpu_tree_batch_size) = {
         let settings_lock = settings::SETTINGS
@@ -50,11 +56,12 @@ where
         )
     };
 
-    let (file_data_tx, file_data_rx) = crossbeam::bounded(2048);
-    let (column_tx, column_rx) = crossbeam::bounded(2048);
+    let (file_data_tx, file_data_rx) = crossbeam::bounded(256);
+    let (column_tx, column_rx) = crossbeam::bounded(256);
     let mut files = open_column_data_file(labels)?;
+    let Channels { txs, rxs } = channels(configs.len());
 
-    let scope_result = crossbeam::scope(|s| -> Result<()> {
+    let scope_result = crossbeam::scope(|s| {
         read_data_from_file(
             &mut files,
             configs.len(),
@@ -66,6 +73,40 @@ where
         (0..2).for_each(|_| {
             s.spawn(|_| generate_columns::<ColumnArity>(file_data_rx.clone(), column_tx.clone()));
         });
+
+        s.spawn({
+            let column_rx = column_rx.clone();
+            let txs = txs.clone();
+            move |_| {
+                generate_tree_c_gpu::<ColumnArity, TreeArity>(
+                    nodes_count,
+                    gpu_index,
+                    column_rx,
+                    &txs,
+                )
+            }
+        });
+        s.spawn({
+            let column_rx = column_rx;
+            let txs = txs;
+            move |s| {
+                tree_r_done.recv().unwrap();
+                generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs);
+            }
+        });
+
+        collect_and_persist_tree_c::<TreeArity>(
+            &rxs,
+            &configs
+                .iter()
+                .map(|x| StoreConfig::data_path(&x.path, &x.id))
+                .collect::<Vec<_>>(),
+            max_gpu_column_batch_size,
+            nodes_count,
+            max_gpu_tree_batch_size,
+            replica_path,
+            gpu_index,
+        )?;
 
         Ok(())
     });
@@ -124,6 +165,7 @@ fn read_data_from_file(
             let chunked_node_count = std::cmp::min(rest_count, batch_size);
 
             let data = read_single_batch(files, chunked_node_count)?;
+            info!("file read: tree-c:{}, node:{}", config_index, node_index);
             chan.send((config_index, node_index, data)).unwrap();
         }
     }
@@ -147,6 +189,7 @@ fn generate_columns<ColumnArity>(
             }
         });
 
+        info!("file read: tree-c:{}, node:{}", config_index, node_index);
         tx.send(ColumnData {
             columns,
             node_index,
@@ -176,25 +219,23 @@ fn read_single_batch(files: &mut [File], chunked_node_count: usize) -> Result<Ve
         .collect()
 }
 
-pub fn generate_tree_c_cpu<ColumnArity, TreeArity, P>(
+pub fn generate_tree_c_cpu<ColumnArity, TreeArity>(
     column_rx: crossbeam::Receiver<ColumnData<ColumnArity>>,
     hashed_tx: &[std::sync::mpsc::Sender<(usize, Vec<Fr>)>],
-) -> Result<()>
-where
+) where
     ColumnArity: 'static + PoseidonArity,
     TreeArity: PoseidonArity,
-    P: AsRef<Path>,
 {
     let ColumnData {
-        columns: data,
-        node_index: index,
+        columns,
+        node_index,
         config_index,
     } = column_rx.recv().unwrap();
 
-    let result = cpu_build_column(&data);
+    let result = cpu_build_column(&columns);
+    info!("cpu built: tree-c:{}, node:{}", config_index, node_index);
 
-    hashed_tx[config_index].send((index, result)).unwrap();
-    Ok(())
+    hashed_tx[config_index].send((node_index, result)).unwrap();
 }
 
 pub fn collect_and_persist_tree_c<TreeArity>(
@@ -244,16 +285,15 @@ pub fn collect_column_for_config(
     Ok(final_data)
 }
 
-pub fn generate_tree_c_gpu<ColumnArity, TreeArity, P>(
+pub fn generate_tree_c_gpu<ColumnArity, TreeArity>(
     nodes_count: usize,
     gpu_index: usize,
-    column_rx: std::sync::mpsc::Receiver<ColumnData<ColumnArity>>,
+    column_rx: crossbeam::Receiver<ColumnData<ColumnArity>>,
     hashed_tx: &[std::sync::mpsc::Sender<(usize, Vec<Fr>)>],
 ) -> Result<()>
 where
     ColumnArity: 'static + PoseidonArity,
     TreeArity: PoseidonArity,
-    P: AsRef<Path>,
 {
     let mut batcher = match Batcher::<ColumnArity>::new(&BatcherType::GPU, nodes_count, gpu_index)
         .with_context(|| {
@@ -264,17 +304,19 @@ where
     };
 
     let ColumnData {
-        columns: data,
-        node_index: index,
+        columns,
+        node_index,
         config_index,
     } = column_rx.recv().unwrap();
 
-    let result = batcher.hash(&data).unwrap_or_else(|e| {
+    let result = gpu_build_column(&mut batcher, &columns).unwrap_or_else(|e| {
         info!("p2 column hash GPU failed, falling back to CPU: {:?}", e);
-        cpu_build_column(&data)
+        cpu_build_column(&columns)
     });
 
-    hashed_tx[config_index].send((index, result)).unwrap();
+    info!("gpu built: tree-c:{}, node:{}", config_index, node_index);
+
+    hashed_tx[config_index].send((node_index, result)).unwrap();
     Ok(())
 }
 
@@ -403,4 +445,15 @@ fn as_generic_arrays<'a, A: Arity<Fr>>(vec: &'a [Fr]) -> &'a [GenericArray<Fr, A
             vec.len() / A::to_usize(),
         )
     }
+}
+
+fn channels(config_count: usize) -> Channels {
+    let mut txs = Vec::with_capacity(config_count);
+    let mut rxs = Vec::with_capacity(config_count);
+    for _ in 0..config_count {
+        let (tx, rx) = channel();
+        txs.push(tx);
+        rxs.push(rx);
+    }
+    Channels { txs, rxs }
 }
