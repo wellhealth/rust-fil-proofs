@@ -3,8 +3,6 @@ use std::hash::{Hash, Hasher as StdHasher};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-use std::time::Instant;
-
 use anyhow::{anyhow, ensure, Context, Result};
 use bincode::deserialize;
 use generic_array::typenum::Unsigned;
@@ -32,6 +30,8 @@ use crate::types::{
     SectorSize, SnarkProof, TemporaryAux, VanillaProof,
 };
 use crate::PoStType;
+use rayon::prelude::*;
+use std::time::SystemTime;
 
 /// The minimal information required about a replica, in order to be able to generate
 /// a PoSt over it.
@@ -341,6 +341,7 @@ pub fn generate_winning_post_inner<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     gpu_index: usize,
 ) -> Result<SnarkProof> {
+    let timestamp = SystemTime::now();
     info!("generate_winning_post:start");
     ensure!(
         post_config.typ == PoStType::Winning,
@@ -368,9 +369,9 @@ pub fn generate_winning_post_inner<Tree: 'static + MerkleTreeTrait>(
     let pub_params: compound_proof::PublicParams<fallback::FallbackPoSt<Tree>> =
         fallback::FallbackPoStCompound::setup(&setup_params)?;
     let groth_params = get_post_params::<Tree>(&post_config)?;
-
+    let t2 = SystemTime::now();
     let trees = replicas
-        .iter()
+        .par_iter()
         .map(|(sector_id, replica)| {
             replica
                 .merkle_tree(post_config.sector_size)
@@ -379,7 +380,7 @@ pub fn generate_winning_post_inner<Tree: 'static + MerkleTreeTrait>(
                 })
         })
         .collect::<Result<Vec<_>>>()?;
-
+    info!("winning init tree {} time {:?}", trees.len(), t2.elapsed());
     let mut pub_sectors = Vec::with_capacity(param_sector_count);
     let mut priv_sectors = Vec::with_capacity(param_sector_count);
 
@@ -423,7 +424,7 @@ pub fn generate_winning_post_inner<Tree: 'static + MerkleTreeTrait>(
     )?;
     let proof = proof.to_vec()?;
 
-    info!("generate_winning_post:finish");
+    info!("generate_winning_post:finish {:?}", timestamp.elapsed());
 
     Ok(proof)
 }
@@ -943,7 +944,6 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
 ) -> Result<SnarkProof> {
-    //let gpu_index = 0;
 
     let gpu_index = super::select_gpu_device();
 
@@ -974,20 +974,15 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         let bt = backtrace::Backtrace::new();
         info!("panic occurred, backtrace: {:?}", bt);
     }));
+    
+    let timestamp = SystemTime::now();
 
     info!("generate_window_post:start");
     ensure!(
         post_config.typ == PoStType::Window,
         "invalid post config type"
     );
-
-    let now = Instant::now();
-
-    info!(
-        "generate_window_post0:{:?} {:?}",
-        prover_id,
-        now.elapsed().as_secs()
-    );
+   info!("thread counts {}", rayon::current_num_threads());
 
     let randomness_safe = as_safe_commitment(randomness, "randomness")?;
     let prover_id_safe = as_safe_commitment(&prover_id, "prover_id")?;
@@ -1007,25 +1002,7 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     let groth_params = get_post_params::<Tree>(&post_config)?;
     info!("generate_window_post: pub_sectors & priv_sectors (begin)");
 
-    info!(
-        "generate_window_post1:{:?} {:?}",
-        prover_id,
-        now.elapsed().as_secs()
-    );
-    /*
-     let trees: Vec<_> = replicas
-         .iter()
-         .map(|(sector_id, replica)| {
-             replica
-                 .merkle_tree(post_config.sector_size)
-                 .with_context(|| {
-                     format!("generate_window_post: merkle_tree failed: {:?}", sector_id)
-                 })
-         })
-     .collect::<Result<_>>()?;
-    */
-
-    use rayon::prelude::*;
+    let t2 = SystemTime::now();
 
     let trees: Vec<_> = replicas
         .par_iter()
@@ -1038,11 +1015,8 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         })
         .collect::<Result<_>>()?;
 
-    info!(
-        "generate_window_post2:{:?} {:?}",
-        prover_id,
-        now.elapsed().as_secs()
-    );
+    info!("window init tree {} time {:?}", trees.len(), t2.elapsed());
+    
     let mut pub_sectors = Vec::with_capacity(sector_count);
     let mut priv_sectors = Vec::with_capacity(sector_count);
 
@@ -1069,8 +1043,10 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     info!(
         "generate_window_post3:{:?} {:?}",
         prover_id,
-        now.elapsed().as_secs()
+        t2.elapsed()
     );
+
+    let t3 = SystemTime::now();
 
     let pub_inputs = fallback::PublicInputs {
         randomness: randomness_safe,
@@ -1087,8 +1063,10 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     info!(
         "generate_window_post4:{:?} {:?}",
         prover_id,
-        now.elapsed().as_secs()
+        t3.elapsed()
     );
+
+    let t4 = SystemTime::now();
     info!("generate_window_post:fallback::FallbackPoStCompound(begin)");
     let proof = fallback::FallbackPoStCompound::prove(
         &pub_params,
@@ -1101,10 +1079,10 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     info!(
         "generate_window_post5:{:?} {:?}",
         prover_id,
-        now.elapsed().as_secs()
+        t4.elapsed()
     );
 
-    info!("generate_window_post:finish");
+     info!("generate_window_post:finish {:?}", timestamp.elapsed());
 
     Ok(proof.to_vec()?)
 }

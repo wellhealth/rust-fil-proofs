@@ -1,6 +1,5 @@
 use std::collections::BTreeSet;
 use std::marker::PhantomData;
-use std::sync::Mutex;
 
 use anyhow::ensure;
 use bellperson::bls::Fr;
@@ -11,7 +10,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use std::panic::AssertUnwindSafe;
+//use std::panic::AssertUnwindSafe;
 use storage_proofs_core::{
     error::{Error, Result},
     hasher::{Domain, HashFunction, Hasher},
@@ -248,11 +247,6 @@ fn generate_leaf_challenge_inner<T: Domain>(
     let leaf_challenge = LittleEndian::read_u64(&hash[..8]);
 
     leaf_challenge % (pub_params.sector_size / NODE_SIZE as u64)
-}
-
-enum ProofOrFault<T> {
-    Proof(T),
-    Fault(SectorId),
 }
 
 // Generates a single vanilla proof, given the private inputs and sector challenges.
