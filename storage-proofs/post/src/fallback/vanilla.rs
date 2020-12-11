@@ -385,6 +385,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                     let rows_to_discard =
                         default_rows_to_discard(tree_leafs, Tree::Arity::to_usize());
 
+                    let now = system::now();
                     trace!(
                         "Generating proof for tree leafs {} and arity {}",
                         tree_leafs,
@@ -456,6 +457,8 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                             comm_r_last: priv_sector.comm_r_last,
                         },
                         faults,
+
+                        info!("single window post {} cost : {} ", sector_id, now.elapsed())
                     )
                 })
                 .fold(
