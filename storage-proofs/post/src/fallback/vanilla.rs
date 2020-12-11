@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use std::time::SystemTime;
+use std::time::{SystemTime, Instant};
 
 //use std::panic::AssertUnwindSafe;
 use storage_proofs_core::{
@@ -387,7 +387,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                     let rows_to_discard =
                         default_rows_to_discard(tree_leafs, Tree::Arity::to_usize());
 
-                    let now = SystemTime::now();
+                    let now =  Instant::now();
                     trace!(
                         "Generating proof for tree leafs {} and arity {}",
                         tree_leafs,
@@ -451,7 +451,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                                 (inclusion_proofs, faults)
                             },
                         );
-                    info!("single window post {:?} cost : {:?} ", sector_id, now.elapsed());
+                    info!("single window post {:?} cost : {:?} ", sector_id, now.elapsed().as_micros());
                     (
                         SectorProof {
                             inclusion_proofs,
