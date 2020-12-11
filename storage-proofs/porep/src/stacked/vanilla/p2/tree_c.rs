@@ -1,6 +1,6 @@
 #![allow(unused_variables)]
-use anyhow::Context;
 use anyhow::Result;
+use anyhow::{bail, Context};
 use storage_proofs_core::settings;
 
 use crate::stacked::hash::hash_single_column;
@@ -9,23 +9,23 @@ use ff::PrimeField;
 use ff::PrimeFieldRepr;
 use generic_array::sequence::GenericSequence;
 use generic_array::GenericArray;
-use log::info;
+use log::{error, info};
 use merkletree::store::StoreConfig;
-use neptune::batch_hasher::Batcher;
-use neptune::batch_hasher::BatcherType;
 use neptune::gpu::GPUBatchHasher;
 use neptune::Arity;
 use neptune::BatchHasher;
+use neptune::{batch_hasher::Batcher, tree_builder::TreeBuilder};
+use neptune::{batch_hasher::BatcherType, tree_builder::TreeBuilderTrait};
 use paired::bls12_381::Fr;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
-use std::fs::OpenOptions;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
-use std::{convert::TryInto, sync::mpsc::Receiver};
+use std::convert::TryInto;
 use std::{fs::File, sync::mpsc::channel};
+use std::{fs::OpenOptions, io::Cursor};
 use storage_proofs_core::hasher::PoseidonArity;
 
 struct Channels {
@@ -39,7 +39,6 @@ pub fn custom_tree_c<ColumnArity, TreeArity>(
     labels: &[(PathBuf, String)],
     replica_path: &Path,
     gpu_index: usize,
-    tree_r_done: Receiver<()>,
 ) -> Result<()>
 where
     ColumnArity: PoseidonArity + 'static,
@@ -56,23 +55,32 @@ where
         )
     };
 
-    let (file_data_tx, file_data_rx) = crossbeam::bounded(256);
-    let (column_tx, column_rx) = crossbeam::bounded(256);
+    let (file_data_tx, file_data_rx) = crossbeam::bounded(128);
+    let (column_tx, column_rx) = crossbeam::bounded(128);
     let mut files = open_column_data_file(labels)?;
     let Channels { txs, rxs } = channels(configs.len());
 
-    let scope_result = crossbeam::scope(|s| {
-        read_data_from_file(
-            &mut files,
-            configs.len(),
-            nodes_count,
-            max_gpu_column_batch_size,
-            file_data_tx,
-        )?;
-
-        (0..2).for_each(|_| {
-            s.spawn(|_| generate_columns::<ColumnArity>(file_data_rx.clone(), column_tx.clone()));
+    let scope_result = crossbeam::scope(move |s| {
+        s.spawn(move |_| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(11)
+                .build()
+                .unwrap()
+                .install(move || {
+                    if let Err(e) = read_data_from_file(
+                        &mut files,
+                        configs.len(),
+                        nodes_count,
+                        max_gpu_column_batch_size,
+                        file_data_tx,
+                        replica_path,
+                    ) {
+                        error!("{:?}: p2 file reading error: {:?}", replica_path, e);
+                    }
+                })
         });
+
+        s.spawn(move |_| generate_columns::<ColumnArity>(file_data_rx.clone(), column_tx));
 
         s.spawn({
             let column_rx = column_rx.clone();
@@ -84,15 +92,12 @@ where
                     column_rx,
                     &txs,
                 )
+                .unwrap();
             }
         });
-        s.spawn({
-            let column_rx = column_rx;
-            let txs = txs;
-            move |s| {
-                tree_r_done.recv().unwrap();
-                generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs);
-            }
+
+        s.spawn(move |s| {
+            generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs);
         });
 
         collect_and_persist_tree_c::<TreeArity>(
@@ -108,6 +113,7 @@ where
             gpu_index,
         )?;
 
+        dbg!();
         Ok(())
     });
 
@@ -158,6 +164,7 @@ fn read_data_from_file(
     node_count: usize,
     batch_size: usize,
     chan: crossbeam::Sender<(usize, usize, Vec<Vec<Fr>>)>,
+    replica_path: &Path,
 ) -> Result<()> {
     for config_index in 0..config_count {
         for node_index in (0..node_count).step_by(batch_size) {
@@ -166,7 +173,8 @@ fn read_data_from_file(
 
             let data = read_single_batch(files, chunked_node_count)?;
             info!("file read: tree-c:{}, node:{}", config_index, node_index);
-            chan.send((config_index, node_index, data)).unwrap();
+            chan.send((config_index, node_index, data))
+                .with_context(|| format!("{:?}: cannot send file data", replica_path))?;
         }
     }
 
@@ -189,7 +197,10 @@ fn generate_columns<ColumnArity>(
             }
         });
 
-        info!("file read: tree-c:{}, node:{}", config_index, node_index);
+        info!(
+            "column generated: tree-c:{}, node:{}",
+            config_index, node_index
+        );
         tx.send(ColumnData {
             columns,
             node_index,
@@ -226,16 +237,17 @@ pub fn generate_tree_c_cpu<ColumnArity, TreeArity>(
     ColumnArity: 'static + PoseidonArity,
     TreeArity: PoseidonArity,
 {
-    let ColumnData {
+    for ColumnData {
         columns,
         node_index,
         config_index,
-    } = column_rx.recv().unwrap();
+    } in column_rx.iter()
+    {
+        let result = cpu_build_column(&columns);
+        info!("cpu built: tree-c:{}, node:{}", config_index, node_index);
 
-    let result = cpu_build_column(&columns);
-    info!("cpu built: tree-c:{}, node:{}", config_index, node_index);
-
-    hashed_tx[config_index].send((node_index, result)).unwrap();
+        hashed_tx[config_index].send((node_index, result)).unwrap();
+    }
 }
 
 pub fn collect_and_persist_tree_c<TreeArity>(
@@ -250,18 +262,80 @@ pub fn collect_and_persist_tree_c<TreeArity>(
 where
     TreeArity: PoseidonArity,
 {
-    let mut gpu_batcher = GPUBatchHasher::<TreeArity>::new(
-        neptune::cl::default_futhark_context(gpu_index).unwrap(),
-        tree_batch_size,
-    )
-    .with_context(|| format!("{:?}, cannot build GPUBatchHasher", replica_path))?;
+    let (build_tx, build_rx) = channel();
+    let res = crossbeam::scope(move |s| -> Result<()> {
+        let (tx, rx) = channel();
 
-    for (index, rx) in rxs.iter().enumerate() {
-        let tree_c_column = collect_column_for_config(rx, batch_size, node_count, replica_path)?;
-        let (base, tree) = build_tree_gpu(tree_c_column, &mut gpu_batcher)?;
+        s.spawn(move |_| {
+            build_tx
+                .send(build_tree_and_persist::<TreeArity>(
+                    rx,
+                    paths,
+                    node_count,
+                    tree_batch_size,
+                    replica_path,
+                    gpu_index,
+                ))
+                .unwrap();
+        });
 
-        persist_tree_c(&paths[index], &base, &tree)?;
+        for (index, rx) in rxs.iter().enumerate() {
+            let tree_c_column = collect_column_for_config(rx, batch_size, node_count, replica_path)
+                .with_context(|| {
+                    format!(
+                        "{:?} cannot collect column for tree_c {}",
+                        replica_path, index
+                    )
+                })?;
+            info!("{:?}: tree-c {} has been collected", replica_path, index);
+            tx.send((index, tree_c_column))
+                .with_context(|| format!(""))?;
+        }
+        drop(tx);
+        Ok(())
+    });
+
+    build_rx.recv().unwrap()?;
+
+    match res {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(e),
+        Err(_) => bail!("{:?} collect_and_persist_tree_c panic", replica_path),
     }
+}
+
+fn build_tree_and_persist<TreeArity>(
+    rx: std::sync::mpsc::Receiver<(usize, Vec<Fr>)>,
+    paths: &[PathBuf],
+    node_count: usize,
+    tree_batch_size: usize,
+    replica_path: &Path,
+    gpu_index: usize,
+) -> Result<()>
+where
+    TreeArity: PoseidonArity,
+{
+    let mut builder = TreeBuilder::<TreeArity>::new(
+        Some(BatcherType::GPU),
+        node_count,
+        tree_batch_size,
+        0,
+        gpu_index,
+    )
+    .with_context(|| format!("{:?}: cannot create tree_builder", replica_path))?;
+
+    for (index, column) in rx.iter() {
+        let (base, tree) = builder
+            .add_final_leaves(&column)
+            .with_context(|| format!("{:?} cannot add final leaves", replica_path))?;
+        info!(
+            "{:?}: tree-c {} has been built from column",
+            replica_path, index
+        );
+
+        persist_tree_c(index, &paths[index], &base, &tree, replica_path)?;
+    }
+
     Ok(())
 }
 
@@ -303,20 +377,22 @@ where
         Batcher::CPU(_) => panic!("neptune bug, batcher should be GPU"),
     };
 
-    let ColumnData {
+    for ColumnData {
         columns,
         node_index,
         config_index,
-    } = column_rx.recv().unwrap();
+    } in column_rx.iter()
+    {
+        let result = gpu_build_column(&mut batcher, &columns).unwrap_or_else(|e| {
+            info!("p2 column hash GPU failed, falling back to CPU: {:?}", e);
+            cpu_build_column(&columns)
+        });
 
-    let result = gpu_build_column(&mut batcher, &columns).unwrap_or_else(|e| {
-        info!("p2 column hash GPU failed, falling back to CPU: {:?}", e);
-        cpu_build_column(&columns)
-    });
+        info!("built: tree-c:{}, node:{}", config_index, node_index);
 
-    info!("gpu built: tree-c:{}, node:{}", config_index, node_index);
+        hashed_tx[config_index].send((node_index, result)).unwrap();
+    }
 
-    hashed_tx[config_index].send((node_index, result)).unwrap();
     Ok(())
 }
 
@@ -377,22 +453,49 @@ where
     Ok((base, tree))
 }
 
-pub fn persist_tree_c<P>(path: P, base: &[Fr], tree: &[Fr]) -> Result<()>
-where
-    P: AsRef<Path>,
-{
+fn persist_tree_c(
+    index: usize,
+    path: &Path,
+    base: &[Fr],
+    tree: &[Fr],
+    replica_path: &Path,
+) -> Result<()> {
+    let mut cursor = Cursor::new(Vec::<u8>::with_capacity(
+        (base.len() + tree.len()) * std::mem::size_of::<Fr>(),
+    ));
+    info!(
+        "{:?}.persisting, done: cursor created for tree-c {}",
+        replica_path, index
+    );
+
+    for fr in base.iter().chain(tree.iter()).map(|x| x.into_repr()) {
+        fr.write_le(&mut cursor)
+            .with_context(|| format!("cannot write to cursor {:?}", path))?;
+    }
+    info!(
+        "{:?}.persisting, done: put data into cursor for tree-c {}",
+        replica_path, index
+    );
+
     let mut tree_c = OpenOptions::new()
         .write(true)
         .truncate(true)
         .create(true)
         .open(&path)
-        .with_context(|| format!("trying to open file {:?}, but failed", path.as_ref()))?;
+        .with_context(|| format!("cannot open file: {:?}", path))?;
 
-    for fr in base.iter().chain(tree.iter()) {
-        fr.into_repr()
-            .write_le(&mut tree_c)
-            .with_context(|| format!("trying to write to file {:?}, but failed", path.as_ref()))?;
-    }
+    info!(
+        "{:?}.persisting, done: file opened for {}",
+        replica_path, index
+    );
+    tree_c
+        .write_all(&cursor.into_inner())
+        .with_context(|| format!("cannot write to file: {:?}", path))?;
+    info!(
+        "{:?}.persisting, done: file written for tree-c {}",
+        replica_path, index
+    );
+
     Ok(())
 }
 

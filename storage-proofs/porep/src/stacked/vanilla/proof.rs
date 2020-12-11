@@ -390,7 +390,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         old_labels: &LabelsCache<Tree>,
         replica_path: P,
         gpu_index: usize,
-        tree_r_done: Receiver<()>,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
@@ -408,7 +407,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 labels,
                 replica_path,
                 gpu_index,
-                tree_r_done,
             )
         } else {
             Self::generate_tree_c_cpu::<ColumnArity, TreeArity>(
@@ -767,6 +765,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         Ok(())
     }
+    #[allow(dead_code)]
     fn generate_tree_c_gpu_official<ColumnArity, TreeArity, P>(
         nodes_count: usize,
         configs: Vec<StoreConfig>,
@@ -859,7 +858,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         labels: &[(PathBuf, String)],
         replica_path: P,
         gpu_index: usize,
-        tree_r_done: Receiver<()>,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
@@ -872,32 +870,17 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         );
         // Build the tree for CommC
         measure_op(GenerateTreeC, || {
-            if settings::SETTINGS
-                .lock()
-                .expect("use_gpu_column_builder settings lock failure")
-                .custom_gpu_column_builder
-            {
-                super::p2::tree_c::custom_tree_c::<ColumnArity, TreeArity>(
-                    nodes_count,
-                    &configs,
-                    labels,
-                    replica_path.as_ref(),
-                    gpu_index,
-                    tree_r_done,
-                )?;
+            super::p2::tree_c::custom_tree_c::<ColumnArity, TreeArity>(
+                nodes_count,
+                &configs,
+                labels,
+                replica_path.as_ref(),
+                gpu_index,
+            )?;
 
-                create_disk_tree::<
-                    DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>,
-                >(configs[0].size.expect("config size failure"), &configs)
-            } else {
-                Self::generate_tree_c_gpu_official::<ColumnArity, TreeArity, _>(
-                    nodes_count,
-                    configs,
-                    labels,
-                    replica_path,
-                    gpu_index,
-                )
-            }
+            create_disk_tree::<
+                DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>,
+            >(configs[0].size.expect("config size failure"), &configs)
         })
     }
 
@@ -1402,7 +1385,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         let (c_tx, c_rx) = mpsc::sync_channel(5);
         let (r_tx, r_rx) = mpsc::sync_channel(5);
-        let (tree_r_tx, tree_r_rx) = channel();
 
         crossbeam::scope(|s| {
             s.spawn(|_| {
@@ -1415,7 +1397,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         &labels,
                         &replica_path,
                         gpu_index,
-                        tree_r_rx,
                     ),
                     8 => Self::generate_tree_c::<U8, Tree::Arity, _>(
                         nodes_count,
@@ -1425,7 +1406,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         &labels,
                         &replica_path,
                         gpu_index,
-                        tree_r_rx,
                     ),
                     11 => Self::generate_tree_c::<U11, Tree::Arity, _>(
                         nodes_count,
@@ -1435,7 +1415,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                         &labels,
                         &replica_path,
                         gpu_index,
-                        tree_r_rx,
                     ),
                     _ => panic!("Unsupported column arity"),
                 };
@@ -1490,7 +1469,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             })
             .unwrap();
             info!("{:?}: tree_r_last done", &replica_path);
-            tree_r_tx.send(()).unwrap();
 
             r_tx.send((tree_r_last, tree_d_root, data, tree_d_config))
                 .unwrap();
