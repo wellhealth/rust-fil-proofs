@@ -65,7 +65,7 @@ where
             rayon::ThreadPoolBuilder::new()
                 .num_threads(11)
                 .build()
-                .unwrap()
+                .expect("failed to build thread pool for p2 file reading")
                 .install(move || {
                     if let Err(e) = read_data_from_file(
                         &mut files,
@@ -94,7 +94,7 @@ where
                         &txs,
                     ) {
                         error!("generate_tree_c_gpu error: {:?}", e);
-						Result::<()>::Err(e).unwrap();
+                        Result::<()>::Err(e).expect("cannot generate tree_c gpu");
                     }
                 })
             }
@@ -214,7 +214,7 @@ fn generate_columns<ColumnArity>(
             node_index,
             config_index,
         })
-        .unwrap();
+        .expect("failed to send column data");
     }
 }
 
@@ -231,7 +231,7 @@ fn read_single_batch(files: &mut [File], chunked_node_count: usize) -> Result<Ve
 
             buf_bytes
                 .chunks(std::mem::size_of::<Fr>())
-                .map(|x| bytes_into_fr(x.try_into().unwrap()))
+                .map(|x| bytes_into_fr(x.try_into().expect("cannot convert to a 32-byte array")))
                 .collect::<Result<Vec<_>>>()
                 .with_context(|| format!("cannot convert bytes to Fr for file: {:?})", x))
         })
@@ -258,7 +258,9 @@ pub fn generate_tree_c_cpu<ColumnArity, TreeArity>(
             node_index
         );
 
-        hashed_tx[config_index].send((node_index, result)).unwrap();
+        hashed_tx[config_index]
+            .send((node_index, result))
+            .expect("cannot send to hashed_tx");
     }
 }
 
@@ -288,7 +290,7 @@ where
                     replica_path,
                     gpu_index,
                 ))
-                .unwrap();
+                .expect("cannot send persisted result for error handling");
         });
 
         for (index, rx) in rxs.iter().enumerate() {
@@ -312,7 +314,7 @@ where
         Ok(())
     });
 
-    build_rx.recv().unwrap()?;
+    build_rx.recv().expect("cannot receive data for build_rx")?;
 
     match res {
         Ok(Ok(_)) => Ok(()),
@@ -357,7 +359,8 @@ where
             s.spawn(move |_| {
                 if let Err(e) = persist_tree_c(index, &paths[index], &base, &tree, replica_path) {
                     error!("cannot persisit tree-c {}, error: {:?}", index + 1, e);
-                    tx.send((index + 1, e)).unwrap();
+                    tx.send((index + 1, e))
+                        .expect("cannot send persisting error to tx");
                 }
             });
         }
@@ -426,7 +429,9 @@ where
 
         info!("built: tree-c:{}, node:{}", config_index + 1, node_index);
 
-        hashed_tx[config_index].send((node_index, result)).unwrap();
+        hashed_tx[config_index]
+            .send((node_index, result))
+            .expect("cannot send gpu data to hashed_tx");
     }
 
     Ok(())
