@@ -1,4 +1,3 @@
-#![allow(unused_variables)]
 use crate::stacked::hash::hash_single_column;
 use crate::stacked::vanilla::proof::POOL;
 use anyhow::Result;
@@ -100,7 +99,7 @@ where
             }
         });
 
-        s.spawn(move |s| {
+        s.spawn(move |_| {
             POOL.install(move || generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs))
         });
 
