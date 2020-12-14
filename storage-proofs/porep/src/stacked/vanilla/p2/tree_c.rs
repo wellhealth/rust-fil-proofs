@@ -7,6 +7,7 @@ use ff::PrimeField;
 use ff::PrimeFieldRepr;
 use generic_array::sequence::GenericSequence;
 use generic_array::GenericArray;
+use lazy_static::lazy_static;
 use log::{error, info};
 use merkletree::store::StoreConfig;
 use neptune::gpu::GPUBatchHasher;
@@ -32,6 +33,10 @@ struct Channels {
     rxs: Vec<std::sync::mpsc::Receiver<(usize, Vec<Fr>)>>,
 }
 
+lazy_static! {
+    static ref CHANNEL_CAPACITY: usize = 16;
+}
+
 pub fn custom_tree_c<ColumnArity, TreeArity>(
     nodes_count: usize,
     configs: &[StoreConfig],
@@ -54,8 +59,8 @@ where
         )
     };
 
-    let (file_data_tx, file_data_rx) = crossbeam::bounded(128);
-    let (column_tx, column_rx) = crossbeam::bounded(128);
+    let (file_data_tx, file_data_rx) = crossbeam::bounded(*CHANNEL_CAPACITY);
+    let (column_tx, column_rx) = crossbeam::bounded(*CHANNEL_CAPACITY);
     let mut files = open_column_data_file(labels)?;
     let Channels { txs, rxs } = channels(configs.len());
 
@@ -447,7 +452,6 @@ pub fn cpu_build_column<A: PoseidonArity>(data: &[GenericArray<Fr, A>]) -> Vec<F
     data.par_iter().map(|x| hash_single_column(x)).collect()
 }
 
-
 fn persist_tree_c(
     index: usize,
     path: &Path,
@@ -497,7 +501,6 @@ fn persist_tree_c(
 
     Ok(())
 }
-
 
 fn as_generic_arrays<'a, A: Arity<Fr>>(vec: &'a [Fr]) -> &'a [GenericArray<Fr, A>] {
     // It is a programmer error to call `as_generic_arrays` on a vector whose underlying data cannot be divided

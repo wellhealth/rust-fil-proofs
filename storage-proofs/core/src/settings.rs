@@ -55,12 +55,7 @@ impl Default for Settings {
             parent_cache: cache("filecoin-parents"),
             use_fil_blst: false,
             use_multicore_sdr: false,
-            cores_for_p2: {
-                match num_cpus::get() {
-                    num if num < 4 => num,
-                    num => num / 2,
-                }
-            },
+            cores_for_p2: num_cpus::get() / 2,
         }
     }
 }
