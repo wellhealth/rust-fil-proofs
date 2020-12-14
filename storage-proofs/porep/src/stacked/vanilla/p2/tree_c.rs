@@ -447,51 +447,6 @@ pub fn cpu_build_column<A: PoseidonArity>(data: &[GenericArray<Fr, A>]) -> Vec<F
     data.par_iter().map(|x| hash_single_column(x)).collect()
 }
 
-pub fn build_tree_gpu<TreeArity>(
-    mut tree_data: Vec<Fr>,
-    batcher: &mut GPUBatchHasher<TreeArity>,
-) -> Result<(Vec<Fr>, Vec<Fr>)>
-where
-    TreeArity: PoseidonArity,
-{
-    let leaf_count = tree_data.len();
-    let final_tree_size = tree_size::<TreeArity>(leaf_count);
-    let intermediate_tree_size = final_tree_size + leaf_count;
-    let arity = TreeArity::to_usize();
-    let max_batch_size = batcher.max_batch_size();
-
-    let (mut row_start, mut row_end) = (0, leaf_count);
-    while row_end < intermediate_tree_size {
-        let row_size = row_end - row_start;
-        assert_eq!(0, row_size % arity);
-        let new_row_size = row_size / arity;
-        let (new_row_start, new_row_end) = (row_end, row_end + new_row_size);
-
-        let mut total_hashed = 0;
-        let mut batch_start = row_start;
-        while total_hashed < new_row_size {
-            let batch_end = usize::min(batch_start + (max_batch_size * arity), row_end);
-            let batch_size = (batch_end - batch_start) / arity;
-            let preimages = as_generic_arrays::<TreeArity>(&tree_data[batch_start..batch_end]);
-            let hashed = batcher
-                .hash(&preimages)
-                .context("cannot hash to generate merkle tree")?;
-
-            #[allow(clippy::drop_ref)]
-            drop(preimages); // make sure we don't reference tree_data anymore
-            tree_data[new_row_start + total_hashed..new_row_start + total_hashed + hashed.len()]
-                .copy_from_slice(&hashed);
-            total_hashed += batch_size;
-            batch_start = batch_end;
-        }
-
-        row_start = new_row_start;
-        row_end = new_row_end;
-    }
-    let tree = tree_data[tree_data.len() - final_tree_size..].to_vec();
-    let base = tree_data;
-    Ok((base, tree))
-}
 
 fn persist_tree_c(
     index: usize,
@@ -543,38 +498,6 @@ fn persist_tree_c(
     Ok(())
 }
 
-pub fn tree_size<TreeArity>(leaf_count: usize) -> usize
-where
-    TreeArity: PoseidonArity,
-{
-    let arity = TreeArity::to_usize();
-
-    let mut tree_size = 0;
-    let mut current_row_size = leaf_count;
-
-    // Exclude the base row, along with the rows to be discarded.
-    let mut remaining_rows_to_exclude = 1;
-
-    while current_row_size >= 1 {
-        if remaining_rows_to_exclude > 0 {
-            remaining_rows_to_exclude -= 1;
-        } else {
-            tree_size += current_row_size;
-        }
-        if current_row_size != 1 {
-            assert_eq!(
-                0,
-                current_row_size % arity,
-                "Tree leaf count {} is not a power of arity {}.",
-                leaf_count,
-                arity
-            )
-        }
-        current_row_size /= arity;
-    }
-
-    tree_size
-}
 
 fn as_generic_arrays<'a, A: Arity<Fr>>(vec: &'a [Fr]) -> &'a [GenericArray<Fr, A>] {
     // It is a programmer error to call `as_generic_arrays` on a vector whose underlying data cannot be divided
