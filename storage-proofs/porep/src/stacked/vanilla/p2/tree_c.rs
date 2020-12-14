@@ -87,13 +87,15 @@ where
             let txs = txs.clone();
             move |_| {
                 POOL.install(move || {
-                    generate_tree_c_gpu::<ColumnArity, TreeArity>(
+                    if let Err(e) = generate_tree_c_gpu::<ColumnArity, TreeArity>(
                         nodes_count,
                         gpu_index,
                         column_rx,
                         &txs,
-                    )
-                    .unwrap();
+                    ) {
+                        error!("generate_tree_c_gpu error: {:?}", e);
+						Result::<()>::Err(e).unwrap();
+                    }
                 })
             }
         });
