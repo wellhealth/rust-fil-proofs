@@ -1210,7 +1210,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .map(|x| (x, data))
         };
 
-        if num_cpus::get() < 10 {
+        if num_cpus::get() >= 10 {
             POOL.install(lambda)
         } else {
             lambda()
