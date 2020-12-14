@@ -172,7 +172,11 @@ fn read_data_from_file(
             let chunked_node_count = std::cmp::min(rest_count, batch_size);
 
             let data = read_single_batch(files, chunked_node_count)?;
-            info!("file read: tree-c:{}, node:{}", config_index, node_index);
+            info!(
+                "file read: tree-c:{}, node:{}",
+                config_index + 1,
+                node_index
+            );
             chan.send((config_index, node_index, data))
                 .with_context(|| format!("{:?}: cannot send file data", replica_path))?;
         }
@@ -199,7 +203,8 @@ fn generate_columns<ColumnArity>(
 
         info!(
             "column generated: tree-c:{}, node:{}",
-            config_index, node_index
+            config_index + 1,
+            node_index
         );
         tx.send(ColumnData {
             columns,
@@ -244,7 +249,11 @@ pub fn generate_tree_c_cpu<ColumnArity, TreeArity>(
     } in column_rx.iter()
     {
         let result = cpu_build_column(&columns);
-        info!("cpu built: tree-c:{}, node:{}", config_index, node_index);
+        info!(
+            "cpu built: tree-c:{}, node:{}",
+            config_index + 1,
+            node_index
+        );
 
         hashed_tx[config_index].send((node_index, result)).unwrap();
     }
@@ -284,10 +293,15 @@ where
                 .with_context(|| {
                     format!(
                         "{:?} cannot collect column for tree_c {}",
-                        replica_path, index
+                        replica_path,
+                        index + 1
                     )
                 })?;
-            info!("{:?}: tree-c {} has been collected", replica_path, index);
+            info!(
+                "{:?}: tree-c {} has been collected",
+                replica_path,
+                index + 1
+            );
             tx.send((index, tree_c_column))
                 .with_context(|| format!(""))?;
         }
@@ -332,7 +346,8 @@ where
                 .with_context(|| format!("{:?} cannot add final leaves", replica_path))?;
             info!(
                 "{:?}: tree-c {} has been built from column",
-                replica_path, index
+                replica_path,
+                index + 1
             );
 
             let tx = tx_err.clone();
@@ -406,7 +421,7 @@ where
             cpu_build_column(&columns)
         });
 
-        info!("built: tree-c:{}, node:{}", config_index, node_index);
+        info!("built: tree-c:{}, node:{}", config_index + 1, node_index);
 
         hashed_tx[config_index].send((node_index, result)).unwrap();
     }
@@ -483,7 +498,8 @@ fn persist_tree_c(
     ));
     info!(
         "{:?}.persisting, done: cursor created for tree-c {}",
-        replica_path, index
+        replica_path,
+        index + 1
     );
 
     for fr in base.iter().chain(tree.iter()).map(|x| x.into_repr()) {
@@ -492,7 +508,8 @@ fn persist_tree_c(
     }
     info!(
         "{:?}.persisting, done: put data into cursor for tree-c {}",
-        replica_path, index
+        replica_path,
+        index + 1
     );
 
     let mut tree_c = OpenOptions::new()
@@ -504,14 +521,16 @@ fn persist_tree_c(
 
     info!(
         "{:?}.persisting, done: file opened for {}",
-        replica_path, index
+        replica_path,
+        index + 1
     );
     tree_c
         .write_all(&cursor.into_inner())
         .with_context(|| format!("cannot write to file: {:?}", path))?;
     info!(
         "{:?}.persisting, done: file written for tree-c {}",
-        replica_path, index
+        replica_path,
+        index + 1
     );
 
     Ok(())
