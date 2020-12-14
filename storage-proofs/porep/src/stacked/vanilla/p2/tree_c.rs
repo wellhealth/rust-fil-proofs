@@ -113,7 +113,6 @@ where
             gpu_index,
         )?;
 
-        dbg!();
         Ok(())
     });
 
