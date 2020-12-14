@@ -70,6 +70,16 @@ pub struct StackedDrg<'a, Tree: 'a + MerkleTreeTrait, G: 'a + Hasher> {
     _a: PhantomData<&'a Tree>,
     _b: PhantomData<&'a G>,
 }
+lazy_static! {
+    pub static ref POOL: rayon::ThreadPool = {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(
+                settings::SETTINGS.lock().unwrap().cores_for_p2 
+            )
+            .build()
+            .unwrap()
+    };
+}
 
 impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tree, G> {
     #[allow(clippy::too_many_arguments)]
@@ -969,18 +979,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     where
         TreeArity: PoseidonArity,
     {
-        lazy_static! {
-            static ref POOL: rayon::ThreadPool = {
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(
-                        num_cpus::get()
-                            - 3
-                            - settings::SETTINGS.lock().unwrap().cores_for_p1 as usize,
-                    )
-                    .build()
-                    .unwrap()
-            };
-        };
         let lambda = || {
             let (configs, replica_config) = split_config_and_replica(
                 tree_r_last_config.clone(),

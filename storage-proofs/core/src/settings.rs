@@ -31,7 +31,7 @@ pub struct Settings {
     pub parent_cache: String,
     pub use_fil_blst: bool,
     pub use_multicore_sdr: bool,
-    pub cores_for_p1: u32,
+    pub cores_for_p2: usize,
 }
 
 impl Default for Settings {
@@ -55,7 +55,12 @@ impl Default for Settings {
             parent_cache: cache("filecoin-parents"),
             use_fil_blst: false,
             use_multicore_sdr: false,
-            cores_for_p1: 6,
+            cores_for_p2: {
+                match num_cpus::get() {
+                    num if num < 4 => num,
+                    num => num / 2,
+                }
+            },
         }
     }
 }

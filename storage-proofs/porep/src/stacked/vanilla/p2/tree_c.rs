@@ -1,9 +1,8 @@
 #![allow(unused_variables)]
+use crate::stacked::hash::hash_single_column;
+use crate::stacked::vanilla::proof::POOL;
 use anyhow::Result;
 use anyhow::{bail, Context};
-use storage_proofs_core::settings;
-
-use crate::stacked::hash::hash_single_column;
 use ff::Field;
 use ff::PrimeField;
 use ff::PrimeFieldRepr;
@@ -27,6 +26,7 @@ use std::path::PathBuf;
 use std::{fs::File, sync::mpsc::channel};
 use std::{fs::OpenOptions, io::Cursor};
 use storage_proofs_core::hasher::PoseidonArity;
+use storage_proofs_core::settings;
 
 struct Channels {
     txs: Vec<std::sync::mpsc::Sender<(usize, Vec<Fr>)>>,
@@ -38,12 +38,13 @@ pub fn custom_tree_c<ColumnArity, TreeArity>(
     configs: &[StoreConfig],
     labels: &[(PathBuf, String)],
     replica_path: &Path,
-    gpu_index: usize,
+    _gpu_index: usize,
 ) -> Result<()>
 where
     ColumnArity: PoseidonArity + 'static,
     TreeArity: PoseidonArity,
 {
+    let gpu_index = 0;
     let (max_gpu_column_batch_size, max_gpu_tree_batch_size) = {
         let settings_lock = settings::SETTINGS
             .lock()
@@ -86,18 +87,20 @@ where
             let column_rx = column_rx.clone();
             let txs = txs.clone();
             move |_| {
-                generate_tree_c_gpu::<ColumnArity, TreeArity>(
-                    nodes_count,
-                    gpu_index,
-                    column_rx,
-                    &txs,
-                )
-                .unwrap();
+                POOL.install(move || {
+                    generate_tree_c_gpu::<ColumnArity, TreeArity>(
+                        nodes_count,
+                        gpu_index,
+                        column_rx,
+                        &txs,
+                    )
+                    .unwrap();
+                })
             }
         });
 
         s.spawn(move |s| {
-            generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs);
+            POOL.install(move || generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs))
         });
 
         collect_and_persist_tree_c::<TreeArity>(
