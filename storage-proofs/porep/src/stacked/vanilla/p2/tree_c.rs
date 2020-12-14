@@ -38,13 +38,12 @@ pub fn custom_tree_c<ColumnArity, TreeArity>(
     configs: &[StoreConfig],
     labels: &[(PathBuf, String)],
     replica_path: &Path,
-    _gpu_index: usize,
+    gpu_index: usize,
 ) -> Result<()>
 where
     ColumnArity: PoseidonArity + 'static,
     TreeArity: PoseidonArity,
 {
-    let gpu_index = 1;
     let (max_gpu_column_batch_size, max_gpu_tree_batch_size) = {
         let settings_lock = settings::SETTINGS
             .lock()
