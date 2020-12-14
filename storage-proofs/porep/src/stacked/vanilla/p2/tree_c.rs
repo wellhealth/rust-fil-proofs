@@ -20,10 +20,10 @@ use paired::bls12_381::Fr;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
+use std::convert::TryInto;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
-use std::convert::TryInto;
 use std::{fs::File, sync::mpsc::channel};
 use std::{fs::OpenOptions, io::Cursor};
 use storage_proofs_core::hasher::PoseidonArity;
@@ -324,19 +324,37 @@ where
     )
     .with_context(|| format!("{:?}: cannot create tree_builder", replica_path))?;
 
-    for (index, column) in rx.iter() {
-        let (base, tree) = builder
-            .add_final_leaves(&column)
-            .with_context(|| format!("{:?} cannot add final leaves", replica_path))?;
-        info!(
-            "{:?}: tree-c {} has been built from column",
-            replica_path, index
-        );
+    let (tx_err, rx_err) = channel();
+    let res = crossbeam::scope(|s| -> Result<()> {
+        for (index, column) in rx.iter() {
+            let (base, tree) = builder
+                .add_final_leaves(&column)
+                .with_context(|| format!("{:?} cannot add final leaves", replica_path))?;
+            info!(
+                "{:?}: tree-c {} has been built from column",
+                replica_path, index
+            );
 
-        persist_tree_c(index, &paths[index], &base, &tree, replica_path)?;
+            let tx = tx_err.clone();
+            s.spawn(move |_| {
+                if let Err(e) = persist_tree_c(index, &paths[index], &base, &tree, replica_path) {
+                    error!("cannot persisit tree-c {}, error: {:?}", index + 1, e);
+                    tx.send((index + 1, e)).unwrap();
+                }
+            });
+        }
+        Ok(())
+    });
+    drop(tx_err);
+    if let Ok((index, e)) = rx_err.try_recv() {
+        bail!("cannot persisit tree-c {}, error: {:?}", index, e);
     }
 
-    Ok(())
+    match res {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(e),
+        Err(e) => Err(anyhow::anyhow!("building tree-c panic, error: {:?}", e)),
+    }
 }
 
 pub fn collect_column_for_config(
