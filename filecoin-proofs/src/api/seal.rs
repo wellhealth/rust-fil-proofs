@@ -3,7 +3,6 @@ use std::io::prelude::*;
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 
-
 use anyhow::{ensure, Context, Result};
 use bincode::{deserialize, serialize};
 use log::{info, trace};
@@ -44,6 +43,7 @@ use crate::types::{
 };
 use crate::Labels;
 use std::marker::PhantomData;
+pub const GIT_VERSION: &str = git_version::git_version!();
 
 #[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1<R, S, T, Tree: 'static + MerkleTreeTrait>(
@@ -204,6 +204,8 @@ where
     R: AsRef<Path>,
     S: AsRef<Path>,
 {
+    info!("{:?}: git-version: {}", replica_path.as_ref(), GIT_VERSION);
+
     std::panic::set_hook(Box::new(|_| {
         let bt = backtrace::Backtrace::new();
         info!("panic occured, backtrace: {:?}", bt);
@@ -292,7 +294,6 @@ where
     let gpu_index = select_gpu_device();
 
     info!("select gpu index: {}", gpu_index);
-
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     let result = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
@@ -464,7 +465,6 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     info!("seal_commit_phase1:finish: {:?}", sector_id);
     Ok(out)
 }
-
 
 pub fn seal_commit_phase2<Tree>(
     porep_config: PoRepConfig,
@@ -1168,4 +1168,3 @@ pub fn select_gpu_device() -> usize {
         .parse()
         .unwrap_or(0)
 }
-
