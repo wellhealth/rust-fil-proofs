@@ -247,12 +247,6 @@ fn stage2(
     let vk = &params.vk;
     let n = provers[0].a.len();
 
-    let n_a = provers[0].a.len();
-    let n_b = provers[0].b.len();
-    let n_c = provers[0].c.len();
-
-    info!("a = {}, b = {}, c = {}", n_a, n_b, n_c);
-
     // Make sure all circuits have the same input len.
     for prover in &provers {
         assert_eq!(
