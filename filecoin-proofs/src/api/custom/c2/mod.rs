@@ -47,6 +47,9 @@ use storage_proofs::{
     sector::SectorId,
 };
 
+mod stage1;
+mod stage2;
+
 pub struct C2PreparationData<'a, Tree>
 where
     Tree: MerkleTreeTrait + 'static,
@@ -271,7 +274,7 @@ fn stage2(
     let (tx_ab, rx_ab) = channel();
     let (tx_g2, rx_g2) = channel();
 
-    let mut a_s = vec![];
+    let mut a_s: Vec<Arc<Vec<FrRepr>>> = vec![];
     crossbeam::scope({
         let a_s = &mut a_s;
         let provers_len = provers.len();
@@ -360,34 +363,21 @@ fn stage2(
 
     let mut multiexp_kern = Some(LockedMultiexpKernel::<Bls12>::new(log_d, false, gpu_index));
 
-    let mut h_s = Ok(vec![]);
-    crossbeam::scope({
-        let h_s = &mut h_s;
+    let h_s = crossbeam::scope({
         let worker = &worker;
         let multiexp_kern = &mut multiexp_kern;
         move |s| {
             s.spawn(move |_| {
                 tx_hl.send(params.get_l(0)).unwrap();
             });
-            *h_s = a_s
-                .into_iter()
-                .map(|a| {
-                    Ok(multiexp_full(
-                        worker,
-                        param_h.clone(),
-                        FullDensity,
-                        a,
-                        multiexp_kern,
-                    ))
-                })
-                .collect::<Result<Vec<_>, SynthesisError>>();
-            drop(param_h);
+            a_s.into_iter()
+                .map(|a| multiexp_full(worker, param_h.clone(), FullDensity, a, multiexp_kern))
+                .collect::<Vec<_>>()
         }
     })
     .unwrap();
 
     info!("{:?}, done h_s", sector_id);
-    let h_s = h_s?;
 
     let input_assignments = provers
         .par_iter_mut()
@@ -644,5 +634,3 @@ where
         .map(|(&e, _)| e)
         .collect()
 }
-
-mod stage1;
