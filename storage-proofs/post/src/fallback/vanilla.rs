@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use std::time::{SystemTime, Instant};
+use std::time::Instant;
 
 //use std::panic::AssertUnwindSafe;
 use storage_proofs_core::{
