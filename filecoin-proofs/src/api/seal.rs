@@ -43,7 +43,7 @@ use crate::types::{
 };
 use crate::Labels;
 use std::marker::PhantomData;
-pub const GIT_VERSION: &str = git_version::git_version!();
+pub const GIT_VERSION: &str = git_version::git_version!(args = ["--abbrev=40", "--always", "--dirty=-modified"], prefix = "git:");
 
 #[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1<R, S, T, Tree: 'static + MerkleTreeTrait>(
