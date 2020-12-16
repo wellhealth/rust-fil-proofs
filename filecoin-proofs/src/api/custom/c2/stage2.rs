@@ -11,7 +11,9 @@ use bellperson::{
     multiexp::{multiexp_full, FullDensity},
     SynthesisError,
 };
+use ff::PrimeField;
 use log::info;
+use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use std::sync::{
     mpsc::{channel, sync_channel, Receiver, SyncSender},
     Arc,
@@ -52,8 +54,11 @@ pub fn run(
     std::thread::spawn(move || {
         hs(rx_fft, rx_param_h, tx_h);
     });
+    // EvaluationDomain<Bls12, Scalar<Bls12>>
 
     fft(provers, params, log_d, gpu_index, tx_fft, tx_param_h, 1)?;
+    let input_assignments = collect_input_assignments(provers);
+    let aux_assignments = collect_aux_assignments(provers);
 
     Ok(())
 }
@@ -177,4 +182,23 @@ fn compute_log_d(n: usize) -> usize {
         log_d += 1;
     }
     log_d
+}
+
+fn collect_input_assignments(provers: &mut [ProvingAssignment<Bls12>]) -> Vec<Arc<Vec<FrRepr>>> {
+    provers
+        .par_iter_mut()
+        .map(|prover| {
+            let assignments = std::mem::replace(&mut prover.input_assignment, Vec::new());
+            Arc::new(assignments.into_iter().map(|s| s.into_repr()).collect())
+        })
+        .collect()
+}
+fn collect_aux_assignments(provers: &mut [ProvingAssignment<Bls12>]) -> Vec<Arc<Vec<FrRepr>>> {
+    provers
+        .par_iter_mut()
+        .map(|prover| {
+            let assignments = std::mem::replace(&mut prover.aux_assignment, Vec::new());
+            Arc::new(assignments.into_iter().map(|s| s.into_repr()).collect())
+        })
+        .collect()
 }
