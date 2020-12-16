@@ -29,6 +29,7 @@ use bellperson::{
 use ff::{Field, PrimeField};
 use groupy::CurveAffine;
 use groupy::CurveProjective;
+use lazy_static::lazy_static;
 use log::info;
 use rand::rngs::OsRng;
 use rayon::iter::{
@@ -49,6 +50,15 @@ use storage_proofs::{
 
 mod stage1;
 mod stage2;
+
+lazy_static! {
+    pub static ref SECTOR_ID: SectorId = SectorId::from(
+        std::env::var("SECTOR_ID")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
+    );
+}
 
 pub struct C2PreparationData<'a, Tree>
 where
