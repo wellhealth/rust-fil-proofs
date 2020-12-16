@@ -5,7 +5,7 @@ use anyhow::{ensure, Context, Result};
 use bellperson::{
     bls::{Bls12, Fr, FrRepr, G1Affine, G1Projective},
     domain::{EvaluationDomain, Scalar},
-    gpu::LockedFFTKernel,
+    gpu::{LockedFFTKernel, LockedMultiexpKernel},
     groth16::{MappedParameters, ParameterSource, ProvingAssignment},
     multicore::{Waiter, Worker},
     multiexp::{multiexp_full, FullDensity},
@@ -58,9 +58,34 @@ pub fn run(
 
     fft(provers, params, log_d, gpu_index, tx_fft, tx_param_h, 1)?;
     let input_assignments = collect_input_assignments(provers);
-    let aux_assignments = collect_aux_assignments(provers);
+    let aux_assignments: Vec<Arc<Vec<FrRepr>>> = collect_aux_assignments(provers);
+    let param_l: (Arc<Vec<G1Affine>>, usize) = params.get_l(0)?;
 
+    let mut multiexp_kern: Option<LockedMultiexpKernel<Bls12>> =
+        Some(LockedMultiexpKernel::<Bls12>::new(log_d, false, gpu_index));
+    let l_s = ls(&aux_assignments, param_l, &mut multiexp_kern);
     Ok(())
+}
+
+fn ls(
+    aux_assignments: &[Arc<Vec<FrRepr>>],
+    param_l: (Arc<Vec<G1Affine>>, usize),
+    kern: &mut Option<LockedMultiexpKernel<Bls12>>,
+) -> Vec<Waiter<Result<G1Projective, SynthesisError>>> {
+    aux_assignments
+        .iter()
+        .map({
+            |aux_assignment| {
+                multiexp_full(
+                    &Worker::new(),
+                    param_l.clone(),
+                    FullDensity,
+                    aux_assignment.clone(),
+                    kern,
+                )
+            }
+        })
+        .collect()
 }
 
 fn hs(
