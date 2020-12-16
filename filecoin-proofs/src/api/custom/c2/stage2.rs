@@ -54,7 +54,7 @@ pub fn whole(
         hs(rx_fft, rx_param_h, tx_h);
     });
 
-    fft(provers, params, log_d, gpu_index, tx_fft, tx_param_h, 2)?;
+    fft(provers, params, log_d, gpu_index, tx_fft, tx_param_h, 1)?;
 
     Ok(())
 }
