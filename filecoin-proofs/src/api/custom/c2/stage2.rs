@@ -28,8 +28,7 @@ pub fn calculate_h_cpu(
     multiexp_full(worker, param_h.clone(), FullDensity, a, &mut None)
 }
 
-
-pub fn whole(
+pub fn run(
     provers: &mut [ProvingAssignment<Bls12>],
     params: &MappedParameters<Bls12>,
     r_s: Vec<Fr>,
