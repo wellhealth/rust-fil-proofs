@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(unused_variables)]
 use crate::custom::c2::SECTOR_ID;
 use anyhow::{ensure, Context, Result};
 use bellperson::{
