@@ -76,14 +76,17 @@ where
         info!("release gpu index: {}", gpu_index);
         super::release_gpu_device(gpu_index);
     };
+    info!("{:?}: selected gpu device: {}", replica_path.as_ref(), gpu_index);
     std::env::set_var(
         crate::api::seal::SHENSUANYUN_GPU_INDEX,
         &gpu_index.to_string(),
     );
 
+    info!("{:?}: set_var finished", replica_path.as_ref());
     let cache_path = cache_path.as_ref().to_owned();
     let replica_path = replica_path.as_ref().to_owned();
     let param_folder = get_param_folder().context("cannot get param folder")?;
+    info!("{:?}: get_param_folder finished", replica_path);
     std::fs::create_dir_all(&param_folder)
         .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
     let program_folder = &settings::SETTINGS.program_folder;
@@ -94,6 +97,7 @@ where
         cache_path,
         replica_path: replica_path.clone(),
     };
+    info!("{:?}: data collected", replica_path);
     let uuid = get_uuid();
 
     let in_path = Path::new(&param_folder).join(&uuid);
