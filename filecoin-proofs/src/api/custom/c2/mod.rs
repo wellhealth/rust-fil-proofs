@@ -79,6 +79,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     sector_id: SectorId,
 ) -> Result<SealCommitOutput> {
     info!("{:?}: c2 procedure started", sector_id);
+
     let gpu_index = super::get_gpu_index().unwrap_or(0);
 
     let mut rng = OsRng;
@@ -99,7 +100,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
         .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
 
     info!("{:?}: c2 stage1 finished", sector_id);
-    let proofs = stage2(provers, &params, r_s, s_s, gpu_index, sector_id)?;
+    let proofs = c2_stage2(provers, &params, r_s, s_s, gpu_index, sector_id)?;
 
     let groth_proofs = proofs
         .into_iter()
@@ -248,7 +249,7 @@ pub fn init<Tree: 'static + MerkleTreeTrait>(
     })
 }
 
-fn stage2(
+fn c2_stage2(
     mut provers: Vec<ProvingAssignment<Bls12>>,
     params: &MappedParameters<Bls12>,
     r_s: Vec<Fr>,
@@ -257,7 +258,6 @@ fn stage2(
     sector_id: SectorId,
 ) -> Result<Vec<Proof<Bls12>>> {
     let worker = Worker::new();
-    let vk = &params.vk;
     let n = provers[0].a.len();
 
     // Make sure all circuits have the same input len.
@@ -573,6 +573,8 @@ fn stage2(
 
     info!("{:?}, done inputs", sector_id);
     drop(multiexp_kern);
+
+    let vk = &params.vk;
     let proofs = h_s
         .into_par_iter()
         .zip(l_s.into_par_iter())
