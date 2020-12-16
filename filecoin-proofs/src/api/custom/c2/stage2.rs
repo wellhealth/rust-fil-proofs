@@ -63,7 +63,7 @@ fn hs(
     rx_input: Receiver<Arc<Vec<FrRepr>>>,
     tx_output: SyncSender<Waiter<Result<G1Projective, SynthesisError>>>,
 ) {
-    let param_h = rx_start.recv().expect("rx_start cannot recv");
+    let param_h = rx_start.recv().expect("rx_start fails to recv");
 
     for (index, a) in rx_input.iter().enumerate() {
         let param_h = param_h.clone();
