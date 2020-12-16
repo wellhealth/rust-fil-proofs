@@ -66,7 +66,7 @@ fn hs(
 ) {
     let param_h = rx_start.recv().expect("rx_start cannot recv");
 
-    for a in rx_input.iter() {
+    for (index, a) in rx_input.iter().enumerate() {
         let param_h = param_h.clone();
         let tx_output = tx_output.clone();
         std::thread::spawn(move || {
@@ -77,10 +77,9 @@ fn hs(
                 a,
                 &mut None,
             ));
+            info!("h:{} finished", index + 1);
         });
     }
-    //.iter(|a| multiexp_full(worker, param_h.clone(), FullDensity, a, multiexp_kern))
-    //.collect::<Vec<_>>()
 }
 
 fn fft(
