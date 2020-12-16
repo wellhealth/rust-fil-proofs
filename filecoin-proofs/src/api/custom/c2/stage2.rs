@@ -26,17 +26,6 @@ pub fn calculate_h_cpu(
     multiexp_full(worker, param_h.clone(), FullDensity, a, &mut None)
 }
 
-fn multiexp_full_cpu(
-    pool: &Worker,
-    param: (Arc<Vec<bellperson::bls::G1Affine>>, usize),
-    exponents: Arc<Vec<FrRepr>>,
-) {
-    let c = if exponents.len() < 32 {
-        3u32
-    } else {
-        (f64::from(exponents.len() as u32)).ln().ceil() as u32
-    };
-}
 
 pub fn whole(
     provers: &mut [ProvingAssignment<Bls12>],
