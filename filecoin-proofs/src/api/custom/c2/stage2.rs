@@ -2,16 +2,17 @@
 use crate::custom::c2::SECTOR_ID;
 use anyhow::{ensure, Context, Result};
 use bellperson::{
-    bls::{Bls12, Fr, FrRepr},
+    bls::{Bls12, Fr, FrRepr, G1Affine, G1Projective},
     domain::{EvaluationDomain, Scalar},
     gpu::LockedFFTKernel,
-    groth16::{MappedParameters, ProvingAssignment},
-    multicore::Worker,
+    groth16::{MappedParameters, ParameterSource, ProvingAssignment},
+    multicore::{Waiter, Worker},
     multiexp::{multiexp_full, FullDensity},
+    SynthesisError,
 };
 use log::info;
 use std::sync::{
-    mpsc::{channel, sync_channel, SyncSender},
+    mpsc::{channel, sync_channel, Receiver, SyncSender},
     Arc,
 };
 use storage_proofs::sector::SectorId;
@@ -42,20 +43,52 @@ pub fn whole(
         provers.iter().all(|x| x.a.len() == n),
         "only equaly sized circuits are supported"
     );
+    let len = provers.len();
     let log_d = compute_log_d(n);
-    let (tx, rx) = sync_channel(1);
-    let (tx_data, rx_data) = sync_channel(provers.len());
-    fft(provers, log_d, gpu_index, tx, tx_data, 2);
+    let (tx_param_h, rx_param_h) = sync_channel(1);
+    let (tx_fft, rx_fft) = sync_channel(len);
+    let (tx_h, rx_h) = sync_channel(len);
+
+    std::thread::spawn(move || {
+        hs(rx_fft, rx_param_h, tx_h);
+    });
+
+    fft(provers, params, log_d, gpu_index, tx_fft, tx_param_h, 2)?;
 
     Ok(())
 }
 
+fn hs(
+    rx_start: Receiver<(Arc<Vec<G1Affine>>, usize)>,
+    rx_input: Receiver<Arc<Vec<FrRepr>>>,
+    tx_output: SyncSender<Waiter<Result<G1Projective, SynthesisError>>>,
+) {
+    let param_h = rx_start.recv().expect("rx_start cannot recv");
+
+    for a in rx_input.iter() {
+        let param_h = param_h.clone();
+        let tx_output = tx_output.clone();
+        std::thread::spawn(move || {
+            let _ = tx_output.send(multiexp_full(
+                &Worker::new(),
+                param_h.clone(),
+                FullDensity,
+                a,
+                &mut None,
+            ));
+        });
+    }
+    //.iter(|a| multiexp_full(worker, param_h.clone(), FullDensity, a, multiexp_kern))
+    //.collect::<Vec<_>>()
+}
+
 fn fft(
     provers: &mut [ProvingAssignment<Bls12>],
+    params: &MappedParameters<Bls12>,
     log_d: usize,
     gpu_index: usize,
-    h_start: SyncSender<()>,
-    h_data: SyncSender<std::sync::Arc<std::vec::Vec<bellperson::bls::FrRepr>>>,
+    h_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
+    h_data: SyncSender<Arc<Vec<FrRepr>>>,
     h_index: usize,
 ) -> Result<()> {
     let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false, gpu_index));
@@ -73,7 +106,7 @@ fn fft(
             a.sub_assign(&worker, &c);
             drop(c);
             a.divide_by_z_on_coset(&worker);
-            tx2.send((index, a)).unwrap();
+            let _ = tx2.send((index, a));
         }
     });
 
@@ -87,13 +120,13 @@ fn fft(
                 (index, a)
             })
             .map(|(_index, a)| Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()))
-            .for_each(|x| h_data.send(x).unwrap());
+            .for_each(|x| h_data.send(x).unwrap_or_default());
     });
 
     for (index, prover) in provers.iter_mut().enumerate() {
         if index == h_index {
             h_start
-                .send(())
+                .send(params.get_h(0)?)
                 .with_context(|| format!("{:?}: cannot send to h_start", *SECTOR_ID))?;
         }
         let mut a =
@@ -115,13 +148,13 @@ fn fft(
         tx1.send((a, b, c))
             .with_context(|| format!("{:?}: cannot send abc to tx1", *SECTOR_ID))?;
 
-        for (index, mut a) in rx2.try_iter() {
+        for (index, a) in rx2.try_iter() {
             fft_icoset(index, a, &mut fft_kern, &tx3);
         }
     }
     drop(tx1);
 
-    for (index, mut a) in rx2.try_iter() {
+    for (index, a) in rx2.try_iter() {
         fft_icoset(index, a, &mut fft_kern, &tx3);
     }
 
