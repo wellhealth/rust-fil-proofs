@@ -12,7 +12,7 @@ use storage_proofs::cache_key::CacheKey;
 use storage_proofs::compound_proof::{self, CompoundProof};
 use storage_proofs::hasher::{Domain, Hasher};
 use storage_proofs::merkle::{
-    create_tree, get_base_tree_count, split_config_and_replica, MerkleTreeTrait, MerkleTreeWrapper,
+    create_tree_v2, get_base_tree_count, split_config_and_replica, MerkleTreeTrait, MerkleTreeWrapper,
 };
 use storage_proofs::multi_proof::MultiProof;
 use storage_proofs::post::fallback;
@@ -30,6 +30,9 @@ use crate::types::{
     SectorSize, SnarkProof, TemporaryAux, VanillaProof,
 };
 use crate::PoStType;
+
+use third_party_stores::service::storage::download::{sds_is_enable,qiniu_is_enable, reader_from_env, RangeReader};
+
 use rayon::prelude::*;
 use std::time::SystemTime;
 
@@ -93,13 +96,32 @@ impl<Tree: MerkleTreeTrait> std::cmp::PartialOrd for PrivateReplicaInfo<Tree> {
     }
 }
 
+fn read_aux<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<u8>> {
+    let qiniu_enable = qiniu_is_enable();
+    let sds_enable = sds_is_enable();
+    let p_str = path.as_ref().to_str().unwrap();
+    let mut r: Option<RangeReader> = None;
+    if qiniu_enable || sds_enable{
+        r = reader_from_env(p_str);
+    }
+
+    info!("sds----------------------------------------------------------------------------------read_aux0");
+    //if Path::new((&path).as_ref().as_os_str()).exists() || (!qiniu_enable && !sds_enable) || r.is_none() {
+    //    return std::fs::read(path);
+    //}
+    info!("sds----------------------------------------------------------------------------------read_aux1");
+
+    let reader = r.unwrap();
+    info!("sds----------------------------------------------------------------------------------read_aux");
+    reader.download_bytes()
+}
 impl<Tree: 'static + MerkleTreeTrait> PrivateReplicaInfo<Tree> {
     pub fn new(replica: PathBuf, comm_r: Commitment, cache_dir: PathBuf) -> Result<Self> {
         ensure!(comm_r != [0; 32], "Invalid all zero commitment (comm_r)");
 
         let aux = {
             let f_aux_path = cache_dir.join(CacheKey::PAux.to_string());
-            let aux_bytes = std::fs::read(&f_aux_path)
+            let aux_bytes = read_aux(&f_aux_path)
                 .with_context(|| format!("could not read from path={:?}", f_aux_path))?;
 
             deserialize(&aux_bytes)
@@ -176,7 +198,7 @@ impl<Tree: 'static + MerkleTreeTrait> PrivateReplicaInfo<Tree> {
             tree_count,
         )?;
 
-        create_tree::<Tree>(base_tree_size, &configs, Some(&replica_config))
+        create_tree_v2::<Tree>(base_tree_size, &configs, Some(&replica_config), true)
     }
 }
 
@@ -217,7 +239,7 @@ pub fn clear_cache<Tree: MerkleTreeTrait>(cache_dir: &Path) -> Result<()> {
 
     let t_aux = {
         let f_aux_path = cache_dir.to_path_buf().join(CacheKey::TAux.to_string());
-        let aux_bytes = std::fs::read(&f_aux_path)
+        let aux_bytes = read_aux(&f_aux_path)
             .with_context(|| format!("could not read from path={:?}", f_aux_path))?;
 
         deserialize(&aux_bytes)

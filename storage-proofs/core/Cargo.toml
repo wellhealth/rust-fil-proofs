@@ -14,7 +14,7 @@ bench = false
 [dependencies]
 scopeguard = "*"
 rand = "0.7"
-merkletree = "0.21.0"
+merkletree = {path = "../../../merkle_light" }
 byteorder = "1"
 config = { version = "0.10.1", default-features = false, features = ["toml"] }
 itertools = "0.9"
