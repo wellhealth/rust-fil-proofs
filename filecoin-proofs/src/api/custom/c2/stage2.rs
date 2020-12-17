@@ -3,7 +3,7 @@
 use crate::custom::c2::SECTOR_ID;
 use anyhow::{ensure, Context, Result};
 use bellperson::{
-    bls::{Bls12, Fr, FrRepr, G1Affine, G1Projective},
+    bls::{Bls12, Fr, FrRepr, G1Affine, G1Projective, G2Affine},
     domain::{EvaluationDomain, Scalar},
     gpu::{LockedFFTKernel, LockedMultiexpKernel},
     groth16::{MappedParameters, ParameterSource, ProvingAssignment},
@@ -19,6 +19,12 @@ use std::sync::{
     Arc,
 };
 use storage_proofs::sector::SectorId;
+
+struct InputParams {
+    a: ((Arc<Vec<G1Affine>>, usize), (Arc<Vec<G1Affine>>, usize)),
+    g1: ((Arc<Vec<G1Affine>>, usize), (Arc<Vec<G1Affine>>, usize)),
+    g2: ((Arc<Vec<G2Affine>>, usize), (Arc<Vec<G2Affine>>, usize)),
+}
 
 pub fn calculate_h_cpu(
     worker: &Worker,
@@ -63,9 +69,42 @@ pub fn run(
 
     let mut multiexp_kern: Option<LockedMultiexpKernel<Bls12>> =
         Some(LockedMultiexpKernel::<Bls12>::new(log_d, false, gpu_index));
-    let l_s = ls(&aux_assignments, param_l, &mut multiexp_kern);
+
+    let (input_tx, input_rx) = sync_channel(1);
+    let ls = crossbeam::scope({
+        let aux_assignments = &aux_assignments;
+        let kern = &mut multiexp_kern;
+
+        move |s| {
+            s.spawn(move |_| {
+                let _ = input_tx.send(calculate_input_param(params));
+            });
+            ls(aux_assignments, param_l, kern)
+        }
+    })
+    .unwrap();
+    let InputParams { a, g1, g2 } = input_rx
+        .recv()
+        .unwrap()
+        .with_context(|| format!("{:?}: cannot get input params", *SECTOR_ID))?;
+
     Ok(())
 }
+
+fn calculate_input_param(params: &MappedParameters<Bls12>) -> Result<InputParams, SynthesisError> {
+    Ok(InputParams {
+        a: params.get_a(0, 0)?,
+        g1: params.get_b_g1(0, 0)?,
+        g2: params.get_b_g2(0, 0)?,
+    })
+}
+
+// let a = params.get_a(0, 0);
+// tx_ab.send(a).unwrap();
+// let g1 = params.get_b_g1(0, 0);
+// tx_ab.send(g1).unwrap();
+// let g2 = params.get_b_g2(0, 0);
+// tx_g2.send(g2).unwrap();
 
 fn ls(
     aux_assignments: &[Arc<Vec<FrRepr>>],
