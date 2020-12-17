@@ -9,6 +9,7 @@ repository = "https://github.com/filecoin-project/rust-fil-proofs"
 readme = "README.md"
 
 [dependencies]
+git-version = "*"
 backtrace = "*"
 num_cpus = { version = "1" }
 crossbeam = "*"

@@ -73,9 +73,7 @@ pub struct StackedDrg<'a, Tree: 'a + MerkleTreeTrait, G: 'a + Hasher> {
 lazy_static! {
     pub static ref POOL: rayon::ThreadPool = {
         rayon::ThreadPoolBuilder::new()
-            .num_threads(
-                settings::SETTINGS.lock().unwrap().cores_for_p2 
-            )
+            .num_threads(settings::SETTINGS.lock().unwrap().cores_for_p2)
             .build()
             .unwrap()
     };
@@ -1464,19 +1462,17 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     &labels,
                     gpu_index,
                 )
-            })
-				;
+            });
             info!("{:?}: tree_r_last done", &replica_path);
 
-            r_tx.send((tree_r_res, tree_d_root, tree_d_config))
-                .unwrap();
+            let _ = r_tx.send((tree_r_res, tree_d_root, tree_d_config));
         })
         .unwrap();
 
         let tree_c = c_rx.recv().unwrap();
         let (tree_r_res, tree_d_root, tree_d_config) = r_rx.recv().unwrap();
         let tree_c_root = tree_c?.root();
-		let (tree_r_last, data) = tree_r_res?;
+        let (tree_r_last, data) = tree_r_res?;
 
         let tree_r_last_root = tree_r_last.root();
         drop(tree_r_last);
