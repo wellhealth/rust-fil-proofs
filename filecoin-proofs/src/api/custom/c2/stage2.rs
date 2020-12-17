@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
+use super::cpu_compute_exp;
 use crate::custom::c2::SECTOR_ID;
 use anyhow::{ensure, Context, Result};
-use bellperson::{bls::G2Projective, multiexp::multiexp};
+use bellperson::{bls::G2Projective, groth16::Proof, multiexp::multiexp};
 use bellperson::{
     bls::{Bls12, Fr, FrRepr, G1Affine, G1Projective, G2Affine},
     domain::{EvaluationDomain, Scalar},
@@ -12,16 +13,27 @@ use bellperson::{
     multiexp::{multiexp_full, multiexp_precompute, FullDensity},
     SynthesisError,
 };
+use ff::Field;
 use ff::PrimeField;
+use groupy::{CurveAffine, CurveProjective};
 use log::info;
-use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
+use rayon::iter::{
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
+};
 use std::sync::{
     mpsc::{channel, sync_channel, Receiver, SyncSender},
     Arc,
 };
 use storage_proofs::sector::SectorId;
 
-use super::cpu_compute_exp;
+type Input = (
+    Waiter<Result<G1Projective, SynthesisError>>,
+    Waiter<Result<G1Projective, SynthesisError>>,
+    Waiter<Result<G1Projective, SynthesisError>>,
+    Waiter<Result<G1Projective, SynthesisError>>,
+    Waiter<Result<G2Projective, SynthesisError>>,
+    Waiter<Result<G2Projective, SynthesisError>>,
+);
 
 struct InputParams {
     a: ((Arc<Vec<G1Affine>>, usize), (Arc<Vec<G1Affine>>, usize)),
@@ -46,9 +58,12 @@ pub fn run(
     s_s: Vec<Fr>,
     gpu_index: usize,
     sector_id: SectorId,
-) -> Result<()> {
-    ensure!(!provers.is_empty(), "provers cannot be empty");
-    let n = provers.first().unwrap().a.len();
+) -> Result<Vec<Proof<Bls12>>> {
+    let n = provers
+        .first()
+        .with_context(|| format!("{:?}: provers cannot be empty", *SECTOR_ID))?
+        .a
+        .len();
 
     ensure!(
         provers.iter().all(|x| x.a.len() == n),
@@ -66,6 +81,7 @@ pub fn run(
     // EvaluationDomain<Bls12, Scalar<Bls12>>
 
     fft(provers, params, log_d, gpu_index, tx_fft, tx_param_h, 1)?;
+
     let input_assignments = collect_input_assignments(provers);
     let aux_assignments: Vec<Arc<Vec<FrRepr>>> = collect_aux_assignments(provers);
     let param_l: (Arc<Vec<G1Affine>>, usize) = params.get_l(0)?;
@@ -74,7 +90,7 @@ pub fn run(
         Some(LockedMultiexpKernel::<Bls12>::new(log_d, false, gpu_index));
 
     let (input_tx, input_rx) = sync_channel(1);
-    let ls = crossbeam::scope({
+    let l_s = crossbeam::scope({
         let aux_assignments = &aux_assignments;
         let kern = &mut multiexp_kern;
 
@@ -92,14 +108,20 @@ pub fn run(
         .unwrap()
         .with_context(|| format!("{:?}: cannot get input params", *SECTOR_ID))?;
 
-    let inputs = get_inputs(
+    let inputs: Vec<Input> = get_inputs(
         provers,
         &input_assignments,
         &aux_assignments,
         input_param,
         &mut multiexp_kern,
     )?;
-    Ok(())
+
+    drop(multiexp_kern);
+    let vk = &params.vk;
+    let h_s: Vec<Waiter<Result<G1Projective, SynthesisError>>> = rx_h.iter().collect::<Vec<_>>();
+
+    generate_proofs(h_s, l_s, inputs, r_s, s_s, vk)
+        .with_context(|| format!("{:?}: cannot generate proofs", *SECTOR_ID))
 }
 
 fn calculate_input_param(params: &MappedParameters<Bls12>) -> Result<InputParams, SynthesisError> {
@@ -277,17 +299,7 @@ fn get_inputs(
     aux_assignments: &[Arc<Vec<FrRepr>>],
     x: InputParams,
     kern: &mut Option<LockedMultiexpKernel<Bls12>>,
-) -> std::result::Result<
-    std::vec::Vec<(
-        Waiter<Result<G1Projective, SynthesisError>>,
-        Waiter<Result<G1Projective, SynthesisError>>,
-        Waiter<Result<G1Projective, SynthesisError>>,
-        Waiter<Result<G1Projective, SynthesisError>>,
-        Waiter<Result<G2Projective, SynthesisError>>,
-        Waiter<Result<G2Projective, SynthesisError>>,
-    )>,
-    SynthesisError,
-> {
+) -> std::result::Result<std::vec::Vec<Input>, SynthesisError> {
     let worker = Worker::new();
     let InputParams {
         a: param_a,
@@ -409,4 +421,68 @@ fn get_inputs(
             .unwrap()
         })
         .collect::<Result<Vec<_>, SynthesisError>>()
+}
+
+fn generate_proofs(
+    h_s: Vec<Waiter<Result<G1Projective, SynthesisError>>>,
+    l_s: Vec<Waiter<Result<G1Projective, SynthesisError>>>,
+    inputs: Vec<Input>,
+    r_s: Vec<Fr>,
+    s_s: Vec<Fr>,
+    vk: &bellperson::groth16::VerifyingKey<Bls12>,
+) -> Result<Vec<bellperson::groth16::Proof<Bls12>>, SynthesisError> {
+    h_s.into_par_iter()
+        .zip(l_s.into_par_iter())
+        .zip(inputs.into_par_iter())
+        .zip(r_s.into_par_iter())
+        .zip(s_s.into_par_iter())
+        .map(
+            |(
+                (((h, l), (a_inputs, a_aux, b_g1_inputs, b_g1_aux, b_g2_inputs, b_g2_aux)), r),
+                s,
+            )| {
+                if vk.delta_g1.is_zero() || vk.delta_g2.is_zero() {
+                    // If this element is zero, someone is trying to perform a
+                    // subversion-CRS attack.
+                    return Err(SynthesisError::UnexpectedIdentity);
+                }
+
+                let mut g_a = vk.delta_g1.mul(r);
+                g_a.add_assign_mixed(&vk.alpha_g1);
+                let mut g_b = vk.delta_g2.mul(s);
+                g_b.add_assign_mixed(&vk.beta_g2);
+                let mut g_c;
+                {
+                    let mut rs = r;
+                    rs.mul_assign(&s);
+
+                    g_c = vk.delta_g1.mul(rs);
+                    g_c.add_assign(&vk.alpha_g1.mul(s));
+                    g_c.add_assign(&vk.beta_g1.mul(r));
+                }
+                let mut a_answer = a_inputs.wait()?;
+                a_answer.add_assign(&a_aux.wait()?);
+                g_a.add_assign(&a_answer);
+                a_answer.mul_assign(s);
+                g_c.add_assign(&a_answer);
+
+                let mut b1_answer = b_g1_inputs.wait()?;
+                b1_answer.add_assign(&b_g1_aux.wait()?);
+                let mut b2_answer = b_g2_inputs.wait()?;
+                b2_answer.add_assign(&b_g2_aux.wait()?);
+
+                g_b.add_assign(&b2_answer);
+                b1_answer.mul_assign(r);
+                g_c.add_assign(&b1_answer);
+                g_c.add_assign(&h.wait()?);
+                g_c.add_assign(&l.wait()?);
+
+                Ok(Proof {
+                    a: g_a.into_affine(),
+                    b: g_b.into_affine(),
+                    c: g_c.into_affine(),
+                })
+            },
+        )
+        .collect()
 }
