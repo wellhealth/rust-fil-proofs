@@ -2,13 +2,14 @@
 #![allow(unused_variables)]
 use crate::custom::c2::SECTOR_ID;
 use anyhow::{ensure, Context, Result};
+use bellperson::{bls::G2Projective, multiexp::multiexp};
 use bellperson::{
     bls::{Bls12, Fr, FrRepr, G1Affine, G1Projective, G2Affine},
     domain::{EvaluationDomain, Scalar},
     gpu::{LockedFFTKernel, LockedMultiexpKernel},
     groth16::{MappedParameters, ParameterSource, ProvingAssignment},
     multicore::{Waiter, Worker},
-    multiexp::{multiexp_full, FullDensity},
+    multiexp::{multiexp_full, multiexp_precompute, FullDensity},
     SynthesisError,
 };
 use ff::PrimeField;
@@ -19,6 +20,8 @@ use std::sync::{
     Arc,
 };
 use storage_proofs::sector::SectorId;
+
+use super::cpu_compute_exp;
 
 struct InputParams {
     a: ((Arc<Vec<G1Affine>>, usize), (Arc<Vec<G1Affine>>, usize)),
@@ -83,11 +86,19 @@ pub fn run(
         }
     })
     .unwrap();
-    let InputParams { a, g1, g2 } = input_rx
+
+    let input_param = input_rx
         .recv()
         .unwrap()
         .with_context(|| format!("{:?}: cannot get input params", *SECTOR_ID))?;
 
+    let inputs = get_inputs(
+        provers,
+        &input_assignments,
+        &aux_assignments,
+        input_param,
+        &mut multiexp_kern,
+    )?;
     Ok(())
 }
 
@@ -98,13 +109,6 @@ fn calculate_input_param(params: &MappedParameters<Bls12>) -> Result<InputParams
         g2: params.get_b_g2(0, 0)?,
     })
 }
-
-// let a = params.get_a(0, 0);
-// tx_ab.send(a).unwrap();
-// let g1 = params.get_b_g1(0, 0);
-// tx_ab.send(g1).unwrap();
-// let g2 = params.get_b_g2(0, 0);
-// tx_g2.send(g2).unwrap();
 
 fn ls(
     aux_assignments: &[Arc<Vec<FrRepr>>],
@@ -265,4 +269,144 @@ fn collect_aux_assignments(provers: &mut [ProvingAssignment<Bls12>]) -> Vec<Arc<
             Arc::new(assignments.into_iter().map(|s| s.into_repr()).collect())
         })
         .collect()
+}
+
+fn get_inputs(
+    provers: &mut [ProvingAssignment<Bls12>],
+    input_assignments: &[Arc<Vec<FrRepr>>],
+    aux_assignments: &[Arc<Vec<FrRepr>>],
+    x: InputParams,
+    kern: &mut Option<LockedMultiexpKernel<Bls12>>,
+) -> std::result::Result<
+    std::vec::Vec<(
+        Waiter<Result<G1Projective, SynthesisError>>,
+        Waiter<Result<G1Projective, SynthesisError>>,
+        Waiter<Result<G1Projective, SynthesisError>>,
+        Waiter<Result<G1Projective, SynthesisError>>,
+        Waiter<Result<G2Projective, SynthesisError>>,
+        Waiter<Result<G2Projective, SynthesisError>>,
+    )>,
+    SynthesisError,
+> {
+    let worker = Worker::new();
+    let InputParams {
+        a: param_a,
+        g1: param_bg1,
+        g2: param_bg2,
+    } = x;
+
+    provers
+        .into_iter()
+        .zip(input_assignments.iter())
+        .zip(aux_assignments.iter())
+        .map(|((prover, input_assignment), aux_assignment)| {
+            let a_inputs_source = param_a.0.clone();
+            let a_aux_source = ((param_a.1).0.clone(), input_assignment.len());
+            let b_input_density = Arc::new(std::mem::replace(
+                &mut prover.b_input_density,
+                Default::default(),
+            ));
+
+            let a_aux_density = Arc::new(std::mem::replace(
+                &mut prover.a_aux_density,
+                Default::default(),
+            ));
+
+            let b_aux_density = Arc::new(std::mem::replace(
+                &mut prover.b_aux_density,
+                Default::default(),
+            ));
+            let (aux_tx, aux_rx) = channel();
+            crossbeam::scope(|s| {
+                s.spawn({
+                    let aux_assignment = &aux_assignment;
+                    let a_aux_density = a_aux_density.clone();
+                    let b_aux_density = b_aux_density.clone();
+                    let tx = aux_tx.clone();
+                    move |_| {
+                        tx.send(cpu_compute_exp(
+                            aux_assignment.as_slice(),
+                            a_aux_density.clone(),
+                        ))
+                        .unwrap();
+
+                        tx.send(cpu_compute_exp(
+                            aux_assignment.as_slice(),
+                            b_aux_density.clone(),
+                        ))
+                        .unwrap();
+                    }
+                });
+
+                let a_inputs = multiexp_full(
+                    &worker,
+                    a_inputs_source,
+                    FullDensity,
+                    input_assignment.clone(),
+                    kern,
+                );
+
+                let a_aux = multiexp_precompute(
+                    &worker,
+                    a_aux_source,
+                    a_aux_density,
+                    aux_assignment.clone(),
+                    kern,
+                    Arc::new(aux_rx.recv().unwrap()),
+                );
+
+                let b_input_density_total = b_input_density.get_total_density();
+                let b_g1_inputs_source = param_bg1.0.clone();
+                let b_g1_aux_source = ((param_bg1.1).0.clone(), b_input_density_total);
+
+                let b_g1_inputs = multiexp(
+                    &worker,
+                    b_g1_inputs_source,
+                    b_input_density.clone(),
+                    input_assignment.clone(),
+                    kern,
+                );
+
+                let b_exps = Arc::new(aux_rx.recv().unwrap());
+
+                let b_g1_aux = multiexp_precompute(
+                    &worker,
+                    b_g1_aux_source,
+                    b_aux_density.clone(),
+                    aux_assignment.clone(),
+                    kern,
+                    b_exps.clone(),
+                );
+
+                let b_g2_inputs_source = param_bg2.0.clone();
+                let b_g2_aux_source = ((param_bg2.1).0.clone(), b_input_density_total);
+
+                let b_g2_inputs = multiexp(
+                    &worker,
+                    b_g2_inputs_source,
+                    b_input_density,
+                    input_assignment.clone(),
+                    kern,
+                );
+                let b_g2_aux = multiexp_precompute(
+                    &worker,
+                    b_g2_aux_source,
+                    b_aux_density,
+                    aux_assignment.clone(),
+                    kern,
+                    b_exps,
+                );
+
+                Ok((
+                    a_inputs,
+                    a_aux,
+                    b_g1_inputs,
+                    b_g1_aux,
+                    b_g2_inputs,
+                    b_g2_aux,
+                ))
+            })
+            .unwrap()
+        })
+        .collect::<Result<Vec<_>, SynthesisError>>()
 }
