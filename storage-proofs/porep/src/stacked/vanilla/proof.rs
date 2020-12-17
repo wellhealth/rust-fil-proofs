@@ -1454,7 +1454,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
             // Encode original data into the last layer.
             info!("{:?}: building tree_r_last", &replica_path);
-            let (tree_r_last, data) = measure_op(GenerateTreeRLast, || {
+            let tree_r_res = measure_op(GenerateTreeRLast, || {
                 Self::generate_tree_r_last::<Tree::Arity>(
                     data,
                     nodes_count,
@@ -1465,17 +1465,18 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     gpu_index,
                 )
             })
-            .unwrap();
+				;
             info!("{:?}: tree_r_last done", &replica_path);
 
-            r_tx.send((tree_r_last, tree_d_root, data, tree_d_config))
+            r_tx.send((tree_r_res, tree_d_root, tree_d_config))
                 .unwrap();
         })
         .unwrap();
 
         let tree_c = c_rx.recv().unwrap();
-        let (tree_r_last, tree_d_root, data, tree_d_config) = r_rx.recv().unwrap();
+        let (tree_r_res, tree_d_root, tree_d_config) = r_rx.recv().unwrap();
         let tree_c_root = tree_c?.root();
+		let (tree_r_last, data) = tree_r_res?;
 
         let tree_r_last_root = tree_r_last.root();
         drop(tree_r_last);
