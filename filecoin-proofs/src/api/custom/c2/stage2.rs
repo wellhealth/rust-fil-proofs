@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-#![allow(unused_variables)]
 use super::cpu_compute_exp;
 use crate::custom::c2::SECTOR_ID;
 use anyhow::{ensure, Context, Result};
@@ -13,6 +11,7 @@ use bellperson::{
     multiexp::{multiexp_full, multiexp_precompute, FullDensity},
     SynthesisError,
 };
+use crossbeam::thread::Scope;
 use ff::Field;
 use ff::PrimeField;
 use groupy::{CurveAffine, CurveProjective};
@@ -24,7 +23,6 @@ use std::sync::{
     mpsc::{channel, sync_channel, Receiver, SyncSender},
     Arc,
 };
-use storage_proofs::sector::SectorId;
 
 type Input = (
     Waiter<Result<G1Projective, SynthesisError>>,
@@ -41,15 +39,6 @@ struct InputParams {
     g2: ((Arc<Vec<G2Affine>>, usize), (Arc<Vec<G2Affine>>, usize)),
 }
 
-pub fn calculate_h_cpu(
-    worker: &Worker,
-    param_h: (Arc<Vec<bellperson::bls::G1Affine>>, usize),
-    a: Arc<Vec<FrRepr>>,
-) -> bellperson::multicore::Waiter<
-    std::result::Result<bellperson::bls::G1Projective, bellperson::SynthesisError>,
-> {
-    multiexp_full(worker, param_h.clone(), FullDensity, a, &mut None)
-}
 
 pub fn run(
     provers: &mut [ProvingAssignment<Bls12>],
@@ -57,7 +46,6 @@ pub fn run(
     r_s: Vec<Fr>,
     s_s: Vec<Fr>,
     gpu_index: usize,
-    sector_id: SectorId,
 ) -> Result<Vec<Proof<Bls12>>> {
     let n = provers
         .first()
@@ -69,27 +57,27 @@ pub fn run(
         provers.iter().all(|x| x.a.len() == n),
         "only equaly sized circuits are supported"
     );
-    let len = provers.len();
     let log_d = compute_log_d(n);
     let (tx_param_h, rx_param_h) = sync_channel(1);
-    let (tx_fft, rx_fft) = sync_channel(len);
-    let (tx_h, rx_h) = sync_channel(len);
-
-    std::thread::spawn(move || {
-        hs(rx_fft, rx_param_h, tx_h);
-    });
+    let (tx_fft, rx_fft) = sync_channel(n);
+    // let (tx_h, rx_h) = sync_channel(len);
     // EvaluationDomain<Bls12, Scalar<Bls12>>
 
-    fft(provers, params, log_d, gpu_index, tx_fft, tx_param_h, 1)?;
-
-    let input_assignments = collect_input_assignments(provers);
-    let aux_assignments: Vec<Arc<Vec<FrRepr>>> = collect_aux_assignments(provers);
-    let param_l: (Arc<Vec<G1Affine>>, usize) = params.get_l(0)?;
+    crossbeam::scope(|s| fft(provers, params, log_d, gpu_index, tx_param_h, tx_fft, 2, s))
+        .expect("fft panic")?;
 
     let mut multiexp_kern: Option<LockedMultiexpKernel<Bls12>> =
         Some(LockedMultiexpKernel::<Bls12>::new(log_d, false, gpu_index));
+    let h_s = hs(rx_param_h, rx_fft, &mut multiexp_kern);
+
+    let input_assignments = collect_input_assignments(provers);
+    let aux_assignments: Vec<Arc<Vec<FrRepr>>> = collect_aux_assignments(provers);
 
     let (input_tx, input_rx) = sync_channel(1);
+
+    let param_l = params.get_l(0)?;
+    info!("param_l calculated");
+
     let l_s = crossbeam::scope({
         let aux_assignments = &aux_assignments;
         let kern = &mut multiexp_kern;
@@ -102,6 +90,7 @@ pub fn run(
         }
     })
     .unwrap();
+    info!("{:?}: done l_s", *SECTOR_ID);
 
     let input_param = input_rx
         .recv()
@@ -118,7 +107,7 @@ pub fn run(
 
     drop(multiexp_kern);
     let vk = &params.vk;
-    let h_s: Vec<Waiter<Result<G1Projective, SynthesisError>>> = rx_h.iter().collect::<Vec<_>>();
+    // let h_s: Vec<Waiter<Result<G1Projective, SynthesisError>>> = rx_h.iter().collect::<Vec<_>>();
 
     generate_proofs(h_s, l_s, inputs, r_s, s_s, vk)
         .with_context(|| format!("{:?}: cannot generate proofs", *SECTOR_ID))
@@ -137,17 +126,22 @@ fn ls(
     param_l: (Arc<Vec<G1Affine>>, usize),
     kern: &mut Option<LockedMultiexpKernel<Bls12>>,
 ) -> Vec<Waiter<Result<G1Projective, SynthesisError>>> {
+    info!("start doing l_s");
     aux_assignments
         .iter()
+        .enumerate()
         .map({
-            |aux_assignment| {
-                multiexp_full(
+            |(index, aux_assignment)| {
+                info!("start doing l_s:{}", index + 1);
+                let x = multiexp_full(
                     &Worker::new(),
                     param_l.clone(),
                     FullDensity,
                     aux_assignment.clone(),
                     kern,
-                )
+                );
+                info!("{:?}: l_s:{} finished", *SECTOR_ID, index + 1);
+                x
             }
         })
         .collect()
@@ -156,24 +150,28 @@ fn ls(
 fn hs(
     rx_start: Receiver<(Arc<Vec<G1Affine>>, usize)>,
     rx_input: Receiver<Arc<Vec<FrRepr>>>,
-    tx_output: SyncSender<Waiter<Result<G1Projective, SynthesisError>>>,
-) {
+    kern: &mut Option<LockedMultiexpKernel<Bls12>>,
+) -> Vec<Waiter<Result<G1Projective, SynthesisError>>> {
     let param_h = rx_start.recv().expect("rx_start fails to recv");
+    info!("h start");
 
-    for (index, a) in rx_input.iter().enumerate() {
-        let param_h = param_h.clone();
-        let tx_output = tx_output.clone();
-        std::thread::spawn(move || {
-            let _ = tx_output.send(multiexp_full(
-                &Worker::new(),
-                param_h.clone(),
-                FullDensity,
-                a,
-                &mut None,
-            ));
-            info!("h:{} finished", index + 1);
-        });
-    }
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(24)
+        .build()
+        .expect("cannot build thread_pool");
+    pool.install(move || {
+        rx_input
+            .iter()
+            .enumerate()
+            .map(|(index, a)| {
+                let param_h = param_h.clone();
+
+                let x = multiexp_full(&Worker::new(), param_h.clone(), FullDensity, a, kern);
+                info!("h:{} finished", index + 1);
+                x
+            })
+            .collect()
+    })
 }
 
 fn fft(
@@ -184,14 +182,22 @@ fn fft(
     h_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
     h_data: SyncSender<Arc<Vec<FrRepr>>>,
     h_index: usize,
+    s: &Scope,
 ) -> Result<()> {
+    let h_index = if h_index >= provers.len() {
+        provers.len() - 1
+    } else {
+        h_index
+    };
+
     let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false, gpu_index));
 
     let (tx1, rx1) = channel::<(EvaluationDomain<Bls12, Scalar<Bls12>>, _, _)>();
+
     let (tx2, rx2) = channel();
     let (tx3, rx3) = sync_channel::<EvaluationDomain<Bls12, Scalar<Bls12>>>(provers.len());
 
-    std::thread::spawn(move || {
+    s.spawn(move |_| {
         let worker = Worker::new();
         for (index, (mut a, b, c)) in rx1.iter().enumerate() {
             info!("{:?}: merge a, b, c. index: {}", *SECTOR_ID, index);
@@ -204,16 +210,15 @@ fn fft(
         }
     });
 
-    std::thread::spawn(move || {
+    s.spawn(move |_| {
         rx3.iter()
-            .enumerate()
-            .map(|(index, a)| {
+            .map(|a| {
                 let mut a = a.into_coeffs();
                 let a_len = a.len() - 1;
                 a.truncate(a_len);
-                (index, a)
+				a
             })
-            .map(|(_index, a)| Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()))
+            .map(|a| Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()))
             .for_each(|x| h_data.send(x).unwrap_or_default());
     });
 
@@ -248,7 +253,7 @@ fn fft(
     }
     drop(tx1);
 
-    for (index, a) in rx2.try_iter() {
+    for (index, a) in rx2.iter() {
         fft_icoset(index, a, &mut fft_kern, &tx3);
     }
 

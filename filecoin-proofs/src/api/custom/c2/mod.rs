@@ -96,11 +96,11 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     let r_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
     let s_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
 
-    let provers: Vec<ProvingAssignment<Bls12>> = c2_stage1(circuits)
+    let mut provers: Vec<ProvingAssignment<Bls12>> = c2_stage1(circuits)
         .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
 
     info!("{:?}: c2 stage1 finished", sector_id);
-    let proofs = c2_stage2(provers, &params, r_s, s_s, gpu_index, sector_id)?;
+    let proofs = stage2::run(&mut provers, &params, r_s, s_s, gpu_index)?;
 
     let groth_proofs = proofs
         .into_iter()
@@ -249,6 +249,7 @@ pub fn init<Tree: 'static + MerkleTreeTrait>(
     })
 }
 
+#[allow(dead_code)]
 fn c2_stage2(
     mut provers: Vec<ProvingAssignment<Bls12>>,
     params: &MappedParameters<Bls12>,

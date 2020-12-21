@@ -698,7 +698,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     {
         let (configs, replica_config) = split_config_and_replica(
             tree_r_last_config.clone(),
-            replica_path,
+            replica_path.clone(),
             nodes_count,
             tree_count,
         )?;
@@ -865,7 +865,8 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
             for (i, config) in configs.iter().enumerate() {
                 let encoded_data = last_layer_labels
-                    .read_range(start..end)?
+                    .read_range(start..end)
+                    .with_context(|| format!("{:?}, cannot read_range", &replica_path))?
                     .into_par_iter()
                     .zip(
                         data.as_mut()[(start * NODE_SIZE)..(end * NODE_SIZE)]
