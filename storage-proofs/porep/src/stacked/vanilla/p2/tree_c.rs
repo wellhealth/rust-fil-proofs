@@ -84,7 +84,9 @@ where
                 })
         });
 
-        s.spawn(move |_| generate_columns::<ColumnArity>(file_data_rx.clone(), column_tx));
+        s.spawn(move |_| {
+            generate_columns::<ColumnArity>(file_data_rx.clone(), column_tx, replica_path)
+        });
 
         s.spawn({
             let column_rx = column_rx.clone();
@@ -96,6 +98,7 @@ where
                         gpu_index,
                         column_rx,
                         &txs,
+                        replica_path,
                     ) {
                         error!("generate_tree_c_gpu error: {:?}", e);
                         Result::<()>::Err(e).expect("cannot generate tree_c gpu");
@@ -105,7 +108,9 @@ where
         });
 
         s.spawn(move |_| {
-            POOL.install(move || generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs))
+            POOL.install(move || {
+                generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs, replica_path)
+            })
         });
 
         collect_and_persist_tree_c::<TreeArity>(
@@ -180,7 +185,8 @@ fn read_data_from_file(
 
             let data = read_single_batch(files, chunked_node_count)?;
             info!(
-                "file read: tree-c:{}, node:{}",
+                "{:?}: file read: tree-c:{}, node:{}",
+                replica_path,
                 config_index + 1,
                 node_index
             );
@@ -195,6 +201,7 @@ fn read_data_from_file(
 fn generate_columns<ColumnArity>(
     rx: crossbeam::Receiver<(usize, usize, Vec<Vec<Fr>>)>,
     tx: crossbeam::Sender<ColumnData<ColumnArity>>,
+    replica_path: &Path,
 ) where
     ColumnArity: PoseidonArity,
 {
@@ -209,7 +216,8 @@ fn generate_columns<ColumnArity>(
         });
 
         info!(
-            "column generated: tree-c:{}, node:{}",
+            "{:?}:column generated: tree-c:{}, node:{}",
+            replica_path,
             config_index + 1,
             node_index
         );
@@ -245,6 +253,7 @@ fn read_single_batch(files: &mut [File], chunked_node_count: usize) -> Result<Ve
 pub fn generate_tree_c_cpu<ColumnArity, TreeArity>(
     column_rx: crossbeam::Receiver<ColumnData<ColumnArity>>,
     hashed_tx: &[std::sync::mpsc::Sender<(usize, Vec<Fr>)>],
+    replica_path: &Path,
 ) where
     ColumnArity: 'static + PoseidonArity,
     TreeArity: PoseidonArity,
@@ -257,7 +266,8 @@ pub fn generate_tree_c_cpu<ColumnArity, TreeArity>(
     {
         let result = cpu_build_column(&columns);
         info!(
-            "cpu built: tree-c:{}, node:{}",
+            "{:?}: cpu built: tree-c:{}, node:{}",
+            replica_path,
             config_index + 1,
             node_index
         );
@@ -407,6 +417,7 @@ pub fn generate_tree_c_gpu<ColumnArity, TreeArity>(
     gpu_index: usize,
     column_rx: crossbeam::Receiver<ColumnData<ColumnArity>>,
     hashed_tx: &[std::sync::mpsc::Sender<(usize, Vec<Fr>)>],
+    replica_path: &Path,
 ) -> Result<()>
 where
     ColumnArity: 'static + PoseidonArity,
@@ -427,11 +438,19 @@ where
     } in column_rx.iter()
     {
         let result = gpu_build_column(&mut batcher, &columns).unwrap_or_else(|e| {
-            info!("p2 column hash GPU failed, falling back to CPU: {:?}", e);
+            info!(
+                "{:?}: p2 column hash GPU failed, falling back to CPU: {:?}",
+                replica_path, e
+            );
             cpu_build_column(&columns)
         });
 
-        info!("built: tree-c:{}, node:{}", config_index + 1, node_index);
+        info!(
+            "{:?}: built: tree-c:{}, node:{}",
+            replica_path,
+            config_index + 1,
+            node_index
+        );
 
         hashed_tx[config_index]
             .send((node_index, result))
