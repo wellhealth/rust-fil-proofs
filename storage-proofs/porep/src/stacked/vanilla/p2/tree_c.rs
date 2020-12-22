@@ -180,15 +180,17 @@ fn read_data_from_file(
 ) -> Result<()> {
     for config_index in 0..config_count {
         for node_index in (0..node_count).step_by(batch_size) {
+            let t = std::time::Instant::now();
             let rest_count = node_count - node_index;
             let chunked_node_count = std::cmp::min(rest_count, batch_size);
 
             let data = read_single_batch(files, chunked_node_count)?;
             info!(
-                "{:?}: file read: tree-c:{}, node:{}",
+                "{:?}: file read: tree-c:{}, node:{} ({:?})",
                 replica_path,
                 config_index + 1,
-                node_index
+                node_index,
+                t.elapsed()
             );
             chan.send((config_index, node_index, data))
                 .with_context(|| format!("{:?}: cannot send file data", replica_path))?;
@@ -437,6 +439,7 @@ where
         config_index,
     } in column_rx.iter()
     {
+        let t = std::time::Instant::now();
         let result = gpu_build_column(&mut batcher, &columns).unwrap_or_else(|e| {
             info!(
                 "{:?}: p2 column hash GPU failed, falling back to CPU: {:?}",
@@ -446,10 +449,11 @@ where
         });
 
         info!(
-            "{:?}: built: tree-c:{}, node:{}",
+            "{:?}: built: tree-c:{}, node:{} ({:?})",
             replica_path,
             config_index + 1,
-            node_index
+            node_index,
+            t.elapsed(),
         );
 
         hashed_tx[config_index]
