@@ -1,4 +1,4 @@
-use crate::caches::get_stacked_params;
+use crate::{GIT_VERSION, caches::get_stacked_params};
 use crate::parameters::setup_params;
 use crate::util::as_safe_commitment;
 use crate::verify_seal;
@@ -79,6 +79,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     sector_id: SectorId,
 ) -> Result<SealCommitOutput> {
     info!("{:?}: c2 procedure started", sector_id);
+    info!("{:?}: git version:{}", sector_id, GIT_VERSION);
 
     let gpu_index = super::get_gpu_index().unwrap_or(0);
 

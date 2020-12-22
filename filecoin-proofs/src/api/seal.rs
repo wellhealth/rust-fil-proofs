@@ -513,7 +513,6 @@ pub fn official_c2<Tree: 'static + MerkleTreeTrait>(
     sector_id: SectorId,
 ) -> Result<SealCommitOutput> {
     info!("seal_commit_phase2:start: {:?}, ", sector_id);
-    info!("{:?}: git version:{}", sector_id, GIT_VERSION);
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //select gpu index
