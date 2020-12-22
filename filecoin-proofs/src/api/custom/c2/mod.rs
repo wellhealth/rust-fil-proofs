@@ -184,6 +184,7 @@ pub fn init<Tree: 'static + MerkleTreeTrait>(
     ensure!(comm_d != [0; 32], "Invalid all zero commitment (comm_d)");
     ensure!(comm_r != [0; 32], "Invalid all zero commitment (comm_r)");
 
+    info!("{:?}: {}", sector_id, line!());
     let comm_r_safe = as_safe_commitment(&comm_r, "comm_r")?;
     let comm_d_safe = DefaultPieceDomain::try_from_bytes(&comm_d)?;
 
@@ -197,12 +198,15 @@ pub fn init<Tree: 'static + MerkleTreeTrait>(
         k: None,
     };
 
+    info!("{:?}: {}", sector_id, line!());
     let params: Arc<MappedParameters<Bls12>> = get_stacked_params::<Tree>(porep_config)?;
+    info!("{:?}: {}", sector_id, line!());
 
     info!(
         "got groth params ({}) while sealing",
         u64::from(PaddedBytesAmount::from(porep_config))
     );
+    info!("{:?}: {}", sector_id, line!());
 
     let compound_setup_params = compound_proof::SetupParams {
         vanilla_params: setup_params(
@@ -214,16 +218,20 @@ pub fn init<Tree: 'static + MerkleTreeTrait>(
         priority: false,
     };
 
+    info!("{:?}: {}", sector_id, line!());
     let compound_public_params = <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
         StackedDrg<Tree, DefaultPieceHasher>,
         _,
     >>::setup(&compound_setup_params)?;
+    info!("{:?}: {}", sector_id, line!());
     let pub_params = &compound_public_params.vanilla_params;
 
+    info!("{:?}: {}", sector_id, line!());
     ensure!(
         !vanilla_proofs.is_empty(),
         "cannot create a circuit proof over missing vanilla proofs"
     );
+    info!("{:?}: {}", sector_id, line!());
 
     let circuits: Vec<StackedCircuit<Tree, DefaultPieceHasher>> = vanilla_proofs
         .into_par_iter()
@@ -239,6 +247,7 @@ pub fn init<Tree: 'static + MerkleTreeTrait>(
         })
         .collect::<Result<Vec<_>>>()?;
 
+    info!("{:?}: {}", sector_id, line!());
     Ok(C2PreparationData {
         ticket,
         params,
