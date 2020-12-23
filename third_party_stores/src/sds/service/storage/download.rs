@@ -186,6 +186,31 @@ fn parse_boundary(headers:&HeaderMap)->std::io::Result<String>{
     return Ok(boundary.unwrap());
 }
 
+
+fn build_pos_list(
+    ranges: &Vec<(u64, u64)>,
+    pos_list_ret: &mut Vec<(u64, u64)>,
+    pos_list_src: & Vec<(u64, u64, u64)>){
+ 
+    for(start_t,len_t) in ranges {
+        let mut found =false;
+        for( start,len,buff_pos) in pos_list_src{
+            if start_t>=start && 
+                *start_t < start+len &&
+                start_t+len_t <= start+len {
+                pos_list_ret.push((start_t << 24 | len_t , buff_pos+(start_t-start)));
+                found= true;
+                break;
+            }
+        }
+        if !found{
+            error!("range not found start {} len {} !",start_t,len_t);
+        }
+
+    }
+
+}
+
 fn is_debug() -> bool {
     env::var("SDS_DEBUG").is_ok()
 }
@@ -246,13 +271,8 @@ impl RangeReader {
                 
                 let striph = host.trim_end_matches("/");
 
-                let first =  key.chars().nth(0).unwrap();
-
-                return if first == '/' {
-                    format!("{}/{}{}", striph, bucket, key)
-                } else {
-                    format!("{}/{}/{}", striph, bucket, key)
-                }
+                return format!("{}/{}{}", striph, bucket,key);
+                
             })
             .collect::<Vec<_>>();
 
@@ -261,7 +281,7 @@ impl RangeReader {
             tries: 5,
             credential: Some(credential),
             bucket: Some(bucket.to_string()),
-            key:Some(key.to_string())
+            key:Some(key.trim_start_matches("/").to_string())
         }
        
     }
@@ -457,14 +477,15 @@ impl RangeReader {
         &self,
         buf: &mut [u8],
         ranges: &Vec<(u64, u64)>,
-        pos_list: &mut Vec<(u64, u64)>,
+        pos_list_ret: &mut Vec<(u64, u64)>,
     ) -> std::io::Result<usize> {
         let mut readsize  = 0;
         let mut ret = Err(Error::new(ErrorKind::InvalidData ,"error config"));
-        debug!("download multi range bufsize: {} ranges: {}", buf.len(), ranges.len());
-        let range = format!("bytes={}", gen_range(ranges));
-        let mut retry_index = 0;
         
+        let range = format!("bytes={}", gen_range(ranges));
+        
+        let mut retry_index = 0;
+        let mut pos_list: Vec<(u64, u64, u64)> = Vec::with_capacity(ranges.len());
         for url in self.choose_urls() {
             if retry_index == 3 {
                 thread::sleep(Duration::from_secs(5));
@@ -474,9 +495,16 @@ impl RangeReader {
             retry_index+=1;
             pos_list.clear();
             let urlobj = Url::parse(url).unwrap();
-            let hostport = format!("{}:{}",urlobj.host_str().unwrap(),urlobj.port().unwrap());            
-            debug!("download multi range {} {}",hostport, &range);
-            let posturl=format!("{}://{}/{}?get",urlobj.scheme(),hostport,self.bucket.as_ref().unwrap());
+            let hostport = format!("{}:{}",urlobj.host_str().unwrap(),urlobj.port().unwrap());
+
+            debug!("download multi range host:{} bucket:{},key:{} {}",hostport,
+            self.bucket.as_ref().unwrap(),
+            self.key.as_ref().unwrap(),
+             &range);
+            debug!("!!!postural:urology.scheme():{},hotpot:{},self.bucket.as_ref().unwrap():{}",urlobj.scheme(),hostport,self.bucket.as_ref().unwrap());
+
+            let  posturl=format!("{}:/{}/{}?get",urlobj.scheme(),hostport,self.bucket.as_ref().unwrap());
+            //http://192.168.253.201:8010/bucket1//home/wuzhanfly/storage/cache/s-t01027-4/p_aux
             let body = format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Get><Object><Key>{}</Key><Range>{}</Range></Object></Get>",
                 self.key.as_ref().unwrap(),
@@ -517,7 +545,7 @@ impl RangeReader {
                         }
                     }
                     let boundary = parse_boundary(resp.headers())?;
-                    let innerResult = Ok(0);
+                    let mut innerResult = Ok(0);
                     
                     if let Err(e)= Multipart::with_body(resp,&boundary).foreach_entry_ret(|objFd|
                         { 
@@ -538,7 +566,7 @@ impl RangeReader {
                                 )
                             .foreach_entry_ret(|mut field|{
                                        
-                                let (start, _length)  = match &field.headers.range {
+                                let (start, length)  = match &field.headers.range {
                                     Some(range_str) => parse_range(&range_str),
                                     None => Err(Error::new(ErrorKind::InvalidData ,"missing inner range header "))   
                                 }?;
@@ -559,9 +587,10 @@ impl RangeReader {
                                     l += x;
                                     off+=x;
                                 }
-                                pos_list.push((start << 24 | l as u64, (off-l) as u64));
+                                //pos_list.push((start << 24 | l as u64, (off-l) as u64));
+                                pos_list.push((start,length,(off-l) as u64));
                                 readsize+=l;
-                                debug!("=range:{:?} value:{}",field.headers.range,String::from_utf8_lossy(buf));     
+                                trace!("=range:{:?} value:{}",field.headers.range,String::from_utf8_lossy(buf));     
                                 
                                 return Ok(());
                             })
@@ -574,7 +603,7 @@ impl RangeReader {
                         error!("parse inner multpart failed {:?}",innerResult);
                         return innerResult;
                     }
-                    
+                    build_pos_list(ranges, pos_list_ret,&pos_list);
                     return Ok(readsize);
                 }
             }
@@ -794,14 +823,13 @@ impl RangeReader {
     }
 
     fn add_s3_auth_headers(&self,req:&mut  Request)->() {
-        //return ;
         if let Some(cred) = &self.credential{     
-            info!("sds  -------------------------req:{:?}", req);
+      
             let host = HeaderValue::try_from(
                 format!("{}.{}:{}", 
                     self.bucket.as_ref().unwrap(),                   
                     req.url().host_str().unwrap(),
-                    req.url().port().unwrap_or(443),
+                    req.url().port().unwrap(),
                     )
             ).unwrap();
 
@@ -1045,11 +1073,6 @@ static sds_conf: Lazy<Option<Config>> = Lazy::new(load_conf);
 
 pub fn sds_is_enable() -> bool {
     sds_conf.is_some()
-}
-
-pub fn qiniu_is_enable() -> bool {
-    //qiniu_conf.is_some()
-    todo!()
 }
 
 fn load_conf() -> Option<Config> {

@@ -202,9 +202,11 @@ fn parse_content_type(headers: &[StrHeader]) -> Result<Option<Mime>, ParseHeader
     if let Some(header) = find_header(headers, "Content-Type") {
         // Boundary parameter will be parsed into the `Mime`
         debug!("Found Content-Type: {:?}", header.val);
-        Ok(Some(header.val.parse::<Mime>().map_err(|_| {
-            ParseHeaderError::MimeError(header.val.into())
-        })?))
+        let r=header.val.parse::<Mime>();
+        if r.is_err() {
+            warn!("Parse Content-Type failed {:?}", header.val);
+        }
+        Ok(r.ok())
     } else {
         Ok(None)
     }

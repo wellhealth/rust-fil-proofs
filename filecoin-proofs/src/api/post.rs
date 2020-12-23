@@ -106,9 +106,9 @@ fn read_aux<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<u8>> {
     }
 
     info!("sds----------------------------------------------------------------------------------read_aux0");
-    //if Path::new((&path).as_ref().as_os_str()).exists() || (!qiniu_enable && !sds_enable) || r.is_none() {
-    //    return std::fs::read(path);
-    //}
+    if Path::new((&path).as_ref().as_os_str()).exists() || (!qiniu_enable && !sds_enable) || r.is_none() {
+        return std::fs::read(path);
+    }
     info!("sds----------------------------------------------------------------------------------read_aux1");
 
     let reader = r.unwrap();
@@ -127,7 +127,7 @@ impl<Tree: 'static + MerkleTreeTrait> PrivateReplicaInfo<Tree> {
             deserialize(&aux_bytes)
         }?;
 
-        ensure!(replica.exists(), "Sealed replica does not exist");
+        //ensure!(replica.exists(), "Sealed replica does not exist");
 
         Ok(PrivateReplicaInfo {
             replica,

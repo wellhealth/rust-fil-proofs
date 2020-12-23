@@ -5,7 +5,7 @@ use sha1::Sha1;
 use url::Url;
 use time::now_utc;
 use super::base64;
-use log::{debug};
+use log::{debug,trace};
 
 #[derive(Debug)]
 pub struct Credential {
@@ -178,16 +178,17 @@ impl Credential {
         //resource      
         data_to_sign.extend_from_slice(resource.as_bytes());
 
-        debug!("string to sign\n{}",String::from_utf8(data_to_sign.clone()).unwrap());
+        
+        trace!("string to sign\n{}",String::from_utf8(data_to_sign.clone()).unwrap());
 
         return (self.sign_s3_v2(&data_to_sign),date);     
     }
 
- /*   fn base64ed_hmac_digest(&self, data: &[u8]) -> String {
+    fn base64ed_hmac_digest(&self, data: &[u8]) -> String {
         let mut hmac = Hmac::<Sha1>::new_varkey(self.secret_key.as_bytes()).unwrap();
         hmac.input(data);
         base64::urlsafe(&hmac.result().code())
-    }*/
+    }
 
     fn will_push_body_v1(content_type: &str) -> bool {
         super::FORM_MIME.eq_ignore_ascii_case(content_type)

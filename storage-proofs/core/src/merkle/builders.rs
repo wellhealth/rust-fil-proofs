@@ -120,7 +120,6 @@ where
     Tree::Store: 'static,
 {
     use std::any::Any;
-
     let base_tree_leafs = get_base_tree_leafs::<Tree>(base_tree_len)?;
     let mut trees = Vec::with_capacity(configs.len());
     for i in 0..configs.len() {
