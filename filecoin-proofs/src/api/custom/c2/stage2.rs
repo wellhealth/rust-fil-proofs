@@ -8,16 +8,20 @@ use bellperson::{
     gpu::{LockedFFTKernel, LockedMultiexpKernel},
     groth16::{MappedParameters, ParameterSource, ProvingAssignment},
     multicore::{Waiter, Worker},
-    multiexp::{multiexp_full, multiexp_precompute, FullDensity},
+    multiexp::{multiexp_full, multiexp_inner, multiexp_precompute, FullDensity},
     SynthesisError,
 };
-use crossbeam::thread::Scope;
 use ff::Field;
 use ff::PrimeField;
 use groupy::{CurveAffine, CurveProjective};
+use lazy_static::lazy_static;
 use log::info;
-use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator,
+use rayon::{
+    iter::{
+        IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator, ParallelBridge,
+        ParallelIterator,
+    },
+    ThreadPool,
 };
 use std::sync::{
     mpsc::{channel, sync_channel, Receiver, SyncSender},
@@ -39,7 +43,6 @@ struct InputParams {
     g2: ((Arc<Vec<G2Affine>>, usize), (Arc<Vec<G2Affine>>, usize)),
 }
 
-
 pub fn run(
     provers: &mut [ProvingAssignment<Bls12>],
     params: &MappedParameters<Bls12>,
@@ -47,6 +50,7 @@ pub fn run(
     s_s: Vec<Fr>,
     gpu_index: usize,
 ) -> Result<Vec<Proof<Bls12>>> {
+    let aux_assignments: Vec<Arc<Vec<FrRepr>>> = collect_aux_assignments(provers);
     let n = provers
         .first()
         .with_context(|| format!("{:?}: provers cannot be empty", *SECTOR_ID))?
@@ -58,43 +62,34 @@ pub fn run(
         "only equaly sized circuits are supported"
     );
     let log_d = compute_log_d(n);
-    let (tx_param_h, rx_param_h) = sync_channel(1);
-    let (tx_fft, rx_fft) = sync_channel(n);
-    // let (tx_h, rx_h) = sync_channel(len);
-    // EvaluationDomain<Bls12, Scalar<Bls12>>
+    let (tx_param_h_cpu, rx_param_h_cpu) = sync_channel(1);
+    let (tx_param_h_gpu, rx_param_h_gpu) = sync_channel(1);
+    let (tx_h_cpu, rx_h_cpu) = sync_channel(n);
+    let (tx_h_gpu, rx_h_gpu) = sync_channel(n);
 
-    crossbeam::scope(|s| fft(provers, params, log_d, gpu_index, tx_param_h, tx_fft, 2, s))
-        .expect("fft panic")?;
+    let h_s_cpu = hs_cpu(rx_param_h_cpu, rx_h_cpu);
+
+    fft(
+        provers,
+        params,
+        log_d,
+        gpu_index,
+        tx_param_h_cpu,
+        tx_param_h_gpu,
+        tx_h_cpu,
+        tx_h_gpu,
+        2,
+    )?;
+    let param_l = params.get_l(0)?;
+    let l_s = ls_cpu(aux_assignments.clone(), param_l);
 
     let mut multiexp_kern: Option<LockedMultiexpKernel<Bls12>> =
         Some(LockedMultiexpKernel::<Bls12>::new(log_d, false, gpu_index));
-    let h_s = hs(rx_param_h, rx_fft, &mut multiexp_kern);
+    let h_s_gpu = hs_gpu(rx_param_h_gpu, rx_h_gpu, &mut multiexp_kern);
 
     let input_assignments = collect_input_assignments(provers);
-    let aux_assignments: Vec<Arc<Vec<FrRepr>>> = collect_aux_assignments(provers);
 
-    let (input_tx, input_rx) = sync_channel(1);
-
-    let param_l = params.get_l(0)?;
-    info!("param_l calculated");
-
-    let l_s = crossbeam::scope({
-        let aux_assignments = &aux_assignments;
-        let kern = &mut multiexp_kern;
-
-        move |s| {
-            s.spawn(move |_| {
-                let _ = input_tx.send(calculate_input_param(params));
-            });
-            ls(aux_assignments, param_l, kern)
-        }
-    })
-    .unwrap();
-    info!("{:?}: done l_s", *SECTOR_ID);
-
-    let input_param = input_rx
-        .recv()
-        .unwrap()
+    let input_param = calculate_input_param(params)
         .with_context(|| format!("{:?}: cannot get input params", *SECTOR_ID))?;
 
     let inputs: Vec<Input> = get_inputs(
@@ -109,6 +104,11 @@ pub fn run(
     let vk = &params.vk;
     // let h_s: Vec<Waiter<Result<G1Projective, SynthesisError>>> = rx_h.iter().collect::<Vec<_>>();
 
+    let l_s = l_s.recv().unwrap();
+    let mut h_s_cpu = h_s_cpu.recv().unwrap();
+
+    h_s_cpu.extend(h_s_gpu.into_iter());
+    let h_s = h_s_cpu;
     generate_proofs(h_s, l_s, inputs, r_s, s_s, vk)
         .with_context(|| format!("{:?}: cannot generate proofs", *SECTOR_ID))
 }
@@ -121,6 +121,53 @@ fn calculate_input_param(params: &MappedParameters<Bls12>) -> Result<InputParams
     })
 }
 
+fn l_cpu(
+    param_l: (Arc<Vec<G1Affine>>, usize),
+    aux_assignment: Arc<Vec<FrRepr>>,
+) -> Waiter<Result<G1Projective, SynthesisError>> {
+    let c = if aux_assignment.len() < 32 {
+        3u32
+    } else {
+        (f64::from(aux_assignment.len() as u32)).ln().ceil() as u32
+    };
+
+    let ret = multiexp_inner(param_l, FullDensity, aux_assignment, c);
+    Waiter::done(ret)
+}
+
+lazy_static! {
+    static ref LH_POOL: ThreadPool = rayon::ThreadPoolBuilder::new()
+        .num_threads(24)
+        .build()
+        .unwrap();
+}
+
+fn ls_cpu(
+    aux_assignments: Vec<Arc<Vec<FrRepr>>>,
+    param_l: (Arc<Vec<G1Affine>>, usize),
+) -> Receiver<Vec<Waiter<Result<G1Projective, SynthesisError>>>> {
+    let (tx, rx) = sync_channel(aux_assignments.len());
+
+    LH_POOL.spawn(move || {
+        tx.send(
+            aux_assignments
+                .into_par_iter()
+                .enumerate()
+                .map(|(index, it)| {
+                    info!("{:?}: l{} start", *SECTOR_ID, index + 1);
+                    let x = l_cpu(param_l.clone(), it);
+                    info!("{:?}: l{} done", *SECTOR_ID, index + 1);
+                    x
+                })
+                .collect(),
+        )
+        .expect("cannot send ls through channel");
+    });
+
+    rx
+}
+
+#[allow(dead_code)]
 fn ls(
     aux_assignments: &[Arc<Vec<FrRepr>>],
     param_l: (Arc<Vec<G1Affine>>, usize),
@@ -147,31 +194,58 @@ fn ls(
         .collect()
 }
 
-fn hs(
+fn hs_gpu(
     rx_start: Receiver<(Arc<Vec<G1Affine>>, usize)>,
-    rx_input: Receiver<Arc<Vec<FrRepr>>>,
+    rx_h: Receiver<Arc<Vec<FrRepr>>>,
     kern: &mut Option<LockedMultiexpKernel<Bls12>>,
 ) -> Vec<Waiter<Result<G1Projective, SynthesisError>>> {
-    let param_h = rx_start.recv().expect("rx_start fails to recv");
-    info!("h start");
+    let param_h = rx_start
+        .recv()
+        .expect("rx_fails to recv param_h for gpu calculation");
+    rx_h.into_iter()
+        .map(|x| multiexp_full(&Worker::new(), param_h.clone(), FullDensity, x, kern))
+        .collect()
+}
 
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(24)
-        .build()
-        .expect("cannot build thread_pool");
-    pool.install(move || {
-        rx_input
-            .iter()
-            .enumerate()
-            .map(|(index, a)| {
-                let param_h = param_h.clone();
+fn hs_cpu(
+    rx_start: Receiver<(Arc<Vec<G1Affine>>, usize)>,
+    rx_h: Receiver<Arc<Vec<FrRepr>>>,
+) -> Receiver<Vec<Waiter<Result<G1Projective, SynthesisError>>>> {
+    let (tx, rx) = channel();
 
-                let x = multiexp_full(&Worker::new(), param_h.clone(), FullDensity, a, kern);
-                info!("h:{} finished", index + 1);
-                x
-            })
-            .collect()
-    })
+    LH_POOL.spawn(move || {
+        let param_h = rx_start.recv().expect("rx_start fails to recv");
+        info!("h start");
+        tx.send(
+            rx_h.into_iter()
+                .enumerate()
+                .par_bridge()
+                .map(|(index, x)| {
+                    info!("{:?} h:{} started", *SECTOR_ID, index + 1);
+                    let x = h_cpu(param_h.clone(), x);
+                    info!("{:?} h:{} finished", *SECTOR_ID, index + 1);
+                    x
+                })
+                .collect(),
+        )
+        .expect("cannot send hs");
+    });
+
+    rx
+}
+
+fn h_cpu(
+    param_h: (Arc<Vec<G1Affine>>, usize),
+    a: Arc<Vec<FrRepr>>,
+) -> Waiter<Result<G1Projective, SynthesisError>> {
+    let c = if a.len() < 32 {
+        3u32
+    } else {
+        (f64::from(a.len() as u32)).ln().ceil() as u32
+    };
+
+    let ret = multiexp_inner(param_h, FullDensity, a, c);
+    Waiter::done(ret)
 }
 
 fn fft(
@@ -179,85 +253,99 @@ fn fft(
     params: &MappedParameters<Bls12>,
     log_d: usize,
     gpu_index: usize,
-    h_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
-    h_data: SyncSender<Arc<Vec<FrRepr>>>,
+    h_cpu_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
+    h_gpu_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
+    tx_h_cpu: SyncSender<Arc<Vec<FrRepr>>>,
+    tx_h_gpu: SyncSender<Arc<Vec<FrRepr>>>,
     h_index: usize,
-    s: &Scope,
 ) -> Result<()> {
-    let h_index = if h_index >= provers.len() {
-        provers.len() - 1
-    } else {
-        h_index
-    };
+    crossbeam::scope(|s| {
+        let h_index = if h_index >= provers.len() {
+            provers.len() - 1
+        } else {
+            h_index
+        };
 
-    let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false, gpu_index));
+        let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false, gpu_index));
 
-    let (tx1, rx1) = channel::<(EvaluationDomain<Bls12, Scalar<Bls12>>, _, _)>();
+        let (tx1, rx1) = channel::<(EvaluationDomain<Bls12, Scalar<Bls12>>, _, _)>();
 
-    let (tx2, rx2) = channel();
-    let (tx3, rx3) = sync_channel::<EvaluationDomain<Bls12, Scalar<Bls12>>>(provers.len());
+        let (tx2, rx2) = channel();
+        let (tx3, rx3) = sync_channel::<EvaluationDomain<Bls12, Scalar<Bls12>>>(provers.len());
 
-    s.spawn(move |_| {
-        let worker = Worker::new();
-        for (index, (mut a, b, c)) in rx1.iter().enumerate() {
-            info!("{:?}: merge a, b, c. index: {}", *SECTOR_ID, index);
-            a.mul_assign(&worker, &b);
-            drop(b);
-            a.sub_assign(&worker, &c);
-            drop(c);
-            a.divide_by_z_on_coset(&worker);
-            let _ = tx2.send((index, a));
+        s.spawn(move |_| {
+            let worker = Worker::new();
+            for (index, (mut a, b, c)) in rx1.iter().enumerate() {
+                info!("{:?}: merge a, b, c. index: {}", *SECTOR_ID, index);
+                a.mul_assign(&worker, &b);
+                drop(b);
+                a.sub_assign(&worker, &c);
+                drop(c);
+                a.divide_by_z_on_coset(&worker);
+                let _ = tx2.send((index, a));
+            }
+        });
+
+        s.spawn(move |_| {
+            rx3.iter()
+                .map(|a| {
+                    let mut a = a.into_coeffs();
+                    let a_len = a.len() - 1;
+                    a.truncate(a_len);
+                    a
+                })
+                .map(|a| Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()))
+                .enumerate()
+                .for_each(|(index, x)| {
+                    if index < 4 {
+                        tx_h_cpu.send(x)
+                    } else {
+                        tx_h_gpu.send(x)
+                    }
+                    .unwrap_or_default()
+                });
+        });
+
+        for (index, prover) in provers.iter_mut().enumerate() {
+            if index == h_index {
+                s.spawn(|_| {
+                    let param_h = params.get_h(0).unwrap();
+                    h_cpu_start.send(param_h.clone()).unwrap();
+                    h_gpu_start.send(param_h).unwrap();
+                });
+            }
+            let mut a = EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.a, Vec::new()))
+                .unwrap();
+            let mut b = EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.b, Vec::new()))
+                .unwrap();
+            let mut c = EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.c, Vec::new()))
+                .unwrap();
+            let worker = Worker::new();
+            b.ifft(&worker, &mut fft_kern).unwrap();
+            b.coset_fft(&worker, &mut fft_kern).unwrap();
+
+            a.ifft(&worker, &mut fft_kern).unwrap();
+            a.coset_fft(&worker, &mut fft_kern).unwrap();
+
+            c.ifft(&worker, &mut fft_kern).unwrap();
+            c.coset_fft(&worker, &mut fft_kern).unwrap();
+
+            tx1.send((a, b, c))
+                .with_context(|| format!("{:?}: cannot send abc to tx1", *SECTOR_ID))?;
+
+            for (index, a) in rx2.try_iter() {
+                fft_icoset(index, a, &mut fft_kern, &tx3);
+            }
         }
-    });
+        drop(tx1);
 
-    s.spawn(move |_| {
-        rx3.iter()
-            .map(|a| {
-                let mut a = a.into_coeffs();
-                let a_len = a.len() - 1;
-                a.truncate(a_len);
-				a
-            })
-            .map(|a| Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()))
-            .for_each(|x| h_data.send(x).unwrap_or_default());
-    });
-
-    for (index, prover) in provers.iter_mut().enumerate() {
-        if index == h_index {
-            h_start
-                .send(params.get_h(0)?)
-                .with_context(|| format!("{:?}: cannot send to h_start", *SECTOR_ID))?;
-        }
-        let mut a =
-            EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.a, Vec::new())).unwrap();
-        let mut b =
-            EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.b, Vec::new())).unwrap();
-        let mut c =
-            EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.c, Vec::new())).unwrap();
-        let worker = Worker::new();
-        b.ifft(&worker, &mut fft_kern).unwrap();
-        b.coset_fft(&worker, &mut fft_kern).unwrap();
-
-        a.ifft(&worker, &mut fft_kern).unwrap();
-        a.coset_fft(&worker, &mut fft_kern).unwrap();
-
-        c.ifft(&worker, &mut fft_kern).unwrap();
-        c.coset_fft(&worker, &mut fft_kern).unwrap();
-
-        tx1.send((a, b, c))
-            .with_context(|| format!("{:?}: cannot send abc to tx1", *SECTOR_ID))?;
-
-        for (index, a) in rx2.try_iter() {
+        for (index, a) in rx2.iter() {
             fft_icoset(index, a, &mut fft_kern, &tx3);
         }
-    }
-    drop(tx1);
 
-    for (index, a) in rx2.iter() {
-        fft_icoset(index, a, &mut fft_kern, &tx3);
-    }
-
-    Ok(())
+        Ok(())
+    })
+    .unwrap()
 }
 
 fn fft_icoset(
@@ -316,7 +404,8 @@ fn get_inputs(
         .into_iter()
         .zip(input_assignments.iter())
         .zip(aux_assignments.iter())
-        .map(|((prover, input_assignment), aux_assignment)| {
+        .enumerate()
+        .map(|(index, ((prover, input_assignment), aux_assignment))| {
             let a_inputs_source = param_a.0.clone();
             let a_aux_source = ((param_a.1).0.clone(), input_assignment.len());
             let b_input_density = Arc::new(std::mem::replace(
@@ -413,6 +502,7 @@ fn get_inputs(
                     kern,
                     b_exps,
                 );
+                info!("{:?}: input:{} finished", *SECTOR_ID, index + 1);
 
                 Ok((
                     a_inputs,
