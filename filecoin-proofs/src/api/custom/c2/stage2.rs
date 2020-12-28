@@ -27,6 +27,7 @@ use std::sync::{
     mpsc::{channel, sync_channel, Receiver, SyncSender},
     Arc,
 };
+use storage_proofs::settings::SETTINGS;
 
 type Input = (
     Waiter<Result<G1Projective, SynthesisError>>,
@@ -137,7 +138,7 @@ fn l_cpu(
 
 lazy_static! {
     static ref LH_POOL: ThreadPool = rayon::ThreadPoolBuilder::new()
-        .num_threads(24)
+        .num_threads(SETTINGS.cores_for_c2 as usize)
         .build()
         .unwrap();
 }
@@ -204,6 +205,9 @@ fn hs_gpu(
         .expect("rx_fails to recv param_h for gpu calculation");
     rx_h.into_iter()
         .map(|x| multiexp_full(&Worker::new(), param_h.clone(), FullDensity, x, kern))
+        .enumerate()
+        .inspect(|(index, _)| info!("{:?}: h-gpu done {}", *SECTOR_ID, index + 1))
+        .map(|(_, x)| x)
         .collect()
 }
 
@@ -297,7 +301,7 @@ fn fft(
                 .map(|a| Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()))
                 .enumerate()
                 .for_each(|(index, x)| {
-                    if index < 4 {
+                    if index < SETTINGS.c2_cpu_hs as usize {
                         tx_h_cpu.send(x)
                     } else {
                         tx_h_gpu.send(x)

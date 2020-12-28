@@ -32,6 +32,8 @@ pub struct Settings {
     pub multicore_sdr_lookahead: usize,
     pub param_folder: String,
     pub program_folder: String,
+    pub cores_for_c2: u32,
+	pub c2_cpu_hs: u32,
 }
 
 impl Default for Settings {
@@ -47,10 +49,10 @@ impl Default for Settings {
             rows_to_discard: 2,
             sdr_parents_cache_size: 2_048,
             window_post_synthesis_num_cpus: num_cpus::get() as u32,
+            parameter_cache: "/var/tmp/filecoin-proof-parameters/".to_string(),
             // `parameter_cache` does not use the cache() mechanism because it is now used
             // for durable, canonical Groth parameters and verifying keys.
             // The name is retained for backwards compatibility.
-            parameter_cache: "/var/tmp/filecoin-proof-parameters/".to_string(),
             parent_cache: cache("filecoin-parents"),
             use_multicore_sdr: false,
             multicore_sdr_producers: 3,
@@ -58,6 +60,8 @@ impl Default for Settings {
             multicore_sdr_lookahead: 800,
             param_folder: ".".to_owned(),
             program_folder: ".".to_owned(),
+            cores_for_c2: num_cpus::get() as u32 / 2,
+			c2_cpu_hs: 5,
         }
     }
 }

@@ -147,7 +147,8 @@ pub fn c2_stage1<Tree: 'static + MerkleTreeTrait>(
 ) -> Result<Vec<ProvingAssignment<Bls12>>, SynthesisError> {
     circuits
         .into_par_iter()
-        .map(|circuit| -> Result<_, SynthesisError> {
+        .enumerate()
+        .map(|(index, circuit)| -> Result<_, SynthesisError> {
             let mut prover = ProvingAssignment::new();
 
             prover.alloc_input(|| "", || Ok(Fr::one()))?;
@@ -158,6 +159,7 @@ pub fn c2_stage1<Tree: 'static + MerkleTreeTrait>(
                 prover.enforce(|| "", |lc| lc + Variable(Index::Input(i)), |lc| lc, |lc| lc);
             }
 
+			info!("{:?}: done prover: {}", *SECTOR_ID, index + 1);
             Ok(prover)
         })
         .collect::<Result<Vec<_>, SynthesisError>>()
