@@ -1,4 +1,3 @@
-use crate::{GIT_VERSION, caches::get_stacked_params};
 use crate::parameters::setup_params;
 use crate::util::as_safe_commitment;
 use crate::verify_seal;
@@ -13,6 +12,7 @@ use crate::SealCommitOutput;
 use crate::SealCommitPhase1Output;
 use crate::Ticket;
 use crate::SINGLE_PARTITION_PROOF_LEN;
+use crate::{caches::get_stacked_params, GIT_VERSION};
 use anyhow::{ensure, Context, Result};
 use bellperson::groth16::ParameterSource;
 use bellperson::groth16::Proof;
@@ -58,6 +58,9 @@ lazy_static! {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0)
     );
+    pub static ref C2_RANDOM_FACTOR: (Vec<Fr>, Vec<Fr>) =
+        (|| { serde_json::from_str(&std::env::var("C2_RANDOM_FACTOR").ok()?).ok() })()
+            .unwrap_or_default();
 }
 
 pub struct C2PreparationData<'a, Tree>
@@ -94,8 +97,18 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     } = init(porep_config, phase1_output, sector_id)?;
     info!("{:?}: c2 initialized", sector_id);
 
-    let r_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
-    let s_s = (0..circuits.len()).map(|_| Fr::random(&mut rng)).collect();
+
+    let (r_s, s_s) = if C2_RANDOM_FACTOR.0.len() == circuits.len()
+        && C2_RANDOM_FACTOR.1.len() == circuits.len()
+    {
+		info!("random factor from parent process");
+		info!("{:?}", *C2_RANDOM_FACTOR);
+        C2_RANDOM_FACTOR.clone()
+    } else {
+        (0..circuits.len())
+            .map(|_| (Fr::random(&mut rng), Fr::random(&mut rng)))
+            .unzip()
+    };
 
     let mut provers: Vec<ProvingAssignment<Bls12>> = c2_stage1(circuits)
         .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
@@ -159,7 +172,7 @@ pub fn c2_stage1<Tree: 'static + MerkleTreeTrait>(
                 prover.enforce(|| "", |lc| lc + Variable(Index::Input(i)), |lc| lc, |lc| lc);
             }
 
-			info!("{:?}: done prover: {}", *SECTOR_ID, index + 1);
+            info!("{:?}: done prover: {}", *SECTOR_ID, index + 1);
             Ok(prover)
         })
         .collect::<Result<Vec<_>, SynthesisError>>()
