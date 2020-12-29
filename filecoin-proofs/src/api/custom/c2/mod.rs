@@ -114,7 +114,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
         .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
 
     info!("{:?}: c2 stage1 finished", sector_id);
-    let proofs = stage2::run(&mut provers, &params, r_s, s_s, gpu_index)?;
+    let proofs = c2_stage2(provers, &params, r_s, s_s, gpu_index, sector_id)?;
 
     let groth_proofs = proofs
         .into_iter()
