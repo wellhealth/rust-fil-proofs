@@ -62,6 +62,7 @@ pub fn run(
         provers.iter().all(|x| x.a.len() == n),
         "only equaly sized circuits are supported"
     );
+
     let log_d = compute_log_d(n);
     let (tx_param_h_cpu, rx_param_h_cpu) = sync_channel(1);
     let (tx_param_h_gpu, rx_param_h_gpu) = sync_channel(1);
@@ -86,6 +87,7 @@ pub fn run(
 
     let mut multiexp_kern: Option<LockedMultiexpKernel<Bls12>> =
         Some(LockedMultiexpKernel::<Bls12>::new(log_d, false, gpu_index));
+
     let h_s_gpu = hs_gpu(rx_param_h_gpu, rx_h_gpu, &mut multiexp_kern);
 
     let input_assignments = collect_input_assignments(provers);
@@ -103,7 +105,6 @@ pub fn run(
 
     drop(multiexp_kern);
     let vk = &params.vk;
-    // let h_s: Vec<Waiter<Result<G1Projective, SynthesisError>>> = rx_h.iter().collect::<Vec<_>>();
 
     let l_s = l_s.recv().unwrap();
     let mut h_s_cpu = h_s_cpu.recv().unwrap();
@@ -405,27 +406,18 @@ fn get_inputs(
     } = x;
 
     provers
-        .into_iter()
+        .iter_mut()
         .zip(input_assignments.iter())
         .zip(aux_assignments.iter())
         .enumerate()
         .map(|(index, ((prover, input_assignment), aux_assignment))| {
             let a_inputs_source = param_a.0.clone();
             let a_aux_source = ((param_a.1).0.clone(), input_assignment.len());
-            let b_input_density = Arc::new(std::mem::replace(
-                &mut prover.b_input_density,
-                Default::default(),
-            ));
+            let b_input_density = Arc::new(std::mem::take(&mut prover.b_input_density));
 
-            let a_aux_density = Arc::new(std::mem::replace(
-                &mut prover.a_aux_density,
-                Default::default(),
-            ));
+            let a_aux_density = Arc::new(std::mem::take(&mut prover.a_aux_density));
 
-            let b_aux_density = Arc::new(std::mem::replace(
-                &mut prover.b_aux_density,
-                Default::default(),
-            ));
+            let b_aux_density = Arc::new(std::mem::take(&mut prover.b_aux_density));
             let (aux_tx, aux_rx) = channel();
             crossbeam::scope(|s| {
                 s.spawn({
