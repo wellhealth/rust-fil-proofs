@@ -477,7 +477,6 @@ fn c2_stage2(
                     }
                 })
                 .collect::<Result<Vec<_>, SynthesisError>>();
-            drop(param_l);
         }
     })
     .unwrap();
