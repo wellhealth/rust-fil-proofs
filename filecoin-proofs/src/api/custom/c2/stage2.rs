@@ -82,13 +82,22 @@ pub fn run(
         tx_h_gpu,
         2,
     )?;
-    let param_l = params.get_l(0)?;
-    let l_s = ls_cpu(aux_assignments.clone(), param_l);
 
     let mut multiexp_kern: Option<LockedMultiexpKernel<Bls12>> =
         Some(LockedMultiexpKernel::<Bls12>::new(log_d, false, gpu_index));
 
-    let h_s_gpu = hs_gpu(rx_param_h_gpu, rx_h_gpu, &mut multiexp_kern);
+    let mut param_l = Ok(Default::default());
+    let h_s_gpu = crossbeam::scope(|s| {
+        s.spawn(|_| {
+            param_l = params.get_l(0);
+        });
+
+        hs_gpu(rx_param_h_gpu, rx_h_gpu, &mut multiexp_kern)
+    })
+    .expect("hs_gpu panic");
+
+    let param_l = param_l?;
+    let l_s = ls_cpu(aux_assignments.clone(), param_l);
 
     let input_assignments = collect_input_assignments(provers);
 
