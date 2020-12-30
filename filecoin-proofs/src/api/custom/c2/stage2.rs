@@ -221,18 +221,21 @@ fn hs_cpu(
     LH_POOL.spawn(move || {
         let param_h = rx_start.recv().expect("rx_start fails to recv");
         info!("h start");
-        tx.send(
-            rx_h.into_iter()
+        tx.send({
+            let mut v = rx_h
+                .into_iter()
                 .enumerate()
                 .par_bridge()
                 .map(|(index, x)| {
                     info!("{:?} h:{} started", *SECTOR_ID, index + 1);
                     let x = h_cpu(param_h.clone(), x);
                     info!("{:?} h:{} finished", *SECTOR_ID, index + 1);
-                    x
+                    (index, x)
                 })
-                .collect(),
-        )
+                .collect::<Vec<_>>();
+            v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            v.into_iter().map(|x| x.1).collect()
+        })
         .expect("cannot send hs");
     });
 
