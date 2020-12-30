@@ -317,7 +317,7 @@ fn fft(
         for (index, prover) in provers.iter_mut().enumerate() {
             if index == h_index {
                 s.spawn(|_| {
-                    let param_h = params.get_h(0).unwrap();
+                    let param_h = params.get_h(0).expect("failed to execute params.get_h(0)");
                     h_cpu_start.send(param_h.clone()).unwrap();
                     h_gpu_start.send(param_h).unwrap();
                 });
