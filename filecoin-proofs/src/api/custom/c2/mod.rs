@@ -97,12 +97,11 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     } = init(porep_config, phase1_output, sector_id)?;
     info!("{:?}: c2 initialized", sector_id);
 
-
     let (r_s, s_s) = if C2_RANDOM_FACTOR.0.len() == circuits.len()
         && C2_RANDOM_FACTOR.1.len() == circuits.len()
     {
-		info!("random factor from parent process");
-		info!("{:?}", *C2_RANDOM_FACTOR);
+        info!("random factor from parent process");
+        info!("{:?}", *C2_RANDOM_FACTOR);
         C2_RANDOM_FACTOR.clone()
     } else {
         (0..circuits.len())
