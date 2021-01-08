@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap};
 use std::hash::{Hash, Hasher as StdHasher};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -936,6 +936,7 @@ fn generate_window_post_with_vanilla_inner<Tree: 'static + MerkleTreeTrait>(
 }
 
 use scopeguard::defer;
+use std::sync::Mutex;
 
 // Generates a Window proof-of-spacetime.
 pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
@@ -982,7 +983,7 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         post_config.typ == PoStType::Window,
         "invalid post config type"
     );
-   info!("thread counts {}", rayon::current_num_threads());
+    info!("thread counts {}", rayon::current_num_threads());
 
     let randomness_safe = as_safe_commitment(randomness, "randomness")?;
     let prover_id_safe = as_safe_commitment(&prover_id, "prover_id")?;
@@ -1004,16 +1005,31 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
 
     let t2 = SystemTime::now();
 
+
+    let faulty_sectors = Mutex::new(Vec::new());
+
     let trees: Vec<_> = replicas
         .par_iter()
-        .map(|(sector_id, replica)| {
-            replica
+        .filter_map(|(sector_id, replica)| {
+            match replica
                 .merkle_tree(post_config.sector_size)
-                .with_context(|| {
-                    format!("generate_window_post: merkle_tree failed: {:?}", sector_id)
-                })
+                {
+                Ok(o) => {
+                    Some(o)
+                },
+                Err(_) => {
+                    faulty_sectors.lock().expect("cannot obtain lock for faulty_sectors").push(*sector_id);
+                    None
+                }
+            }
         })
-        .collect::<Result<_>>()?;
+        .collect();
+
+    let faulty_sectors =  faulty_sectors.into_inner().expect("cannot call into_inner on faulty_sectors");
+
+    if !faulty_sectors.is_empty(){
+        return Err(anyhow::Error::from(storage_proofs::error::Error::FaultySectors(faulty_sectors)));
+    }
 
     info!("window init tree {} time {:?}", trees.len(), t2.elapsed());
     
