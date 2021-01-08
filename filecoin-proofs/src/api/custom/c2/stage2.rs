@@ -38,6 +38,7 @@ type Input = (
     Waiter<Result<G2Projective, SynthesisError>>,
 );
 
+#[derive(Default, Clone)]
 struct InputParams {
     a: ((Arc<Vec<G1Affine>>, usize), (Arc<Vec<G1Affine>>, usize)),
     g1: ((Arc<Vec<G1Affine>>, usize), (Arc<Vec<G1Affine>>, usize)),
@@ -87,22 +88,33 @@ pub fn run(
         Some(LockedMultiexpKernel::<Bls12>::new(log_d, false, gpu_index));
 
     let mut param_l = Ok(Default::default());
+    let mut input_assignments = Default::default();
+    let mut input_param = Ok(Default::default());
+
     let h_s_gpu = crossbeam::scope(|s| {
         s.spawn(|_| {
+            let t = std::time::Instant::now();
             param_l = params.get_l(0);
+            input_assignments = collect_input_assignments(provers);
+
+            input_param = calculate_input_param(params)
+                .with_context(|| format!("{:?}: cannot get input params", *SECTOR_ID));
+            info!(
+                "{:?}: param_l, input_assignments & input_param : {:?}",
+                *SECTOR_ID,
+                t.elapsed()
+            );
         });
 
         hs_gpu(rx_param_h_gpu, rx_h_gpu, &mut multiexp_kern)
     })
     .expect("hs_gpu panic");
 
+    let input_assignments = input_assignments;
+    let input_param = input_param?;
+
     let param_l = param_l?;
     let l_s = ls_cpu(aux_assignments.clone(), param_l);
-
-    let input_assignments = collect_input_assignments(provers);
-
-    let input_param = calculate_input_param(params)
-        .with_context(|| format!("{:?}: cannot get input params", *SECTOR_ID))?;
 
     let inputs: Vec<Input> = get_inputs(
         provers,
