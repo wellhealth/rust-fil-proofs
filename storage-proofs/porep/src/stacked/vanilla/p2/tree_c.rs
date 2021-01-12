@@ -297,15 +297,17 @@ where
         let (tx, rx) = channel();
 
         s.spawn(move |_| {
+            let data = build_tree_and_persist::<TreeArity>(
+                rx,
+                paths,
+                node_count,
+                tree_batch_size,
+                replica_path,
+                gpu_index,
+            );
+            info!("tree-c persisted");
             build_tx
-                .send(build_tree_and_persist::<TreeArity>(
-                    rx,
-                    paths,
-                    node_count,
-                    tree_batch_size,
-                    replica_path,
-                    gpu_index,
-                ))
+                .send(data)
                 .expect("cannot send persisted result for error handling");
         });
 
@@ -350,6 +352,7 @@ fn build_tree_and_persist<TreeArity>(
 where
     TreeArity: PoseidonArity,
 {
+    info!("start creating builder");
     let mut builder = TreeBuilder::<TreeArity>::new(
         Some(BatcherType::GPU),
         node_count,
@@ -358,13 +361,23 @@ where
         gpu_index,
     )
     .with_context(|| format!("{:?}: cannot create tree_builder", replica_path))?;
+    info!("{:?}: done creating builder", replica_path);
 
     let (tx_err, rx_err) = channel();
+    info!("{:?}: done creating channel", replica_path);
+
     let res = crossbeam::scope(|s| -> Result<()> {
         for (index, column) in rx.iter() {
+
+            info!(
+                "{:?}: tree-c {} start building final leaves",
+                replica_path,
+                index + 1
+            );
             let (base, tree) = builder
                 .add_final_leaves(&column)
                 .with_context(|| format!("{:?} cannot add final leaves", replica_path))?;
+
             info!(
                 "{:?}: tree-c {} has been built from column",
                 replica_path,
