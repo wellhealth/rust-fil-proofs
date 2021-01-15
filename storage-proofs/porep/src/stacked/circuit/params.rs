@@ -4,6 +4,7 @@ use bellperson::bls::{Bls12, Fr};
 use bellperson::gadgets::{boolean::Boolean, num, uint32};
 use bellperson::{ConstraintSystem, SynthesisError};
 use generic_array::typenum::{U0, U2};
+use log::info;
 use storage_proofs_core::{
     drgraph::Graph,
     gadgets::por::{AuthPath, PoRCircuit},
@@ -305,9 +306,11 @@ where
     let root = Root::from_allocated::<CS>(root.clone());
     let leaf = Root::from_allocated::<CS>(leaf.clone());
 
+    let t = std::time::Instant::now();
     PoRCircuit::<MerkleTreeWrapper<H, DiskStore<H::Domain>, U, V, W>>::synthesize(
         cs, leaf, path, root, true,
     )?;
+    info!("line: {}, {:?}", line!(), t.elapsed());
 
     Ok(())
 }

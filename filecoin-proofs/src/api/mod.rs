@@ -37,6 +37,7 @@ pub(crate) mod util;
 
 pub use self::post::*;
 pub use self::seal::*;
+pub mod custom;
 
 use storage_proofs::pieces::generate_piece_commitment_bytes_from_source;
 
