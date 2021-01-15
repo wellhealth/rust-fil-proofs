@@ -1,7 +1,12 @@
 use super::cpu_compute_exp;
 use crate::custom::c2::SECTOR_ID;
 use anyhow::{ensure, Context, Result};
-use bellperson::{bls::{self, G2Projective}, groth16::Proof, multiexp::{QueryDensity, multiexp}};
+use bellperson::{
+    bls,
+    bls::G2Projective,
+    groth16::Proof,
+    multiexp::{multiexp, QueryDensity},
+};
 use bellperson::{
     bls::{Bls12, Fr, FrRepr, G1Affine, G1Projective, G2Affine},
     domain::{EvaluationDomain, Scalar},
@@ -85,7 +90,7 @@ pub fn run(
     )?;
 
     let mut multiexp_kern: Option<LockedMultiexpKernel<Bls12>> =
-        Some(LockedMultiexpKernel::<Bls12>::new(log_d, false));
+        Some(LockedMultiexpKernel::<Bls12>::new(log_d, false, gpu_index));
 
     let mut param_l = Ok(Default::default());
     let mut input_assignments = Default::default();
@@ -160,7 +165,7 @@ fn l_cpu(
 
 lazy_static! {
     static ref LH_POOL: ThreadPool = rayon::ThreadPoolBuilder::new()
-        .num_threads(SETTINGS.cores_for_c2 as usize)
+        .num_threads(24usize)
         .build()
         .unwrap();
 }
@@ -306,12 +311,14 @@ fn fft(
             let worker = Worker::new();
             for (index, (mut a, b, c)) in rx1.iter().enumerate() {
                 info!("{:?}: merge a, b, c. index: {}", *SECTOR_ID, index);
+                let t = std::time::Instant::now();
                 a.mul_assign(&worker, &b);
                 drop(b);
                 a.sub_assign(&worker, &c);
                 drop(c);
                 a.divide_by_z_on_coset(&worker);
                 let _ = tx2.send((index, a));
+                info!("{:?}: merge: {:?}", *SECTOR_ID, t.elapsed());
             }
         });
 
@@ -326,12 +333,9 @@ fn fft(
                 .map(|a| Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()))
                 .enumerate()
                 .for_each(|(index, x)| {
-                    if index < SETTINGS.c2_cpu_hs as usize {
-                        tx_h_cpu.send(x)
-                    } else {
-                        tx_h_gpu.send(x)
-                    }
-                    .unwrap_or_default()
+                    if index < 5 { &tx_h_cpu } else { &tx_h_gpu }
+                        .send(x)
+                        .unwrap_or_default()
                 });
         });
 
@@ -600,45 +604,4 @@ fn generate_proofs(
             },
         )
         .collect()
-}
-
-pub fn multiexp_full<Q, D, G, S>(
-    pool: &Worker,
-    bases: S,
-    density_map: D,
-    exponents: Arc<Vec<<<G::Engine as ScalarEngine>::Fr as PrimeField>::Repr>>,
-    kern: &mut Option<LockedMultiexpKernel<G::Engine>>,
-) -> Waiter<Result<<G as CurveAffine>::Projective, SynthesisError>>
-where
-    for<'a> &'a Q: QueryDensity,
-    D: Send + Sync + 'static + Clone + AsRef<Q>,
-    G: CurveAffine,
-    G::Engine: Engine,
-    S: SourceBuilder<G>,
-{
-    if let Some(ref mut kern) = kern {
-        if let Ok(p) = kern.with(|k: &mut gpu::MultiexpKernel<G::Engine>| {
-            let (bss, skip) = bases.clone().get();
-            k.multiexp(pool, bss, exponents.clone(), skip, exponents.len())
-        }) {
-            return Waiter::done(Ok(p));
-        }
-    }
-
-    let c = if exponents.len() < 32 {
-        3u32
-    } else {
-        (f64::from(exponents.len() as u32)).ln().ceil() as u32
-    };
-
-    if let Some(query_size) = density_map.as_ref().get_query_size() {
-        // If the density map has a known query size, it should not be
-        // inconsistent with the number of exponents.
-        assert!(query_size == exponents.len());
-    }
-
-    Waiter::done(
-        pool.compute(move || multiexp_inner(bases, density_map, exponents, c))
-            .wait(),
-    )
 }

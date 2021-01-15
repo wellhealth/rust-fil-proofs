@@ -1,3 +1,4 @@
+use crate::caches::get_stacked_params;
 use crate::parameters::setup_params;
 use crate::util::as_safe_commitment;
 use crate::verify_seal;
@@ -12,9 +13,7 @@ use crate::SealCommitOutput;
 use crate::SealCommitPhase1Output;
 use crate::Ticket;
 use crate::SINGLE_PARTITION_PROOF_LEN;
-use crate::caches::get_stacked_params;
 use anyhow::{ensure, Context, Result};
-use bellperson::groth16::ParameterSource;
 use bellperson::groth16::Proof;
 use bellperson::{
     bls::{Bls12, Fr, FrRepr},
@@ -26,6 +25,7 @@ use bellperson::{
     multiexp::{multiexp, multiexp_full, multiexp_precompute, FullDensity, QueryDensity},
     ConstraintSystem, Index, SynthesisError, Variable,
 };
+use bellperson::{groth16::ParameterSource, Circuit};
 use ff::{Field, PrimeField};
 use groupy::CurveAffine;
 use groupy::CurveProjective;
@@ -48,8 +48,9 @@ use storage_proofs::{
     sector::SectorId,
 };
 
-const GIT_VERSION: &str = git_version::git_version!(args = ["--abbrev=40", "--always", "--dirty=-modified"]);
-mod stage1;
+const GIT_VERSION: &str =
+    git_version::git_version!(args = ["--abbrev=40", "--always", "--dirty=-modified"]);
+// mod stage1;
 mod stage2;
 
 lazy_static! {
@@ -166,7 +167,8 @@ pub fn c2_stage1<Tree: 'static + MerkleTreeTrait>(
 
             prover.alloc_input(|| "", || Ok(Fr::one()))?;
 
-            stage1::circuit_synthesize(circuit, &mut prover)?;
+            circuit.synthesize(&mut prover)?;
+            // stage1::circuit_synthesize(circuit, &mut prover)?;
 
             for i in 0..prover.input_assignment.len() {
                 prover.enforce(|| "", |lc| lc + Variable(Index::Input(i)), |lc| lc, |lc| lc);

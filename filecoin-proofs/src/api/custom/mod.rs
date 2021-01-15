@@ -1,4 +1,4 @@
-// pub mod c2;
+pub mod c2;
 
 
 pub fn get_gpu_index() -> Option<usize> {
