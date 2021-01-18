@@ -1,11 +1,7 @@
 use super::cpu_compute_exp;
 use crate::custom::c2::SECTOR_ID;
 use anyhow::{ensure, Context, Result};
-use bellperson::{
-    bls::G2Projective,
-    groth16::Proof,
-    multiexp::multiexp,
-};
+use bellperson::{bls::G2Projective, groth16::Proof, multiexp::multiexp};
 use bellperson::{
     bls::{Bls12, Fr, FrRepr, G1Affine, G1Projective, G2Affine},
     domain::{EvaluationDomain, Scalar},
@@ -118,7 +114,7 @@ pub fn run(
     let input_param = input_param?;
 
     let param_l = param_l?;
-    let l_s = ls_cpu(aux_assignments.clone(), param_l);
+    let l_s = ls_gpu(&aux_assignments, param_l, &mut multiexp_kern);
 
     let inputs: Vec<Input> = get_inputs(
         provers,
@@ -131,7 +127,7 @@ pub fn run(
     drop(multiexp_kern);
     let vk = &params.vk;
 
-    let l_s = l_s.recv().unwrap();
+    // let l_s = l_s.recv().unwrap();
     let mut h_s_cpu = h_s_cpu.recv().unwrap();
 
     h_s_cpu.extend(h_s_gpu.into_iter());
@@ -169,6 +165,7 @@ lazy_static! {
         .unwrap();
 }
 
+#[allow(dead_code)]
 fn ls_cpu(
     aux_assignments: Vec<Arc<Vec<FrRepr>>>,
     param_l: (Arc<Vec<G1Affine>>, usize),
@@ -195,7 +192,7 @@ fn ls_cpu(
 }
 
 #[allow(dead_code)]
-fn ls(
+fn ls_gpu(
     aux_assignments: &[Arc<Vec<FrRepr>>],
     param_l: (Arc<Vec<G1Affine>>, usize),
     kern: &mut Option<LockedMultiexpKernel<Bls12>>,
@@ -331,11 +328,7 @@ fn fft(
                 })
                 .map(|a| Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()))
                 .enumerate()
-                .for_each(|(index, x)| {
-                    if index < 5 { &tx_h_cpu } else { &tx_h_gpu }
-                        .send(x)
-                        .unwrap_or_default()
-                });
+                .for_each(|(index, x)| tx_h_gpu.send(x).unwrap_or_default());
         });
 
         for (index, prover) in provers.iter_mut().enumerate() {
@@ -353,6 +346,7 @@ fn fft(
             let mut c = EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.c, Vec::new()))
                 .unwrap();
             let worker = Worker::new();
+
             b.ifft(&worker, &mut fft_kern).unwrap();
             b.coset_fft(&worker, &mut fft_kern).unwrap();
 
