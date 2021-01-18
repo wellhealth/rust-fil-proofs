@@ -340,9 +340,9 @@ fn fft(
                 .for_each(|(index, x)| {
                     {
                         if index < SETTINGS.c2_cpu_hs {
-                            &tx_h_gpu
-                        } else {
                             &tx_h_cpu
+                        } else {
+                            &tx_h_gpu
                         }
                     }
                     .send(x)
