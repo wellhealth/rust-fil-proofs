@@ -59,7 +59,7 @@ impl Default for Settings {
             multicore_sdr_lookahead: 800,
             cores_for_c2: num_cpus::get() / 2,
 			c2_l_gpu: true,
-            c2_cpu_hs: 5,
+            c2_cpu_hs: 0,
         }
     }
 }
