@@ -2,10 +2,9 @@ use super::cpu_compute_exp;
 use crate::custom::c2::SECTOR_ID;
 use anyhow::{ensure, Context, Result};
 use bellperson::{
-    bls,
     bls::G2Projective,
     groth16::Proof,
-    multiexp::{multiexp, QueryDensity},
+    multiexp::multiexp,
 };
 use bellperson::{
     bls::{Bls12, Fr, FrRepr, G1Affine, G1Projective, G2Affine},
