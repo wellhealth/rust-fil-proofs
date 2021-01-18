@@ -96,7 +96,6 @@ pub fn run(
             let t = std::time::Instant::now();
             param_l = params.get_l(0);
             input_assignments = collect_input_assignments(provers);
-
             input_param = calculate_input_param(params)
                 .with_context(|| format!("{:?}: cannot get input params", *SECTOR_ID));
             info!(
@@ -114,7 +113,12 @@ pub fn run(
     let input_param = input_param?;
 
     let param_l = param_l?;
-    let l_s = ls_gpu(&aux_assignments, param_l, &mut multiexp_kern);
+
+    let l_s = (if SETTINGS.c2_l_gpu { ls_gpu } else { ls_cpu })(
+        aux_assignments.clone(),
+        param_l,
+        &mut multiexp_kern,
+    );
 
     let inputs: Vec<Input> = get_inputs(
         provers,
@@ -132,6 +136,7 @@ pub fn run(
 
     h_s_cpu.extend(h_s_gpu.into_iter());
     let h_s = h_s_cpu;
+    let l_s = l_s.recv().unwrap();
     generate_proofs(h_s, l_s, inputs, r_s, s_s, vk)
         .with_context(|| format!("{:?}: cannot generate proofs", *SECTOR_ID))
 }
@@ -169,6 +174,7 @@ lazy_static! {
 fn ls_cpu(
     aux_assignments: Vec<Arc<Vec<FrRepr>>>,
     param_l: (Arc<Vec<G1Affine>>, usize),
+    _kern: &mut Option<LockedMultiexpKernel<Bls12>>,
 ) -> Receiver<Vec<Waiter<Result<G1Projective, SynthesisError>>>> {
     let (tx, rx) = sync_channel(aux_assignments.len());
 
@@ -193,13 +199,14 @@ fn ls_cpu(
 
 #[allow(dead_code)]
 fn ls_gpu(
-    aux_assignments: &[Arc<Vec<FrRepr>>],
+    aux_assignments: Vec<Arc<Vec<FrRepr>>>,
     param_l: (Arc<Vec<G1Affine>>, usize),
     kern: &mut Option<LockedMultiexpKernel<Bls12>>,
-) -> Vec<Waiter<Result<G1Projective, SynthesisError>>> {
+) -> Receiver<Vec<Waiter<Result<G1Projective, SynthesisError>>>> {
     info!("start doing l_s");
-    aux_assignments
-        .iter()
+    let (tx, rx) = sync_channel(aux_assignments.len());
+    let x = aux_assignments
+        .into_iter()
         .enumerate()
         .map({
             |(index, aux_assignment)| {
@@ -208,14 +215,16 @@ fn ls_gpu(
                     &Worker::new(),
                     param_l.clone(),
                     FullDensity,
-                    aux_assignment.clone(),
+                    aux_assignment,
                     kern,
                 );
                 info!("{:?}: l_s:{} finished", *SECTOR_ID, index + 1);
                 x
             }
         })
-        .collect()
+        .collect();
+    tx.send(x).unwrap();
+    rx
 }
 
 fn hs_gpu(
@@ -328,7 +337,17 @@ fn fft(
                 })
                 .map(|a| Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()))
                 .enumerate()
-                .for_each(|(index, x)| tx_h_gpu.send(x).unwrap_or_default());
+                .for_each(|(index, x)| {
+                    {
+                        if index < SETTINGS.c2_cpu_hs {
+                            &tx_h_gpu
+                        } else {
+                            &tx_h_cpu
+                        }
+                    }
+                    .send(x)
+                    .unwrap_or_default()
+                });
         });
 
         for (index, prover) in provers.iter_mut().enumerate() {

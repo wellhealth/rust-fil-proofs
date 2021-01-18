@@ -31,6 +31,8 @@ pub struct Settings {
     pub multicore_sdr_producer_stride: u64,
     pub multicore_sdr_lookahead: usize,
     pub cores_for_c2: usize,
+	pub c2_l_gpu: bool,
+	pub c2_cpu_hs: usize,
 }
 
 impl Default for Settings {
@@ -56,6 +58,8 @@ impl Default for Settings {
             multicore_sdr_producer_stride: 128,
             multicore_sdr_lookahead: 800,
             cores_for_c2: num_cpus::get() / 2,
+			c2_l_gpu: true,
+            c2_cpu_hs: 5,
         }
     }
 }
