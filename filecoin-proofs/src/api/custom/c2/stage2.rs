@@ -164,7 +164,7 @@ fn l_cpu(
 
 lazy_static! {
     static ref LH_POOL: ThreadPool = rayon::ThreadPoolBuilder::new()
-        .num_threads(24usize)
+        .num_threads(SETTINGS.cores_for_c2)
         .build()
         .unwrap();
 }
