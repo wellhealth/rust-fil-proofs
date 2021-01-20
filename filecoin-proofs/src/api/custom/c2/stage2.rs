@@ -131,7 +131,6 @@ pub fn run(
     drop(multiexp_kern);
     let vk = &params.vk;
 
-    // let l_s = l_s.recv().unwrap();
     let mut h_s_cpu = h_s_cpu.recv().unwrap();
 
     h_s_cpu.extend(h_s_gpu.into_iter());
