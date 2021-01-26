@@ -71,7 +71,7 @@ pub struct StackedDrg<'a, Tree: 'a + MerkleTreeTrait, G: 'a + Hasher> {
     _b: PhantomData<&'a G>,
 }
 lazy_static! {
-    pub static ref POOL: rayon::ThreadPool = {
+    pub static ref P2_POOL: rayon::ThreadPool = {
         rayon::ThreadPoolBuilder::new()
             .num_threads(settings::SETTINGS.lock().unwrap().cores_for_p2)
             .build()
@@ -878,7 +878,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         );
         // Build the tree for CommC
         measure_op(GenerateTreeC, || {
-            super::p2::tree_c::custom_tree_c::<ColumnArity, TreeArity>(
+            super::p2::tree_c::run::<ColumnArity, TreeArity>(
                 nodes_count,
                 &configs,
                 labels,
@@ -1209,7 +1209,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         };
 
         if num_cpus::get() >= 10 {
-            POOL.install(lambda)
+            P2_POOL.install(lambda)
         } else {
             lambda()
         }

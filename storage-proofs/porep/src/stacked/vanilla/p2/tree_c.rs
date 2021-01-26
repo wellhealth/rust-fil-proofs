@@ -1,5 +1,5 @@
 use crate::stacked::hash::hash_single_column;
-use crate::stacked::vanilla::proof::POOL;
+use crate::stacked::vanilla::proof::P2_POOL;
 use anyhow::Result;
 use anyhow::{bail, Context};
 use ff::Field;
@@ -37,7 +37,7 @@ lazy_static! {
     static ref CHANNEL_CAPACITY: usize = 16;
 }
 
-pub fn custom_tree_c<ColumnArity, TreeArity>(
+pub fn run<ColumnArity, TreeArity>(
     nodes_count: usize,
     configs: &[StoreConfig],
     labels: &[(PathBuf, String)],
@@ -92,7 +92,7 @@ where
             let column_rx = column_rx.clone();
             let txs = txs.clone();
             move |_| {
-                POOL.install(move || {
+                P2_POOL.install(move || {
                     if let Err(e) = generate_tree_c_gpu::<ColumnArity, TreeArity>(
                         nodes_count,
                         gpu_index,
@@ -108,7 +108,7 @@ where
         });
 
         s.spawn(move |_| {
-            POOL.install(move || {
+            P2_POOL.install(move || {
                 generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs, replica_path)
             })
         });
@@ -368,7 +368,6 @@ where
 
     let res = crossbeam::scope(|s| -> Result<()> {
         for (index, column) in rx.iter() {
-
             info!(
                 "{:?}: tree-c {} start building final leaves",
                 replica_path,
