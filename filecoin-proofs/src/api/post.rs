@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap};
+use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher as StdHasher};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -441,7 +441,7 @@ pub fn generate_winning_post<Tree: 'static + MerkleTreeTrait>(
 
     let gpu_index = match gpu_index {
         Some(o) => o,
-        None =>   0,
+        None => 0,
     };
 
     generate_winning_post_inner::<Tree>(post_config, randomness, replicas, prover_id, gpu_index)
@@ -945,12 +945,11 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
 ) -> Result<SnarkProof> {
-
     let gpu_index = super::select_gpu_device();
 
     let gpu_index = match gpu_index {
         Some(o) => o,
-        None =>   0,
+        None => 0,
     };
 
     info!("select gpu index: {}", gpu_index);
@@ -975,7 +974,7 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         let bt = backtrace::Backtrace::new();
         info!("panic occurred, backtrace: {:?}", bt);
     }));
-    
+
     let timestamp = SystemTime::now();
 
     info!("generate_window_post:start");
@@ -1005,34 +1004,36 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
 
     let t2 = SystemTime::now();
 
-
     let faulty_sectors = Mutex::new(Vec::new());
 
     let trees: Vec<_> = replicas
         .par_iter()
-        .filter_map(|(sector_id, replica)| {
-            match replica
-                .merkle_tree(post_config.sector_size)
-                {
-                Ok(o) => {
-                    Some(o)
-                },
+        .filter_map(
+            |(sector_id, replica)| match replica.merkle_tree(post_config.sector_size) {
+                Ok(o) => Some(o),
                 Err(_) => {
-                    faulty_sectors.lock().expect("cannot obtain lock for faulty_sectors").push(*sector_id);
+                    faulty_sectors
+                        .lock()
+                        .expect("cannot obtain lock for faulty_sectors")
+                        .push(*sector_id);
                     None
                 }
-            }
-        })
+            },
+        )
         .collect();
 
-    let faulty_sectors =  faulty_sectors.into_inner().expect("cannot call into_inner on faulty_sectors");
+    let faulty_sectors = faulty_sectors
+        .into_inner()
+        .expect("cannot call into_inner on faulty_sectors");
 
-    if !faulty_sectors.is_empty(){
-        return Err(anyhow::Error::from(storage_proofs::error::Error::FaultySectors(faulty_sectors)));
+    if !faulty_sectors.is_empty() {
+        return Err(anyhow::Error::from(
+            storage_proofs::error::Error::FaultySectors(faulty_sectors),
+        ));
     }
 
     info!("window init tree {} time {:?}", trees.len(), t2.elapsed());
-    
+
     let mut pub_sectors = Vec::with_capacity(sector_count);
     let mut priv_sectors = Vec::with_capacity(sector_count);
 
@@ -1056,11 +1057,7 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     }
     info!("generate_window_post: pub_sectors & priv_sectors (end)");
 
-    info!(
-        "generate_window_post3:{:?} {:?}",
-        prover_id,
-        t2.elapsed()
-    );
+    info!("generate_window_post3:{:?} {:?}", prover_id, t2.elapsed());
 
     let t3 = SystemTime::now();
 
@@ -1076,11 +1073,7 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         sectors: &priv_sectors,
     };
 
-    info!(
-        "generate_window_post4:{:?} {:?}",
-        prover_id,
-        t3.elapsed()
-    );
+    info!("generate_window_post4:{:?} {:?}", prover_id, t3.elapsed());
 
     let t4 = SystemTime::now();
     info!("generate_window_post:fallback::FallbackPoStCompound(begin)");
@@ -1092,13 +1085,9 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         gpu_index,
     )?;
 
-    info!(
-        "generate_window_post5:{:?} {:?}",
-        prover_id,
-        t4.elapsed()
-    );
+    info!("generate_window_post5:{:?} {:?}", prover_id, t4.elapsed());
 
-     info!("generate_window_post:finish {:?}", timestamp.elapsed());
+    info!("generate_window_post:finish {:?}", timestamp.elapsed());
 
     Ok(proof.to_vec()?)
 }
