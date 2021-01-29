@@ -1,10 +1,10 @@
-use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
 use std::sync::mpsc::channel;
 use std::sync::RwLock;
 use std::sync::{Arc, MutexGuard};
+use std::{convert::TryInto, time::Duration};
 
 use anyhow::{Context, Result};
 use byte_slice_cast::*;
@@ -505,8 +505,8 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                     move |_| {
                         let input = &exp_labels.read().unwrap()[..];
                         tx.send(()).unwrap();
-                        if let Err(e) = super::write_layer(input, layer_config)
-                            .context("failed to store labels")
+                        if let Err(e) =
+                            write_layer_retry(input, layer_config).context("failed to store labels")
                         {
                             err_tx.send(e).unwrap();
                         }
@@ -537,6 +537,24 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
         },
         layer_states,
     ))
+}
+
+fn write_layer_retry(data: &[u8], config: &StoreConfig) -> Result<()> {
+    let data_path = StoreConfig::data_path(&config.path, &config.id);
+    let tmp_data_path = data_path.with_extension(".tmp");
+
+    if let Some(parent) = data_path.parent() {
+        std::fs::create_dir_all(parent).context("failed to create parent directories")?;
+    }
+
+    while let Err(e) = std::fs::write(&tmp_data_path, data) {
+        warn!("write layer error: {:?}, retrying ...", e);
+        std::thread::sleep(Duration::from_secs(5 * 60));
+    }
+
+    std::fs::rename(tmp_data_path, data_path).context("failed to rename tmp data")?;
+
+    Ok(())
 }
 
 #[allow(clippy::type_complexity)]
