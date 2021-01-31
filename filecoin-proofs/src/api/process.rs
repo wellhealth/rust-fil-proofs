@@ -302,10 +302,6 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
 
     let gpu_index = select_gpu_device()
         .with_context(|| format!("{:?}: cannot select gpu device", sector_id))?;
-    std::env::set_var(
-        crate::api::seal::SHENSUANYUN_GPU_INDEX,
-        &gpu_index.to_string(),
-    );
     defer! {
         info!("release gpu index: {}", gpu_index);
         super::release_gpu_device(gpu_index);
@@ -317,6 +313,7 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     let mut c2_process = process::Command::new(&c2_program_path)
         .arg(&uuid)
         .arg(u64::from(porep_config.sector_size).to_string())
+        .arg(gpu_index.to_string())
         .spawn()
         .with_context(|| {
             format!(
