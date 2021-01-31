@@ -207,6 +207,12 @@ where
     R: AsRef<Path>,
     S: AsRef<Path>,
 {
+    info!(
+        "{:?}: process params: {:?}",
+        replica_path.as_ref(),
+        std::env::args().collect::<Vec<_>>()
+    );
+
     info!("{:?}: git-version: {}", replica_path.as_ref(), GIT_VERSION);
 
     std::panic::set_hook(Box::new(|_| {
@@ -296,7 +302,11 @@ where
 
     let gpu_index = select_gpu_device();
 
-    info!("{:?}: select gpu index: {}", replica_path.as_ref(), gpu_index);
+    info!(
+        "{:?}: select gpu index: {}",
+        replica_path.as_ref(),
+        gpu_index
+    );
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     let result = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
