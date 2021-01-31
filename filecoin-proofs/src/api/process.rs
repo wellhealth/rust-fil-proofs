@@ -121,6 +121,7 @@ where
     let mut p2_process = process::Command::new(&p2)
         .arg(&uuid)
         .arg(u64::from(porep_config.sector_size).to_string())
+        .arg(gpu_index.to_string())
         .spawn()
         .with_context(|| format!("{:?}, cannot start {:?} ", replica_path, p2))?;
 
@@ -358,7 +359,7 @@ pub fn c2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
     let infile = File::open(&in_path).with_context(|| format!("cannot open file {:?}", in_path))?;
 
     let data = serde_json::from_reader::<_, C2Param<Tree>>(infile)
-        .context("failed to deserialize p2 params")?;
+        .context("failed to deserialize c2 params")?;
 
     let C2Param {
         porep_config,
