@@ -1166,8 +1166,9 @@ where
 }
 
 pub fn select_gpu_device() -> usize {
-    std::env::var("SHENSUANYUN_GPU_INDEX")
-        .unwrap_or_else(|_| "0".to_string())
+    std::env::args()
+        .nth(3)
+        .unwrap_or_else(|| "0".to_string())
         .parse()
         .unwrap_or(0)
 }
