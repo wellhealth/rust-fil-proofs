@@ -296,7 +296,7 @@ where
 
     let gpu_index = select_gpu_device();
 
-    info!("select gpu index: {}", gpu_index);
+    info!("{:?}: select gpu index: {}", replica_path.as_ref(), gpu_index);
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     let result = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
