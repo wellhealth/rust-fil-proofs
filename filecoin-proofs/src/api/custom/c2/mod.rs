@@ -83,10 +83,17 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     sector_id: SectorId,
 ) -> Result<SealCommitOutput> {
+    info!(
+        "{:?}: process params: {:?}",
+        sector_id,
+        std::env::args().collect::<Vec<_>>()
+    );
+
     info!("{:?}: c2 procedure started", sector_id);
     info!("{:?}: git version:{}", sector_id, GIT_VERSION);
 
     let gpu_index = super::get_gpu_index().unwrap_or(0);
+    info!("{:?}: gpu index: {}", sector_id, gpu_index);
 
     let mut rng = OsRng;
     let C2PreparationData {

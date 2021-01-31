@@ -1,7 +1,5 @@
 pub mod c2;
 
-
 pub fn get_gpu_index() -> Option<usize> {
-    std::env::var("SHENSUANYUN_GPU_INDEX").ok()?
-        .parse().ok()
+    std::env::args().nth(3).unwrap_or_default().parse().ok()
 }
