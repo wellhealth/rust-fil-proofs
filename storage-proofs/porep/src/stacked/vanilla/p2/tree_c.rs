@@ -265,6 +265,7 @@ pub fn generate_tree_c_cpu<ColumnArity, TreeArity>(
     if let Some(x) = start_condition {
         x.recv().expect("cannot receive from start_condition");
     }
+	info!("{:?}: start using CPU to hash columns", replica_path);
 
     for ColumnData {
         columns,
