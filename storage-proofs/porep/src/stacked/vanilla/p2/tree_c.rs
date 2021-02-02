@@ -43,6 +43,7 @@ pub fn run<ColumnArity, TreeArity>(
     labels: &[(PathBuf, String)],
     replica_path: &Path,
     gpu_index: usize,
+	cpu_start_condition: Option<std::sync::mpsc::Receiver<()>>
 ) -> Result<()>
 where
     ColumnArity: PoseidonArity + 'static,
@@ -109,7 +110,7 @@ where
 
         s.spawn(move |_| {
             P2_POOL.install(move || {
-                generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs, replica_path)
+                generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs, replica_path, cpu_start_condition)
             })
         });
 
@@ -256,10 +257,15 @@ pub fn generate_tree_c_cpu<ColumnArity, TreeArity>(
     column_rx: crossbeam::Receiver<ColumnData<ColumnArity>>,
     hashed_tx: &[std::sync::mpsc::Sender<(usize, Vec<Fr>)>],
     replica_path: &Path,
+    start_condition: Option<std::sync::mpsc::Receiver<()>>,
 ) where
     ColumnArity: 'static + PoseidonArity,
     TreeArity: PoseidonArity,
 {
+    if let Some(x) = start_condition {
+        x.recv().expect("cannot receive from start_condition");
+    }
+
     for ColumnData {
         columns,
         node_index,

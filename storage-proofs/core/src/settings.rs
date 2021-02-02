@@ -32,6 +32,7 @@ pub struct Settings {
     pub use_fil_blst: bool,
     pub use_multicore_sdr: bool,
     pub cores_for_p2: usize,
+	pub p2_tree_c_cpu_starts_after_tree_r: bool,
 }
 
 impl Default for Settings {
@@ -56,6 +57,7 @@ impl Default for Settings {
             use_fil_blst: false,
             use_multicore_sdr: false,
             cores_for_p2: num_cpus::get() / 2,
+            p2_tree_c_cpu_starts_after_tree_r: false,
         }
     }
 }
