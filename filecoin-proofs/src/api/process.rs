@@ -314,6 +314,7 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         .arg(&uuid)
         .arg(u64::from(porep_config.sector_size).to_string())
         .arg(gpu_index.to_string())
+        .arg(sector_id.0.to_string())
         .spawn()
         .with_context(|| {
             format!(
