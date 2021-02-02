@@ -55,8 +55,7 @@ mod stage2;
 
 lazy_static! {
     pub static ref SECTOR_ID: SectorId = SectorId::from(
-        std::env::var("SECTOR_ID")
-            .ok()
+		std::env::args().nth(4)
             .and_then(|s| s.parse().ok())
             .unwrap_or(0)
     );
