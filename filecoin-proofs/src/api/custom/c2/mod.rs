@@ -89,7 +89,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     );
 
     info!("{:?}: c2 procedure started", sector_id);
-    info!("{:?}: git version:{}", sector_id, GIT_VERSION);
+    info!("{:?}: c2 git-version:{}", sector_id, GIT_VERSION);
 
     let gpu_index = super::get_gpu_index().unwrap_or(0);
     info!("{:?}: gpu index: {}", sector_id, gpu_index);
