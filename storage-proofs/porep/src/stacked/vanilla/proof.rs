@@ -1311,6 +1311,13 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         label_configs: Labels<Tree>,
         gpu_index: usize,
     ) -> Result<TransformedLayers<Tree, G>> {
+        match neptune::cl::get_all_devices() {
+            Ok(o) => o,
+            Err(_) => anyhow::bail!("{:?}: cannot find GPU", replica_path),
+        }
+        .get(gpu_index)
+        .with_context(|| format!("{:?}: cannot find GPU", replica_path))?;
+
         trace!("transform_and_replicate_layers");
         let nodes_count = graph.size();
 
