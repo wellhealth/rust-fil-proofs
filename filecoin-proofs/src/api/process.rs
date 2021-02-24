@@ -305,7 +305,6 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
     let mut process = process::Command::new(&program_path)
         .arg(&uuid)
         .arg(u64::from(post_config.sector_size).to_string())
-        .arg(gpu_index.to_string())
         .spawn()
         .with_context(|| format!("cannot start program {:?} ", program_path))?;
 
