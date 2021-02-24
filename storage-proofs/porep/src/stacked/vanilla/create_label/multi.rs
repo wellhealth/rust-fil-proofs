@@ -148,8 +148,8 @@ fn create_label_runner(
     lookahead: u64,
     ring_buf: &RingBuf,
     base_parent_missing: &UnsafeSlice<BitMask>,
+    sector_id: SectorId,
 ) -> Result<()> {
-    info!("created label runner");
     // Label data bytes per node
     loop {
         // Get next work items
@@ -198,6 +198,7 @@ fn create_label_runner(
         cur_producer.fetch_add(count, SeqCst);
     }
 
+    info!("{:?}: created label runner", sector_id);
     Ok(())
 }
 
@@ -269,6 +270,7 @@ fn create_layer_labels(
                 // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
                 let _cleanup_handle = core_index.map(|c| bind_core(*c));
 
+                info!("{:?} before create_label_runner", sector_id);
                 create_label_runner(
                     parents_cache,
                     layer_labels,
@@ -280,8 +282,10 @@ fn create_layer_labels(
                     lookahead as u64,
                     ring_buf,
                     base_parent_missing,
+                    sector_id,
                 )
             }));
+            info!("{:?} after create_label_runner", sector_id);
         }
 
         let mut cur_node_ptr = unsafe { layer_labels.as_mut_slice() };
@@ -632,7 +636,7 @@ pub fn create_labels_for_decoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
             node_count,
             layer as u32,
             core_group.clone(),
-			SectorId(0),
+            SectorId(0),
         )?;
 
         // Cache reset happens in two parts.
