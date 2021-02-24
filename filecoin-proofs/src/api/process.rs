@@ -1,15 +1,15 @@
-use crate::select_gpu_device;
+use crate::{select_gpu_device, ChallengeSeed, PoStConfig, PrivateReplicaInfo};
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
 use log::info;
 use scopeguard::defer;
-use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
+use std::{collections::BTreeMap, fs::File};
 use storage_proofs::sector::SectorId;
 use storage_proofs::settings;
 use uuid::Uuid;
@@ -45,6 +45,19 @@ struct C2Param<Tree: 'static + MerkleTreeTrait> {
     phase1_output: SealCommitPhase1Output<Tree>,
     prover_id: ProverId,
     sector_id: SectorId,
+}
+
+#[derive(Serialize, Deserialize)]
+struct WindowPostParam<Tree: 'static + MerkleTreeTrait> {
+    post_config: PoStConfig,
+    randomness: ChallengeSeed,
+    #[serde(bound(
+        serialize = "SealPreCommitPhase1Output<Tree>: Serialize",
+        deserialize = "SealPreCommitPhase1Output<Tree>: Deserialize<'de>"
+    ))]
+    replicas: BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
+    prover_id: ProverId,
+    gpu_index: usize,
 }
 
 fn get_uuid() -> String {
@@ -103,7 +116,7 @@ where
     let uuid = get_uuid();
 
     let in_path = Path::new(&param_folder).join(&uuid);
-    let p2 = Path::new(program_folder).join("lotus-p2");
+    let p2 = Path::new(program_folder).join(&settings::SETTINGS.p2_program_name);
     let out_path = Path::new(&param_folder).join(&uuid);
 
     let infile = OpenOptions::new()
@@ -182,7 +195,7 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     let out_path = Path::new(&param_folder).join(&uuid);
 
     let program_folder = &settings::SETTINGS.program_folder;
-    let c2_program_path = Path::new(program_folder).join("lotus-c2");
+    let c2_program_path = Path::new(program_folder).join(&settings::SETTINGS.c2_program_name);
 
     let infile = OpenOptions::new()
         .write(true)
@@ -240,6 +253,84 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
 
     let proof = std::fs::read(&out_path)
         .with_context(|| format!("{:?}, cannot open c2 output file for reuslt", sector_id))?;
+
+    Ok(SealCommitOutput { proof })
+}
+
+pub fn window_post<Tree: 'static + MerkleTreeTrait>(
+    post_config: &PoStConfig,
+    randomness: &ChallengeSeed,
+    replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
+    prover_id: ProverId,
+    gpu_index: usize,
+) -> Result<SealCommitOutput> {
+    let data = {
+        let post_config = post_config.clone();
+        let randomness = *randomness;
+        let replicas = replicas.clone();
+        WindowPostParam {
+            post_config,
+            randomness,
+            replicas,
+            prover_id,
+            gpu_index,
+        }
+    };
+    let uuid = get_uuid();
+
+    let param_folder = get_param_folder().context("cannot get param folder")?;
+    std::fs::create_dir_all(&param_folder)
+        .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
+    let in_path = Path::new(&param_folder).join(&uuid);
+    let out_path = Path::new(&param_folder).join(&uuid);
+
+    let program_folder = &settings::SETTINGS.program_folder;
+    let program_path = Path::new(program_folder).join(&settings::SETTINGS.window_post_program_name);
+
+    let infile = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(&in_path)
+        .context("cannot open file to pass in window post parameter")?;
+
+    info!("writing parameter to file: {:?}", in_path);
+    serde_json::to_writer(infile, &data).context("cannot sealize to infile")?;
+
+    defer! {
+        info!("release gpu index: {}", gpu_index);
+        super::release_gpu_device(gpu_index);
+    };
+    info!("start c2 with program: {:?}", program_path);
+    let mut process = process::Command::new(&program_path)
+        .arg(&uuid)
+        .arg(u64::from(post_config.sector_size).to_string())
+        .arg(gpu_index.to_string())
+        .spawn()
+        .with_context(|| format!("cannot start program {:?} ", program_path))?;
+
+    let status = process.wait().expect("c2 is not running");
+
+    defer!({
+        let _ = std::fs::remove_file(&out_path);
+    });
+
+    match status.code() {
+        Some(0) => {
+            info!(" window post finished");
+        }
+        Some(n) => {
+            info!("window post failed with exit number: {}", n);
+            bail!("window post failed with exit number: {}", n);
+        }
+        None => {
+            info!("window post crashed");
+            bail!("window post crashed");
+        }
+    }
+
+    let proof = std::fs::read(&out_path)
+        .with_context(|| format!("cannot open c2 output file for reuslt"))?;
 
     Ok(SealCommitOutput { proof })
 }

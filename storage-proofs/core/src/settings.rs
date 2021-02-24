@@ -32,6 +32,9 @@ pub struct Settings {
     pub multicore_sdr_lookahead: usize,
     pub param_folder: String,
     pub program_folder: String,
+	pub c2_program_name: String,
+	pub p2_program_name: String,
+	pub window_post_program_name: String,
     pub cores_for_c2: u32,
 	pub c2_cpu_hs: u32,
 }
@@ -60,8 +63,11 @@ impl Default for Settings {
             multicore_sdr_lookahead: 800,
             param_folder: ".".to_owned(),
             program_folder: ".".to_owned(),
+            c2_program_name: "lotus-c2".to_owned(),
+			p2_program_name: "lotus-p2".to_owned(),
+            window_post_program_name: "lotus-window-post".to_owned(),
             cores_for_c2: num_cpus::get() as u32 / 2,
-			c2_cpu_hs: 5,
+            c2_cpu_hs: 5,
         }
     }
 }
