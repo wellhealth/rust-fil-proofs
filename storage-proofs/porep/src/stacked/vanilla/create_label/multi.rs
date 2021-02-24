@@ -21,6 +21,7 @@ use storage_proofs_core::{
     drgraph::{Graph, BASE_DEGREE},
     hasher::Hasher,
     merkle::*,
+    sector::SectorId,
     settings,
     util::NODE_SIZE,
 };
@@ -208,8 +209,9 @@ fn create_layer_labels(
     num_nodes: u64,
     cur_layer: u32,
     core_group: Arc<Option<MutexGuard<Vec<CoreIndex>>>>,
+    sector_id: SectorId,
 ) -> Result<()> {
-    info!("Creating labels for layer {}", cur_layer);
+    info!("{:?}: Creating labels for layer {}", sector_id, cur_layer);
     // num_producers is the number of producer threads
     let (lookahead, num_producers, producer_stride) = {
         let settings = &settings::SETTINGS;
@@ -425,6 +427,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     layers: usize,
     replica_id: T,
     config: StoreConfig,
+    sector_id: SectorId,
 ) -> Result<(Labels<Tree>, Vec<LayerState>)> {
     info!("create labels");
 
@@ -458,13 +461,17 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     let (err_tx, err_rx) = channel();
     crossbeam::scope(|s| -> Result<()> {
         for (layer, layer_state) in (1..=layers).zip(layer_states.iter()) {
-            info!("Layer {}", layer);
+            info!("{:?}: Layer {}", sector_id, layer);
 
             if layer_state.generated {
-                info!("skipping layer {}, already generated", layer);
+                info!(
+                    "{:?}: skipping layer {}, already generated",
+                    sector_id, layer
+                );
 
                 // load the already generated layer into exp_labels
                 super::read_layer(&layer_state.config, &mut (exp_labels.write().unwrap()))?;
+                info!("{:?}: Done reading layer:{}", sector_id, layer);
                 continue;
             }
 
@@ -477,6 +484,10 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
             {
                 let exp_labels = exp_labels.read().unwrap();
                 let exp_labels = exp_labels.as_slice_of::<u32>().unwrap();
+                info!(
+                    "{:?}: before create_layer_labels for layer:{}",
+                    sector_id, layer
+                );
                 create_layer_labels(
                     &parents_cache,
                     &replica_id.as_ref(),
@@ -485,7 +496,12 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                     node_count,
                     layer as u32,
                     core_group.clone(),
+                    sector_id,
                 )?;
+                info!(
+                    "{:?}: after create_layer_labels for layer:{}",
+                    sector_id, layer
+                );
             }
             // Cache reset happens in two parts.
             // The first part (the start) happens after each layer but the last.
@@ -497,7 +513,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
             {
                 let layer_config = &layer_state.config;
 
-                info!("  storing labels on disk");
+                info!("{:?}:storing labels on disk", sector_id);
                 let exp_labels = &exp_labels;
                 let (tx, rx) = channel();
                 s.spawn({
@@ -512,8 +528,8 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                         }
 
                         info!(
-                            "  generated layer {} store with id {}",
-                            layer, layer_config.id
+                            "{:?}: generated layer {} store with id {}",
+                            sector_id, layer, layer_config.id
                         );
                     }
                 });
@@ -616,6 +632,7 @@ pub fn create_labels_for_decoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
             node_count,
             layer as u32,
             core_group.clone(),
+			SectorId(0),
         )?;
 
         // Cache reset happens in two parts.

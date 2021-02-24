@@ -188,6 +188,7 @@ where
         &compound_public_params.vanilla_params,
         &replica_id,
         config.clone(),
+        sector_id,
     )?;
 
     let out = SealPreCommitPhase1Output {
@@ -210,7 +211,7 @@ where
     R: AsRef<Path>,
     S: AsRef<Path>,
 {
-	info!("{:?}: first log for p2", replica_path.as_ref());
+    info!("{:?}: first log for p2", replica_path.as_ref());
     super::process::p2(porep_config, phase1_output, cache_path, replica_path)
 }
 
@@ -501,7 +502,7 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     sector_id: SectorId,
 ) -> Result<SealCommitOutput> {
-	std::env::set_var("SECTOR_ID", sector_id.0.to_string());
+    std::env::set_var("SECTOR_ID", sector_id.0.to_string());
     super::process::c2(porep_config, phase1_output, prover_id, sector_id)
 }
 
@@ -1245,6 +1246,7 @@ where
         &compound_public_params.vanilla_params,
         &replica_id,
         config.clone(),
+        sector_id,
     )?;
 
     let out = SealPreCommitPhase1Output {

@@ -27,6 +27,7 @@ use storage_proofs_core::{
         Operation::{CommD, EncodeWindowTimeAll, GenerateTreeC, GenerateTreeRLast},
     },
     merkle::*,
+    sector::SectorId,
     settings,
     util::{default_rows_to_discard, NODE_SIZE},
 };
@@ -300,6 +301,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         layer_challenges: &LayerChallenges,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
+        sector_id: SectorId,
     ) -> Result<(Labels<Tree>, Vec<LayerState>)> {
         let mut parent_cache = graph.parent_cache()?;
 
@@ -311,6 +313,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 layer_challenges.layers(),
                 replica_id,
                 config,
+                sector_id,
             )
         } else {
             info!("single core replication");
@@ -914,8 +917,14 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) -> Result<TransformedLayers<Tree, G>> {
         // Generate key layers.
         let labels = measure_op(EncodeWindowTimeAll, || {
-            Self::generate_labels_for_encoding(graph, layer_challenges, replica_id, config.clone())
-                .context("failed to generate labels")
+            Self::generate_labels_for_encoding(
+                graph,
+                layer_challenges,
+                replica_id,
+                config.clone(),
+                SectorId(0),
+            )
+            .context("failed to generate labels")
         })?
         .0;
 
@@ -1142,11 +1151,18 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         pp: &'a PublicParams<Tree>,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
+        sector_id: SectorId,
     ) -> Result<Labels<Tree>> {
         info!("replicate_phase1");
 
         let labels = measure_op(EncodeWindowTimeAll, || {
-            Self::generate_labels_for_encoding(&pp.graph, &pp.layer_challenges, replica_id, config)
+            Self::generate_labels_for_encoding(
+                &pp.graph,
+                &pp.layer_challenges,
+                replica_id,
+                config,
+                sector_id,
+            )
         })?
         .0;
 
