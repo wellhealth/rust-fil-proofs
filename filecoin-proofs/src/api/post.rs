@@ -31,11 +31,12 @@ use crate::types::{
 };
 use crate::PoStType;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
 /// The minimal information required about a replica, in order to be able to generate
 /// a PoSt over it.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PrivateReplicaInfo<Tree: MerkleTreeTrait> {
     /// Path to the replica.
     replica: PathBuf,
