@@ -263,7 +263,7 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
     gpu_index: usize,
-) -> Result<SealCommitOutput> {
+) -> Result<Vec<u8>> {
     let data = {
         let post_config = post_config.clone();
         let randomness = *randomness;
@@ -301,7 +301,7 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
         info!("release gpu index: {}", gpu_index);
         super::release_gpu_device(gpu_index);
     };
-    info!("start c2 with program: {:?}", program_path);
+    info!("start window post with program: {:?}", program_path);
     let mut process = process::Command::new(&program_path)
         .arg(&uuid)
         .arg(u64::from(post_config.sector_size).to_string())
@@ -309,7 +309,7 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
         .spawn()
         .with_context(|| format!("cannot start program {:?} ", program_path))?;
 
-    let status = process.wait().expect("c2 is not running");
+    let status = process.wait().expect("window post is not running");
 
     defer!({
         let _ = std::fs::remove_file(&out_path);
@@ -329,8 +329,7 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
         }
     }
 
-    let proof = std::fs::read(&out_path)
-        .with_context(|| format!("cannot open c2 output file for reuslt"))?;
+    let proof = std::fs::read(&out_path).context("cannot open window post output file for reuslt")?;
 
-    Ok(SealCommitOutput { proof })
+    Ok(proof)
 }
