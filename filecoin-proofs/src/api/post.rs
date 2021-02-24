@@ -946,12 +946,8 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
 ) -> Result<SnarkProof> {
-    let gpu_index = super::select_gpu_device();
+    let gpu_index = super::select_gpu_device().unwrap_or_default();
 
-    let gpu_index = match gpu_index {
-        Some(o) => o,
-        None => 0,
-    };
 
     info!("select gpu index: {}", gpu_index);
 
