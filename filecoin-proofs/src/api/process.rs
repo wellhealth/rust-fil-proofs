@@ -1,4 +1,3 @@
-use crate::constants::*;
 use crate::select_gpu_device;
 use anyhow::bail;
 use anyhow::Context;
@@ -8,7 +7,6 @@ use scopeguard::defer;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
-use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
@@ -76,7 +74,11 @@ where
         info!("release gpu index: {}", gpu_index);
         super::release_gpu_device(gpu_index);
     };
-    info!("{:?}: selected gpu device: {}", replica_path.as_ref(), gpu_index);
+    info!(
+        "{:?}: selected gpu device: {}",
+        replica_path.as_ref(),
+        gpu_index
+    );
     std::env::set_var(
         crate::api::seal::SHENSUANYUN_GPU_INDEX,
         &gpu_index.to_string(),
@@ -109,13 +111,13 @@ where
         .truncate(true)
         .create(true)
         .open(&in_path)
-        .with_context(|| format!("cannot open file to pass p2 parameter"))?;
+        .with_context(|| "cannot open file to pass p2 parameter".to_string())?;
 
     info!(
         "{:?}: writing parameter to file: {:?}",
         replica_path, in_path
     );
-    serde_json::to_writer(infile, &data).with_context(|| format!("cannot sealize to infile"))?;
+    serde_json::to_writer(infile, &data).with_context(|| "cannot sealize to infile".to_string())?;
 
     info!("start p2 with program: {:?}", p2);
     let mut p2_process = process::Command::new(&p2)
@@ -156,114 +158,7 @@ where
         .read_exact(&mut comm_d)
         .with_context(|| format!("{:?}, cannot read file to get comm_d", replica_path))?;
 
-    drop(&output);
     Ok(SealPreCommitOutput { comm_r, comm_d })
-}
-
-pub fn c2_sub_launcher() -> Result<()> {
-    let mut args = std::env::args().skip(1).take(2);
-    let uuid = args.next().context("cannot get uuid parameter")?;
-    let shape = args
-        .next()
-        .context("cannot get shape parameter")?
-        .parse()
-        .context("cannot parse shape")?;
-
-    match shape {
-        SECTOR_SIZE_2_KIB => c2_sub::<SectorShape2KiB>(&uuid),
-        SECTOR_SIZE_4_KIB => c2_sub::<SectorShape4KiB>(&uuid),
-        SECTOR_SIZE_16_KIB => c2_sub::<SectorShape16KiB>(&uuid),
-        SECTOR_SIZE_32_KIB => c2_sub::<SectorShape32KiB>(&uuid),
-        SECTOR_SIZE_8_MIB => c2_sub::<SectorShape8MiB>(&uuid),
-        SECTOR_SIZE_16_MIB => c2_sub::<SectorShape16MiB>(&uuid),
-        SECTOR_SIZE_512_MIB => c2_sub::<SectorShape512MiB>(&uuid),
-        SECTOR_SIZE_1_GIB => c2_sub::<SectorShape1GiB>(&uuid),
-        SECTOR_SIZE_32_GIB => c2_sub::<SectorShape32GiB>(&uuid),
-        SECTOR_SIZE_64_GIB => c2_sub::<SectorShape64GiB>(&uuid),
-        _ => bail!("shape not recognized"),
-    }
-}
-
-pub fn p2_sub_launcher() -> Result<()> {
-    info!("started p2_sub_launcher");
-    let mut args = std::env::args().skip(1).take(2);
-    let uuid = args.next().context("cannot get uuid parameter")?;
-    let shape = args
-        .next()
-        .context("cannot get shape parameter")?
-        .parse()
-        .context("cannot parse shape")?;
-
-    info!("got uuid and shape from parent process");
-    match shape {
-        SECTOR_SIZE_2_KIB => p2_sub::<SectorShape2KiB>(&uuid),
-        SECTOR_SIZE_4_KIB => p2_sub::<SectorShape4KiB>(&uuid),
-        SECTOR_SIZE_16_KIB => p2_sub::<SectorShape16KiB>(&uuid),
-        SECTOR_SIZE_32_KIB => p2_sub::<SectorShape32KiB>(&uuid),
-        SECTOR_SIZE_8_MIB => p2_sub::<SectorShape8MiB>(&uuid),
-        SECTOR_SIZE_16_MIB => p2_sub::<SectorShape16MiB>(&uuid),
-        SECTOR_SIZE_512_MIB => p2_sub::<SectorShape512MiB>(&uuid),
-        SECTOR_SIZE_1_GIB => p2_sub::<SectorShape1GiB>(&uuid),
-        SECTOR_SIZE_32_GIB => p2_sub::<SectorShape32GiB>(&uuid),
-        SECTOR_SIZE_64_GIB => p2_sub::<SectorShape64GiB>(&uuid),
-        _ => bail!("shape not recognized"),
-    }
-}
-
-pub fn p2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
-    info!("started p2_sub");
-    let param_folder = get_param_folder().context("cannot get param folder")?;
-    let in_path = Path::new(&param_folder).join(uuid);
-    let out_path = Path::new(&param_folder).join(uuid);
-
-    info!("path calculated");
-    let infile = File::open(&in_path).with_context(|| format!("cannot open file {:?}", in_path))?;
-    info!("infile opened");
-
-    let data = serde_json::from_reader::<_, P2Param<Tree>>(infile)
-        .context("failed to deserialize p2 params")?;
-    info!("read data from {:?}", in_path);
-
-    let P2Param {
-        porep_config,
-        phase1_output,
-        cache_path,
-        replica_path,
-    } = data;
-
-    let out = super::official_p2(
-        porep_config,
-        phase1_output,
-        cache_path,
-        replica_path.clone(),
-    )?;
-
-    let mut out_file = OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .create(true)
-        .open(&out_path)
-        .with_context(|| {
-            format!(
-                "{:?}: cannot open file: {:?} for output",
-                replica_path, out_path
-            )
-        })?;
-
-    out_file.write_all(&out.comm_r).with_context(|| {
-        format!(
-            "{:?} cannot write comm_r to file: {:?}",
-            replica_path, out_path
-        )
-    })?;
-
-    out_file.write_all(&out.comm_d).with_context(|| {
-        format!(
-            "{:?} cannot write comm_d to file: {:?}",
-            replica_path, out_path
-        )
-    })?;
-    Ok(())
 }
 
 pub fn c2<Tree: 'static + MerkleTreeTrait>(
@@ -347,29 +242,4 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         .with_context(|| format!("{:?}, cannot open c2 output file for reuslt", sector_id))?;
 
     Ok(SealCommitOutput { proof })
-}
-
-pub fn c2_sub<Tree: 'static + MerkleTreeTrait>(uuid: &str) -> Result<()> {
-    let param_folder = get_param_folder().context("cannot get param_folder")?;
-    let in_path = Path::new(&param_folder).join(&uuid);
-    let out_path = Path::new(&param_folder).join(&uuid);
-
-    let infile = File::open(&in_path).with_context(|| format!("cannot open file {:?}", in_path))?;
-
-    let data = serde_json::from_reader::<_, C2Param<Tree>>(infile)
-        .context("failed to deserialize c2 params")?;
-
-    let C2Param {
-        porep_config,
-        phase1_output,
-        prover_id,
-        sector_id,
-    } = data;
-
-    let out = super::custom::c2::whole(porep_config, phase1_output, prover_id, sector_id)?;
-
-    std::fs::write(out_path, &out.proof)
-        .with_context(|| format!("{:?}: cannot write result to file", sector_id))?;
-
-    Ok(())
 }
