@@ -57,7 +57,6 @@ struct WindowPostParam<Tree: 'static + MerkleTreeTrait> {
     ))]
     replicas: BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
-    gpu_index: usize,
 }
 
 fn get_uuid() -> String {
@@ -262,8 +261,12 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
     randomness: &ChallengeSeed,
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
-    gpu_index: usize,
 ) -> Result<Vec<u8>> {
+    let gpu_index = super::select_gpu_device().unwrap_or_default();
+    defer! {
+        info!("release gpu index: {}", gpu_index);
+        super::release_gpu_device(gpu_index);
+    };
     let data = {
         let post_config = post_config.clone();
         let randomness = *randomness;
@@ -273,7 +276,6 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
             randomness,
             replicas,
             prover_id,
-            gpu_index,
         }
     };
     let uuid = get_uuid();
@@ -293,26 +295,22 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
         .create(true)
         .open(&in_path)
         .context("cannot open file to pass in window post parameter")?;
+    defer!({
+        let _ = std::fs::remove_file(&out_path);
+    });
 
     info!("writing parameter to file: {:?}", in_path);
     serde_json::to_writer(infile, &data).context("cannot sealize to infile")?;
 
-    defer! {
-        info!("release gpu index: {}", gpu_index);
-        super::release_gpu_device(gpu_index);
-    };
     info!("start window post with program: {:?}", program_path);
     let mut process = process::Command::new(&program_path)
         .arg(&uuid)
         .arg(u64::from(post_config.sector_size).to_string())
+        .arg(gpu_index.to_string())
         .spawn()
         .with_context(|| format!("cannot start program {:?} ", program_path))?;
 
     let status = process.wait().expect("window post is not running");
-
-    defer!({
-        let _ = std::fs::remove_file(&out_path);
-    });
 
     match status.code() {
         Some(0) => {
@@ -328,7 +326,8 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
         }
     }
 
-    let proof = std::fs::read(&out_path).context("cannot open window post output file for reuslt")?;
+    let proof =
+        std::fs::read(&out_path).context("cannot open window post output file for reuslt")?;
 
     Ok(proof)
 }

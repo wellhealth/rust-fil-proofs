@@ -135,7 +135,7 @@ impl Element for Blake2sDomain {
     fn from_slice(bytes: &[u8]) -> Self {
         match Blake2sDomain::try_from_bytes(bytes) {
             Ok(res) => res,
-            Err(err) => panic!(err),
+            Err(err) => panic!("{}", err),
         }
     }
 

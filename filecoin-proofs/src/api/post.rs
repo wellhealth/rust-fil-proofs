@@ -946,17 +946,8 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
 ) -> Result<SnarkProof> {
-    let gpu_index = super::select_gpu_device().unwrap_or_default();
 
-
-    info!("select gpu index: {}", gpu_index);
-
-    defer! {
-        info!("release gpu index: {}", gpu_index);
-        super::release_gpu_device(gpu_index);
-    }
-
-    generate_window_post_inner(post_config, randomness, replicas, prover_id, gpu_index)
+	crate::process::window_post(post_config, randomness, replicas, prover_id)
 }
 
 /// Generates a Window proof-of-spacetime.

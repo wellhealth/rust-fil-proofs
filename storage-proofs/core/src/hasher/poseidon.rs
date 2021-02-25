@@ -178,7 +178,7 @@ impl Element for PoseidonDomain {
     fn from_slice(bytes: &[u8]) -> Self {
         match PoseidonDomain::try_from_bytes(bytes) {
             Ok(res) => res,
-            Err(err) => panic!(err),
+            Err(err) => panic!("{}", err),
         }
     }
 
