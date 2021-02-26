@@ -8,7 +8,6 @@ use bincode::deserialize;
 use generic_array::typenum::Unsigned;
 use log::{info, trace};
 use merkletree::store::StoreConfig;
-use storage_proofs::cache_key::CacheKey;
 use storage_proofs::compound_proof::{self, CompoundProof};
 use storage_proofs::hasher::{Domain, Hasher};
 use storage_proofs::merkle::{
@@ -20,6 +19,7 @@ use storage_proofs::post::fallback::SectorProof;
 use storage_proofs::proof::ProofScheme;
 use storage_proofs::sector::*;
 use storage_proofs::util::default_rows_to_discard;
+use storage_proofs::{cache_key::CacheKey, settings};
 
 use crate::api::util::{as_safe_commitment, get_base_tree_leafs, get_base_tree_size};
 use crate::caches::{get_post_params, get_post_verifying_key};
@@ -946,8 +946,18 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
 ) -> Result<SnarkProof> {
+    let gpu_index = super::select_gpu_device().unwrap_or_default();
+    defer! {
+        info!("release gpu index: {}", gpu_index);
+        super::release_gpu_device(gpu_index);
+    };
+    info!("generate_window_post: selected gpu index: {}", gpu_index);
 
-	crate::process::window_post(post_config, randomness, replicas, prover_id)
+    if settings::SETTINGS.window_post_subprocess {
+        crate::process::window_post(post_config, randomness, replicas, prover_id, gpu_index)
+    } else {
+        generate_window_post_inner(post_config, randomness, replicas, prover_id, gpu_index)
+    }
 }
 
 /// Generates a Window proof-of-spacetime.

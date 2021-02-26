@@ -261,12 +261,8 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
     randomness: &ChallengeSeed,
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
+	gpu_index: usize,
 ) -> Result<Vec<u8>> {
-    let gpu_index = super::select_gpu_device().unwrap_or_default();
-    defer! {
-        info!("release gpu index: {}", gpu_index);
-        super::release_gpu_device(gpu_index);
-    };
     let data = {
         let post_config = post_config.clone();
         let randomness = *randomness;
