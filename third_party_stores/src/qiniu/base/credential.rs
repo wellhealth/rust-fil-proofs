@@ -168,6 +168,7 @@ impl Credential {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http::header::HeaderValue;
     use std::{boxed::Box, error::Error, result::Result, sync::Arc, thread};
 
     #[test]

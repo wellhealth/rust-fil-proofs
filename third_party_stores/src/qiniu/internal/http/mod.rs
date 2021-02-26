@@ -98,9 +98,9 @@ impl<R: Read> Multipart<R> {
 
     /// Read the next entry from this multipart request, returning a struct with the field's name and
     /// data. See `MultipartField` for more info.
-    pub fn into_entry(self) -> ReadEntryResult<Self> {
-        self.read_entry()
-    }
+    // pub fn into_entry(self) -> ReadEntryResult<Self> {
+    //     self.read_entry()
+    // }
 
     /// Call `f` for each entry in the multipart request.
     ///

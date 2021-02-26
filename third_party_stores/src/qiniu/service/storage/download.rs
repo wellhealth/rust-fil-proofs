@@ -1,31 +1,33 @@
+use super::{query::query_for_io_urls, HTTP_CLIENT};
 use crate::qiniu::base::credential::Credential;
 use crate::qiniu::internal::http::{boundary_str, Multipart};
 use log::{debug, info, trace, warn};
 use once_cell::sync::Lazy;
 use positioned_io::ReadAt;
 use rand::{seq::SliceRandom, thread_rng};
-use reqwest::blocking::Client;
+// use reqwest::blocking::Client;
+use dashmap::DashMap;
 use serde::Deserialize;
 use std::convert::TryFrom;
 use std::env;
 use std::io::{Error, ErrorKind, Read};
 use std::result::Result;
-use std::time::{SystemTime, SystemTimeError, Duration, UNIX_EPOCH};
 use std::thread;
+use std::time::{Duration, Instant, SystemTime, SystemTimeError, UNIX_EPOCH};
 use url::Url;
 
-use std::iter::FromIterator;
+// use std::iter::FromIterator;
 
-use sha1::{Sha1, Digest};
+use sha1::{Digest, Sha1};
 
-use std::io::Cursor;
 use std::fs;
+use std::io::Cursor;
 
-static mut start_time:u64 = 0;
+static mut START_TIME: u64 = 0;
 
 pub fn set_download_start_time(t: &SystemTime) {
     unsafe {
-        start_time = {
+        START_TIME = {
             match t.duration_since(UNIX_EPOCH) {
                 Ok(n) => n.as_millis(),
                 Err(_) => 0,
@@ -34,32 +36,30 @@ pub fn set_download_start_time(t: &SystemTime) {
     }
 }
 
-pub fn total_download_duration(t: &SystemTime) -> Duration{
+pub fn total_download_duration(t: &SystemTime) -> Duration {
     let end_time = {
         match t.duration_since(UNIX_EPOCH) {
             Ok(n) => n.as_millis(),
             Err(_) => 0,
         }
     } as u64;
-    let t0:u64;
+    let t0: u64;
     unsafe {
-        t0 = start_time;
+        t0 = START_TIME;
     }
     Duration::from_millis(end_time - t0)
 }
 
 fn get_req_id(tn: &SystemTime, index: i32) -> String {
     let t: u64;
-    unsafe{
-        t = start_time
-    }
+    unsafe { t = START_TIME }
     let end_time = {
         match tn.duration_since(UNIX_EPOCH) {
             Ok(n) => n.as_nanos(),
             Err(_) => 0,
         }
     };
-    let delta = (end_time - (t as u128)*1000*1000) as u64;
+    let delta = (end_time - (t as u128) * 1000 * 1000) as u64;
     format!("r{}-{}-{}", t, delta, index)
 }
 
@@ -134,9 +134,9 @@ fn gen_range(range: &Vec<(u64, u64)>) -> String {
     ar.join(",")
 }
 
-fn parse_range(range_str: &str) -> std::io::Result<(u64, u64)>{
+fn parse_range(range_str: &str) -> std::io::Result<(u64, u64)> {
     let s1: Vec<&str> = range_str.split(" ").collect();
-    let s2: Vec<&str> = s1[s1.len()-1].split("/").collect();
+    let s2: Vec<&str> = s1[s1.len() - 1].split("/").collect();
     let s3: Vec<&str> = s2[0].split("-").collect();
     let e = Error::new(ErrorKind::InvalidInput, range_str);
     if s3.len() != 2 {
@@ -147,52 +147,56 @@ fn parse_range(range_str: &str) -> std::io::Result<(u64, u64)>{
     if start.is_err() {
         return Err(e);
     }
-    let end =  s3[1].parse::<u64>();
+    let end = s3[1].parse::<u64>();
     if end.is_err() {
         return Err(e);
     }
     let start = start.unwrap();
     let end = end.unwrap();
-    return Ok((start, end-start+1));
+    return Ok((start, end - start + 1));
 }
 
-fn is_debug() -> bool {
-    env::var("QINIU_DEBUG").is_ok()
-}
-
-const UA:&str = "QiniuRustDownload/10.23";
+const UA: &str = "QiniuRustDownload/2021.02.25";
 
 fn file_name(url: &str) -> String {
-    let ss:Vec<&str> = url.split("/").collect();
-    return format!("dump_body_{}", ss[ss.len()-1]);
+    let ss: Vec<&str> = url.split("/").collect();
+    return format!("dump_body_{}", ss[ss.len() - 1]);
 }
 
-static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
-    Client::builder()
-        .connect_timeout(Duration::from_millis(150))
-        .timeout(Duration::from_secs(30))
-        .pool_max_idle_per_host(5)
-        .build()
-        .expect("Failed to build Reqwest Client")
-});
+#[derive(Debug)]
+struct FailureInfo {
+    last_fail_time: Instant,
+    continuous_failed_times: usize,
+}
 
 #[derive(Debug)]
-pub struct RangeReader  {
-    pub urls: Vec<String>,
-    pub tries: usize,
+pub struct RangeReader {
+    urls: Vec<Url>,
+    tries: usize,
+    max_continuous_failed_times: usize,
+    max_continuous_failed_duration: Duration,
+    max_seek_hosts_percent: usize,
+    hostname_failures: DashMap<String, FailureInfo>,
 }
 
 impl RangeReader {
+    #[inline]
+    pub fn builder() -> RangeReaderBuilder {
+        RangeReaderBuilder::default()
+    }
+
+    #[inline]
     pub fn new(urls: &[String], tries: usize) -> RangeReader {
-        Self {
-            urls: urls.to_owned(),
-            tries,
-        }
+        let urls: Vec<Url> = urls
+            .iter()
+            .map(|url| Url::parse(url.as_str()).unwrap())
+            .collect();
+        Self::builder().urls(urls).tries(tries).build()
     }
 
     pub fn new_from_key(
         key: &str,
-        io_hosts: &Vec<&str>,
+        io_hosts: &[String],
         ak: &str,
         sk: &str,
         _uid: u64,
@@ -215,50 +219,78 @@ impl RangeReader {
                         Url::parse(&url).unwrap(),
                         Duration::from_secs(3600 * 24),
                         false,
-                    ).unwrap();
+                    )
+                    .unwrap();
                 }
-                return url;
+                url
             })
             .collect::<Vec<_>>();
         Self::new(&urls, 5)
     }
+
+    pub fn new_from_key_v2(
+        bucket: &str,
+        key: &str,
+        uc_hosts: Option<&[String]>,
+        io_hosts: &[String],
+        ak: &str,
+        sk: &str,
+        sim: bool,
+        private: bool,
+    ) -> RangeReader {
+        let new_io_hosts = uc_hosts
+            .map(|uc_hosts| {
+                query_for_io_urls(ak, bucket, uc_hosts, false)
+                    .unwrap_or_else(|_| io_hosts.to_owned())
+            })
+            .unwrap_or_else(|| io_hosts.to_owned());
+        Self::new_from_key(key, &new_io_hosts, ak, sk, 0, bucket, sim, private)
+    }
+
     fn read_at_internal(&self, pos: u64, buf: &mut [u8]) -> std::io::Result<usize> {
         let mut ret: Option<std::io::Result<usize>> = None;
         let size = buf.len() as u64;
         let range = format!("bytes={}-{}", pos, pos + size - 1);
         trace!("read_at_internal {}", &range);
-        let mut u:&str = "";
+        let mut u: Option<&Url> = None;
         let t = SystemTime::now();
         let mut retry_index = 0;
         for url in self.choose_urls() {
-            let x = HTTP_CLIENT.get(url)
+            let x = HTTP_CLIENT
+                .get(url.as_str())
                 .header("Range", &range)
                 .header("User-Agent", UA)
-                .header("X-ReqId", get_req_id(&t, retry_index)).send();
+                .header("X-ReqId", get_req_id(&t, retry_index))
+                .send();
             retry_index += 1;
-            u = url;
+            u = Some(url);
             match x {
                 Err(e) => {
                     let e2 = Error::new(ErrorKind::ConnectionAborted, e.to_string());
                     ret = Some(Err(e2));
+                    self.mark_hostname_as_failed(url);
                 }
                 Ok(resp) => {
                     let code = resp.status();
                     if code != 206 {
                         let e = Error::new(ErrorKind::InvalidData, code.as_str());
                         if code.as_u16() / 100 == 4 {
+                            self.mark_hostname_as_successful(url);
                             return Err(e);
                         }
+                        self.mark_hostname_as_failed(url);
                         ret = Some(Err(e));
                         continue;
                     }
                     let data = resp.bytes();
                     match data {
                         Err(e) => {
+                            self.mark_hostname_as_failed(url);
                             let e2 = Error::new(ErrorKind::ConnectionAborted, e.to_string());
                             ret = Some(Err(e2));
                         }
                         Ok(b) => {
+                            self.mark_hostname_as_successful(url);
                             buf.copy_from_slice(b.as_ref());
                             return Ok(b.len());
                         }
@@ -266,7 +298,11 @@ impl RangeReader {
                 }
             }
         }
-        warn!("final failed read at internal {} {:?}", u, ret);
+        warn!(
+            "final failed read at internal {} {:?}",
+            u.unwrap().as_str(),
+            ret
+        );
         return ret.unwrap();
     }
 
@@ -275,21 +311,24 @@ impl RangeReader {
         let mut ret: Option<std::io::Result<(u64, Vec<u8>)>> = None;
         let timestamp = SystemTime::now();
         let mut retry_index = 0;
-        let mut u:&str = "";
+        let mut u: Option<&Url> = None;
         for url in self.choose_urls() {
             if retry_index == 3 {
                 thread::sleep(Duration::from_secs(5));
             } else if retry_index == 4 {
                 thread::sleep(Duration::from_secs(15));
             }
-            u = url;
-            let x = HTTP_CLIENT.get(url)
+            u = Some(url);
+            let x = HTTP_CLIENT
+                .get(url.as_str())
                 .header("Range", &range)
                 .header("User-Agent", UA)
-                .header("X-ReqId", get_req_id(&timestamp, retry_index)).send();
-            retry_index+=1;
+                .header("X-ReqId", get_req_id(&timestamp, retry_index))
+                .send();
+            retry_index += 1;
             match x {
                 Err(e) => {
+                    self.mark_hostname_as_failed(url);
                     warn!("error is {} {}", url, e);
                     let e2 = Error::new(ErrorKind::ConnectionAborted, e.to_string());
                     ret = Some(Err(e2));
@@ -299,20 +338,28 @@ impl RangeReader {
                     let content_length = resp.content_length();
                     let content_range = resp.headers().get("Content-Range");
                     debug!(
-                        "{} code is {}, {:?} {:?} len {} time {:?}", url,
-                        code, content_range, content_length, length, timestamp.elapsed()
+                        "{} code is {}, {:?} {:?} len {} time {:?}",
+                        url,
+                        code,
+                        content_range,
+                        content_length,
+                        length,
+                        timestamp.elapsed()
                     );
                     if code != 206 {
                         let e = Error::new(ErrorKind::InvalidData, code.as_str());
                         if code.as_u16() < 500 {
+                            self.mark_hostname_as_successful(url);
                             warn!("code is {} {}", url, e);
                             return Err(e);
                         } else {
+                            self.mark_hostname_as_failed(url);
                             ret = Some(Err(e));
                             continue;
                         }
                     }
                     if content_length.is_none() {
+                        self.mark_hostname_as_failed(url);
                         let e = Error::new(ErrorKind::InvalidData, "no content length");
                         warn!("no content length {}", url);
                         ret = Some(Err(e));
@@ -321,6 +368,7 @@ impl RangeReader {
                     let content_length = content_length.unwrap();
                     // debug!("check code {}, {:?}", code, content_range);
                     if content_range.is_none() {
+                        self.mark_hostname_as_failed(url);
                         let e = Error::new(ErrorKind::InvalidData, "no content range");
                         warn!("no content range {}", url);
                         ret = Some(Err(e));
@@ -329,6 +377,7 @@ impl RangeReader {
                     let cr = content_range.unwrap().to_str().unwrap();
                     let r1: Vec<&str> = cr.split("/").collect();
                     if r1.len() != 2 {
+                        self.mark_hostname_as_failed(url);
                         let e = Error::new(ErrorKind::InvalidData, cr);
                         warn!("invalid content range {} {}", url, cr);
                         ret = Some(Err(e));
@@ -336,6 +385,7 @@ impl RangeReader {
                     }
                     let file_length = r1[1].parse::<u64>();
                     if file_length.is_err() {
+                        self.mark_hostname_as_failed(url);
                         let e = Error::new(ErrorKind::InvalidData, cr);
                         warn!("invalid content range parse{} {}", url, cr);
                         ret = Some(Err(e));
@@ -347,15 +397,23 @@ impl RangeReader {
 
                     if n.is_ok() {
                         let n = n.unwrap();
-                        if n != content_length as usize || n == 0{
+                        if n != content_length as usize || n == 0 {
+                            self.mark_hostname_as_failed(url);
                             let e = Error::new(ErrorKind::InvalidData, "no content length");
                             warn!("invalid content length {} {} {}", url, n, content_length);
                             ret = Some(Err(e));
                             continue;
                         }
-                        info!("last byte {}, {:?}, hash {}", url, timestamp.elapsed(), data_hash(&bytes));
+                        self.mark_hostname_as_successful(url);
+                        debug!(
+                            "last byte {}, {:?}, hash {}",
+                            url,
+                            timestamp.elapsed(),
+                            data_hash(&bytes)
+                        );
                         return Ok((file_length, bytes));
                     } else {
+                        self.mark_hostname_as_failed(url);
                         let e = n.err().unwrap();
                         warn!("download url read to end error {} {}", url, e);
                         ret = Some(Err(e));
@@ -363,7 +421,11 @@ impl RangeReader {
                 }
             }
         }
-        warn!("final failed read_last_bytes {} {:?}", u, ret);
+        warn!(
+            "final failed read_last_bytes {} {:?}",
+            u.unwrap().as_str(),
+            ret
+        );
         return ret.unwrap();
     }
 
@@ -378,23 +440,26 @@ impl RangeReader {
         let range = format!("bytes={}", gen_range(ranges));
         let timestamp = SystemTime::now();
         let mut retry_index = 0;
-        let mut u:&str = "";
+        let mut u: Option<&Url> = None;
         for url in self.choose_urls() {
             if retry_index == 3 {
                 thread::sleep(Duration::from_secs(5));
             } else if retry_index == 4 {
                 thread::sleep(Duration::from_secs(15));
             }
-            u = url;
+            u = Some(url);
             pos_list.clear();
-            debug!("download multi range {} {}",url, &range);
-            let x = HTTP_CLIENT.get(url)
+            debug!("download multi range {} {}", url, &range);
+            let x = HTTP_CLIENT
+                .get(url.as_str())
                 .header("Range", &range)
                 .header("User-Agent", UA)
-                .header("X-ReqId", get_req_id(&timestamp, retry_index)).send();
-            retry_index+=1;
+                .header("X-ReqId", get_req_id(&timestamp, retry_index))
+                .send();
+            retry_index += 1;
             match x {
                 Err(e) => {
+                    self.mark_hostname_as_failed(url);
                     let e2 = Error::new(ErrorKind::ConnectionAborted, e.to_string());
                     debug!("error is {}", e);
                     ret = Some(Err(e2));
@@ -406,6 +471,7 @@ impl RangeReader {
                     if code == 200 {
                         let ct_len = resp.content_length();
                         if ct_len.is_none() {
+                            self.mark_hostname_as_failed(url);
                             warn!("download content length is none {}", url);
                             let et = Error::new(ErrorKind::InvalidInput, "no content length");
                             return Err(et);
@@ -417,6 +483,7 @@ impl RangeReader {
                             let i1 = *i as usize;
                             let j1 = *j as usize;
                             if pos + j1 > buf.len() || i1 + j1 > l {
+                                self.mark_hostname_as_failed(url);
                                 warn!(
                                     "data out of range{} {} {} {} {}",
                                     url,
@@ -433,21 +500,25 @@ impl RangeReader {
                             trace!("200 copy {} {} {}", i, j, pos);
                             pos += j1;
                         }
-                        info!("multi download 200 {} hash {}", url, data_hash(buf));
+                        self.mark_hostname_as_successful(url);
+                        debug!("multi download 200 {} hash {}", url, data_hash(buf));
                         return Ok(buf.len());
                     }
 
                     if code != 206 {
                         let e = Error::new(ErrorKind::InvalidData, code.as_str());
                         if code.as_u16() / 100 == 4 {
+                            self.mark_hostname_as_successful(url);
                             warn!("meet error {} code {}", url, code);
                             return Err(e);
                         }
+                        self.mark_hostname_as_failed(url);
                         ret = Some(Err(e));
                         continue;
                     }
                     let c_len = resp.content_length();
                     if c_len.is_none() {
+                        self.mark_hostname_as_failed(url);
                         warn!("content length is none {}", url);
                         let et = Error::new(ErrorKind::InvalidData, "no content length");
                         ret = Some(Err(et));
@@ -455,6 +526,7 @@ impl RangeReader {
                     }
                     let ct = resp.headers().get("Content-Type");
                     if ct.is_none() {
+                        self.mark_hostname_as_failed(url);
                         warn!("content is none {}", url);
                         let et = Error::new(ErrorKind::InvalidData, "no content type");
                         ret = Some(Err(et));
@@ -464,6 +536,7 @@ impl RangeReader {
                     trace!("content is {}", ct);
                     let boundary = boundary_str(ct);
                     if boundary.is_none() {
+                        self.mark_hostname_as_failed(url);
                         warn!("boundary is none {}", url);
                         let et = Error::new(ErrorKind::InvalidData, "no boundary");
                         ret = Some(Err(et));
@@ -476,6 +549,7 @@ impl RangeReader {
                     let mut bytes = Vec::with_capacity(size as usize);
                     let r = resp.read_to_end(&mut bytes);
                     if r.is_err() {
+                        self.mark_hostname_as_failed(url);
                         warn!("read body error {} {:?}", url, r.err());
                         let et = Error::new(ErrorKind::InvalidData, "read body error");
                         ret = Some(Err(et));
@@ -519,7 +593,7 @@ impl RangeReader {
                                 break;
                             }
                             l += x;
-                            off+=x;
+                            off += x;
                         }
                         debug!(
                             "multi range size--- {} {} {} {}",
@@ -529,39 +603,63 @@ impl RangeReader {
                             buf[off - 1]
                         );
                         if l as u64 != length {
-                            warn!("data length not equal {} {} {} {} {}", url, range_str, l, start, length);
-                            fs::write(file_name(url), &bytes);
+                            warn!(
+                                "data length not equal {} {} {} {} {}",
+                                url, &range_str, l, start, length
+                            );
+                            let _ = fs::write(file_name(url.as_str()), &bytes);
                             return;
                         }
                         let r1 = ranges.get(index);
                         if r1.is_none() {
-                            warn!("data range out request {} {} {} {} {}", url, range_str, l, start, length);
-                            fs::write(file_name(url), &bytes);
+                            warn!(
+                                "data range out request {} {} {} {} {}",
+                                url, range_str, l, start, length
+                            );
+                            let _ = fs::write(file_name(url.as_str()), &bytes);
                             return;
                         }
-                        pos_list.push((start << 24 | l as u64, (off-l) as u64));
+                        pos_list.push((start << 24 | l as u64, (off - l) as u64));
                         let (start1, l1) = r1.unwrap();
-                        if *start1 != start || *l1 != length as u64{
-                            warn!("data range order mismatch {} {} {} {} {} {}", url, range_str, start1, l1, start, length);
-                            fs::write(file_name(url), &bytes);
+                        if *start1 != start || *l1 != length as u64 {
+                            warn!(
+                                "data range order mismatch {} {} {} {} {} {}",
+                                url, range_str, start1, l1, start, length
+                            );
+                            let _ = fs::write(file_name(url.as_str()), &bytes);
                             return;
                         }
-                        index+=1;
+                        index += 1;
                     });
                     match data {
                         Err(e) => {
+                            self.mark_hostname_as_failed(url);
                             warn!("result meet error {} {} {}", url, ct, e);
                             let e2 = Error::new(ErrorKind::Interrupted, e.to_string());
                             ret = Some(Err(e2));
                         }
                         Ok(_b) => {
-                            if off != buf.len() || pos_list.len() != ranges.len(){
-                                warn!("return data mismatch {} {} {} {} ranges {} {}", url, ct, off,
-                                      buf.len(), pos_list.len(), ranges.len());
+                            if off != buf.len() || pos_list.len() != ranges.len() {
+                                self.mark_hostname_as_failed(url);
+                                warn!(
+                                    "return data mismatch {} {} {} {} ranges {} {}",
+                                    url,
+                                    ct,
+                                    off,
+                                    buf.len(),
+                                    pos_list.len(),
+                                    ranges.len()
+                                );
                                 let et = Error::new(ErrorKind::Interrupted, "data mis match");
                                 ret = Some(Err(et));
                             } else {
-                                info!("multi download {}, {:?} hash {}", url, timestamp.elapsed(), data_hash(buf));
+                                self.mark_hostname_as_successful(url);
+                                debug!(
+                                    "multi download {}, {:?} hash {}",
+                                    url,
+                                    timestamp.elapsed(),
+                                    data_hash(buf)
+                                );
                                 return Ok(buf.len());
                             }
                         }
@@ -569,28 +667,37 @@ impl RangeReader {
                 }
             }
         }
-        warn!("final failed read multi range {} {:?}", u, ret);
+        warn!(
+            "final failed read multi range {} {:?}",
+            u.unwrap().as_str(),
+            ret
+        );
         return ret.unwrap();
     }
 
     pub fn exist(&self) -> std::io::Result<bool> {
         let mut ret: Option<std::io::Result<bool>> = None;
         for url in self.choose_urls() {
-            let x = HTTP_CLIENT.head(url)
+            let x = HTTP_CLIENT
+                .head(url.as_str())
                 .header("User-Agent", UA)
                 .send();
             match x {
                 Err(e) => {
+                    self.mark_hostname_as_failed(url);
                     let e2 = Error::new(ErrorKind::ConnectionAborted, e.to_string());
                     ret = Some(Err(e2));
                 }
                 Ok(resp) => {
                     let code = resp.status();
                     if code == 200 {
+                        self.mark_hostname_as_successful(url);
                         return Ok(true);
                     } else if code == 404 {
+                        self.mark_hostname_as_successful(url);
                         return Ok(false);
                     } else {
+                        self.mark_hostname_as_failed(url);
                         let e = Error::new(ErrorKind::BrokenPipe, code.as_str());
                         ret = Some(Err(e));
                     }
@@ -603,9 +710,13 @@ impl RangeReader {
     pub fn download(&self, file: &mut std::fs::File) -> std::io::Result<u64> {
         let mut ret: Option<std::io::Result<u64>> = None;
         for url in self.choose_urls() {
-            let x = HTTP_CLIENT.get(url).header("User-Agent", UA).send();
+            let x = HTTP_CLIENT
+                .get(url.as_str())
+                .header("User-Agent", UA)
+                .send();
             match x {
                 Err(e) => {
+                    self.mark_hostname_as_failed(url);
                     let e2 = Error::new(ErrorKind::ConnectionAborted, e.to_string());
                     ret = Some(Err(e2));
                 }
@@ -615,20 +726,24 @@ impl RangeReader {
                     if code != 200 {
                         let e = Error::new(ErrorKind::InvalidData, code.as_str());
                         if code.as_u16() / 100 == 4 {
+                            self.mark_hostname_as_successful(url);
                             return Err(e);
                         }
+                        self.mark_hostname_as_failed(url);
                         ret = Some(Err(e));
                         continue;
                     }
                     debug!("content length is {:?}", resp.content_length());
                     let n = resp.copy_to(file);
                     if n.is_err() {
+                        self.mark_hostname_as_failed(url);
                         let e1 = n.err();
                         info!("download error {:?}", e1);
                         let e = Error::new(ErrorKind::BrokenPipe, e1.unwrap().to_string());
                         ret = Some(Err(e));
                         continue;
                     }
+                    self.mark_hostname_as_successful(url);
                     return Ok(n.unwrap());
                 }
             }
@@ -640,20 +755,23 @@ impl RangeReader {
         let mut ret: Option<std::io::Result<Vec<u8>>> = None;
         let timestamp = SystemTime::now();
         let mut retry_index = 0;
-        let mut u:&str = "";
+        let mut u: Option<&Url> = None;
         for url in self.choose_urls() {
             if retry_index == 3 {
                 thread::sleep(Duration::from_secs(5));
             } else if retry_index == 4 {
                 thread::sleep(Duration::from_secs(15));
             }
-            u = url;
-            let x = HTTP_CLIENT.get(url)
+            u = Some(url);
+            let x = HTTP_CLIENT
+                .get(url.as_str())
                 .header("User-Agent", UA)
-                .header("X-ReqId", get_req_id(&timestamp, retry_index)).send();
-            retry_index+=1;
+                .header("X-ReqId", get_req_id(&timestamp, retry_index))
+                .send();
+            retry_index += 1;
             match x {
                 Err(e) => {
+                    self.mark_hostname_as_failed(url);
                     let e2 = Error::new(ErrorKind::ConnectionAborted, e.to_string());
                     ret = Some(Err(e2));
                     warn!("download error {} {}", url, e);
@@ -664,9 +782,11 @@ impl RangeReader {
                     if code != 200 {
                         let e = Error::new(ErrorKind::InvalidData, code.as_str());
                         if code.as_u16() / 100 == 4 {
+                            self.mark_hostname_as_successful(url);
                             warn!("download error {} {}", url, e);
                             return Err(e);
                         }
+                        self.mark_hostname_as_failed(url);
                         ret = Some(Err(e));
                         continue;
                     }
@@ -678,6 +798,7 @@ impl RangeReader {
                         size = l.unwrap();
                     }
                     if l.is_none() {
+                        self.mark_hostname_as_failed(url);
                         warn!("no content length {}", url);
                         let et = Error::new(ErrorKind::InvalidData, "no content length");
                         ret = Some(Err(et));
@@ -685,42 +806,70 @@ impl RangeReader {
                     }
                     let mut bytes = Vec::with_capacity(size as usize);
                     let r = resp.read_to_end(&mut bytes);
-                    debug!("{} download size is {:?}, {}, time {:?}", url, r, bytes.len(), timestamp.elapsed());
-                    if r.is_err()  {
+                    debug!(
+                        "{} download size is {:?}, {}, time {:?}",
+                        url,
+                        r,
+                        bytes.len(),
+                        timestamp.elapsed()
+                    );
+                    if r.is_err() {
+                        self.mark_hostname_as_failed(url);
                         let et = r.err().unwrap();
-                        warn!("download len not equal {} {} {}", url,  bytes.len(), et);
+                        warn!("download len not equal {} {} {}", url, bytes.len(), et);
                         ret = Some(Err(et));
                         continue;
                     }
                     let t = r.unwrap();
                     if t != bytes.len() {
-                        warn!("download len not equal {} {} {}", url,  bytes.len(), t);
+                        self.mark_hostname_as_failed(url);
+                        warn!("download len not equal {} {} {}", url, bytes.len(), t);
                         let e2 = Error::new(ErrorKind::Interrupted, "read length not equal");
                         ret = Some(Err(e2));
                         continue;
                     }
-                    if t as u64 != size  || t == 0 {
-                        warn!("download len not equal ct-len {} {} {}", url,  size, t);
+                    if t as u64 != size || t == 0 {
+                        self.mark_hostname_as_failed(url);
+                        warn!("download len not equal ct-len {} {} {}", url, size, t);
                         let e2 = Error::new(ErrorKind::Interrupted, "read length not equal");
                         ret = Some(Err(e2));
                         continue;
                     }
-
-                    // info!("download {} hash {}", url, data_hash(&bytes));
+                    self.mark_hostname_as_successful(url);
+                    debug!("download {} hash {}", url, data_hash(&bytes));
                     return Ok(bytes);
                 }
             }
         }
-        warn!("final failed download_bytes {} {:?}", u, ret);
+        warn!(
+            "final failed download_bytes {} {:?}",
+            u.unwrap().as_str(),
+            ret
+        );
         return ret.unwrap();
     }
 
-    fn choose_urls(&self) -> Vec<&str> {
-        let mut urls: Vec<&str> = self
-            .urls
-            .choose_multiple(&mut thread_rng(), self.tries)
-            .map(|s| s.as_str())
+    fn choose_urls(&self) -> Vec<&Url> {
+        let mut max_unavailable_count = 0;
+        let mut urls: Vec<_> = self.urls.iter().collect();
+        urls.shuffle(&mut thread_rng());
+
+        let urls: Vec<_> = urls
+            .into_iter()
+            .filter(|url| {
+                if max_unavailable_count >= self.urls.len() * self.max_seek_hosts_percent / 100
+                    || self.is_hostname_available(url)
+                {
+                    true
+                } else {
+                    max_unavailable_count += 1;
+                    false
+                }
+            })
             .collect();
+        let mut urls: Vec<_> = urls.into_iter().take(self.tries).collect();
+
+        assert!(!urls.is_empty(), "No URLs can be chosen");
         if urls.len() < self.tries {
             let still_needed = self.tries - urls.len();
             for i in 0..still_needed {
@@ -729,6 +878,56 @@ impl RangeReader {
             }
         }
         urls
+    }
+
+    fn is_hostname_available(&self, url: &Url) -> bool {
+        if let Some(failure_info) = self.hostname_failures.get(&hostname_of_url(url)) {
+            failure_info.continuous_failed_times <= self.max_continuous_failed_times
+                || failure_info.last_fail_time + self.max_continuous_failed_duration
+                    <= Instant::now()
+        } else {
+            true
+        }
+    }
+
+    fn mark_hostname_as_successful(&self, url: &Url) {
+        self.hostname_failures.remove(&hostname_of_url(url));
+    }
+
+    fn mark_hostname_as_failed(&self, url: &Url) {
+        self.hostname_failures
+            .entry(hostname_of_url(url))
+            .and_modify(|failure_info| {
+                failure_info.continuous_failed_times += 1;
+                failure_info.last_fail_time = Instant::now();
+            })
+            .or_insert_with(|| FailureInfo {
+                continuous_failed_times: 1,
+                last_fail_time: Instant::now(),
+            });
+    }
+}
+
+fn hostname_of_url(url: &Url) -> String {
+    let mut hostname = url.host_str().unwrap().to_owned();
+    if let Some(port) = url.port() {
+        hostname.push_str(":");
+        hostname.push_str(&port.to_string());
+    }
+    hostname
+}
+
+impl Default for RangeReader {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            urls: Default::default(),
+            tries: 5,
+            max_continuous_failed_times: 5,
+            max_continuous_failed_duration: Duration::from_secs(60),
+            max_seek_hosts_percent: 50,
+            hostname_failures: Default::default(),
+        }
     }
 }
 
@@ -750,26 +949,69 @@ impl ReadAt for RangeReader {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct RangeReaderBuilder {
+    inner: RangeReader,
+}
+
+impl RangeReaderBuilder {
+    #[inline]
+    pub fn urls(mut self, urls: Vec<Url>) -> Self {
+        self.inner.urls = urls;
+        self
+    }
+
+    #[inline]
+    pub fn tries(mut self, tries: usize) -> Self {
+        self.inner.tries = tries;
+        self
+    }
+
+    #[inline]
+    pub fn max_continuous_failed_times(mut self, max_times: usize) -> Self {
+        self.inner.max_continuous_failed_times = max_times;
+        self
+    }
+
+    #[inline]
+    pub fn max_continuous_failed_duration(mut self, failed_duration: Duration) -> Self {
+        self.inner.max_continuous_failed_duration = failed_duration;
+        self
+    }
+
+    #[inline]
+    pub fn max_seek_hosts_percent(mut self, percent: usize) -> Self {
+        self.inner.max_seek_hosts_percent = percent;
+        self
+    }
+
+    #[inline]
+    pub fn build(self) -> RangeReader {
+        self.inner
+    }
+}
+
 #[derive(Deserialize, Debug)]
 pub struct Config {
     ak: String,
     sk: String,
     bucket: String,
     io_hosts: Vec<String>,
+    uc_hosts: Option<Vec<String>>,
     sim: Option<bool>,
     private: Option<bool>,
 }
 
-static qiniu_conf: Lazy<Option<Config>> = Lazy::new(load_conf);
+static QINIU_CONF: Lazy<Option<Config>> = Lazy::new(load_conf);
 
 pub fn qiniu_is_enable() -> bool {
-    qiniu_conf.is_some()
+    QINIU_CONF.is_some()
 }
 
 fn load_conf() -> Option<Config> {
     let x = env::var("QINIU");
     if x.is_err() {
-        info!("QINIU Env IS NOT ENABLE");
+        warn!("QINIU Env IS NOT ENABLE");
         return None;
     }
     let conf_path = x.unwrap();
@@ -778,7 +1020,7 @@ fn load_conf() -> Option<Config> {
         warn!("config file is not exist {}", &conf_path);
         return None;
     }
-    let conf: Config = if conf_path.ends_with(".toml"){
+    let conf: Config = if conf_path.ends_with(".toml") {
         toml::from_slice(&v.unwrap()).unwrap()
     } else {
         serde_json::from_slice(&v.unwrap()).unwrap()
@@ -787,18 +1029,15 @@ fn load_conf() -> Option<Config> {
 }
 
 pub fn reader_from_config(path: &str, conf: &Config) -> Option<RangeReader> {
-    let hosts = Vec::from_iter(conf.io_hosts.iter().map(String::as_str));
-    let private = conf.private.unwrap_or(false);
-    let sim = conf.sim.unwrap_or(false);
-    let r = RangeReader::new_from_key(
+    let r = RangeReader::new_from_key_v2(
+        &conf.bucket,
         path,
-        &hosts,
+        conf.uc_hosts.as_deref(),
+        conf.io_hosts.as_ref(),
         &conf.ak,
         &conf.sk,
-        0,
-        &conf.bucket,
-        sim,
-        private,
+        conf.sim.unwrap_or(false),
+        conf.private.unwrap_or(false),
     );
     Some(r)
 }
@@ -807,10 +1046,15 @@ pub fn reader_from_env(path: &str) -> Option<RangeReader> {
     if !qiniu_is_enable() {
         return None;
     }
-    return reader_from_config(path, qiniu_conf.as_ref().unwrap());
+    return reader_from_config(path, QINIU_CONF.as_ref().unwrap());
 }
 
-pub fn read_batch(path: &str, buf: &mut [u8], ranges: &Vec<(u64, u64)>, pos_list: &mut Vec<(u64, u64)>) -> std::io::Result<usize> {
+pub fn read_batch(
+    path: &str,
+    buf: &mut [u8],
+    ranges: &Vec<(u64, u64)>,
+    pos_list: &mut Vec<(u64, u64)>,
+) -> std::io::Result<usize> {
     let q = reader_from_env(path);
     if q.is_some() && ranges.len() != 0 {
         return q.unwrap().read_multi_range(buf, ranges, pos_list);
@@ -819,3 +1063,217 @@ pub fn read_batch(path: &str, buf: &mut [u8], ranges: &Vec<(u64, u64)>, pos_list
     return Err(e2);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{error::Error, result::Result};
+    static path: &str =
+        "/Users/long/projects/filecoin/lotus/stdir/bench832045109/cache/s-t01000-1/t_aux";
+    #[test]
+    fn test_last_bytes_down_ok() {
+        let io_hosts = vec!["http://127.0.0.1:10800"];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let ret = reader.read_last_bytes(32);
+        assert!(ret.is_ok());
+        let r = ret.unwrap();
+        assert_eq!(r.0, 575);
+        let v = r.1;
+        println!("{} {} {} {}", v[0], v[1], v[v.len() - 2], v[v.len() - 1]);
+    }
+
+    #[test]
+    fn test_last_bytes_down_error() {
+        let io_hosts = vec!["http://127.0.0.1:10802"];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let ret = reader.read_last_bytes(32);
+        assert!(ret.is_err());
+    }
+
+    #[test]
+    fn test_last_bytes_down_5xx() {
+        let io_hosts = vec!["http://127.0.0.1:10801/500"];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let ret = reader.read_last_bytes(32);
+        assert!(ret.is_err());
+    }
+
+    #[test]
+    fn test_last_bytes_down_retry() {
+        let io_hosts = vec![
+            "http://127.0.0.1:10801/599",
+            "http://127.0.0.1:10801/206",
+            "http://127.0.0.1:10802",
+            "http://127.0.0.1:10800",
+        ];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let ret = reader.read_last_bytes(32).unwrap();
+        let length = ret.0;
+        let buffer = ret.1;
+        println!(
+            "{} {} {} {}",
+            buffer[0],
+            buffer[1],
+            buffer[buffer.len() - 2],
+            buffer[buffer.len() - 1]
+        );
+        assert_eq!(length, 575);
+    }
+
+    #[test]
+    fn test_multi_down_ok() {
+        let io_hosts = vec!["http://127.0.0.1:10800"];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let mut read_data = vec![0; 2 + 6];
+        let range = vec![(16, 2), (32, 6)];
+        let mut pos: Vec<(u64, u64)> = Vec::with_capacity(range.len());
+        let ret = reader.read_multi_range(&mut read_data, &range, &mut pos);
+        let r = ret.unwrap();
+        assert_eq!(r, 2 + 6);
+        let v = read_data;
+        println!("{} {} {} {}", v[0], v[1], v[v.len() - 2], v[v.len() - 1]);
+    }
+
+    #[test]
+    fn test_multi_down_error() {
+        let io_hosts = vec!["http://127.0.0.1:10802"];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let mut read_data = vec![0; 2 + 6];
+        let range = vec![(16, 2), (32, 6)];
+        let mut pos: Vec<(u64, u64)> = Vec::with_capacity(range.len());
+        let ret = reader.read_multi_range(&mut read_data, &range, &mut pos);
+        assert!(ret.is_err());
+    }
+
+    #[test]
+    fn test_multi_down_5xx() {
+        let io_hosts = vec!["http://127.0.0.1:10801/500"];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let mut read_data = vec![0; 2 + 6];
+        let range = vec![(16, 2), (32, 6)];
+        let mut pos: Vec<(u64, u64)> = Vec::with_capacity(range.len());
+        let ret = reader.read_multi_range(&mut read_data, &range, &mut pos);
+        assert!(ret.is_err());
+    }
+
+    #[test]
+    fn test_multi_down_retry() {
+        let io_hosts = vec![
+            "http://127.0.0.1:10801/599",
+            "http://127.0.0.1:10801/206",
+            "http://127.0.0.1:10802",
+            "http://127.0.0.1:10800",
+        ];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let mut read_data = vec![0; 2 + 6 + 4];
+        let range = vec![(16, 2), (32, 6), (52, 4)];
+        let mut pos: Vec<(u64, u64)> = Vec::with_capacity(range.len());
+        let ret = reader.read_multi_range(&mut read_data, &range, &mut pos);
+        let buffer = read_data;
+        println!(
+            "{} {} {} {} {}",
+            buffer[0],
+            buffer[1],
+            buffer[buffer.len() - 2],
+            buffer[buffer.len() - 1],
+            data_hash(&buffer)
+        );
+        assert_eq!(ret.unwrap(), 2 + 6 + 4);
+    }
+
+    #[test]
+    fn test_bytes_down_ok() {
+        let io_hosts = vec!["http://127.0.0.1:10800"];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let ret = reader.download_bytes();
+        assert!(ret.is_ok());
+        let v = ret.unwrap();
+        assert_eq!(v.len(), 575);
+        println!("{} {} {} {}", v[0], v[1], v[v.len() - 2], v[v.len() - 1]);
+    }
+
+    #[test]
+    fn test_bytes_down_error() {
+        let io_hosts = vec!["http://127.0.0.1:10802"];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let ret = reader.download_bytes();
+        assert!(ret.is_err());
+    }
+
+    #[test]
+    fn test_bytes_down_5xx() {
+        let io_hosts = vec!["http://127.0.0.1:10801/500"];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let ret = reader.download_bytes();
+        assert!(ret.is_err());
+    }
+
+    #[test]
+    fn test_bytes_down_retry() {
+        let io_hosts = vec![
+            "http://127.0.0.1:10801/500",
+            "http://127.0.0.1:10801/200",
+            "http://127.0.0.1:10802",
+            "http://127.0.0.1:10800",
+        ];
+        let reader =
+            RangeReader::new_from_key(path, &io_hosts, "123", "456", 0, "test", true, false);
+        let ret = reader.download_bytes().unwrap();
+        assert_eq!(ret.len(), 575);
+        let buffer = ret;
+        println!(
+            "{} {} {} {}",
+            buffer[0],
+            buffer[1],
+            buffer[buffer.len() - 2],
+            buffer[buffer.len() - 1]
+        );
+    }
+
+    fn parse_range(s: &str) -> (u64, Vec<(u64, u64)>) {
+        let ss: Vec<&str> = s.split(",").collect();
+        let mut range: Vec<(u64, u64)> = Vec::with_capacity(ss.len());
+        let mut l: u64 = 0;
+        for sv in ss {
+            let s2: Vec<&str> = sv.split("-").collect();
+            let start = s2[0].parse::<u64>().unwrap();
+            let end = s2[1].parse::<u64>().unwrap();
+            let len = end - start + 1;
+            l += len;
+            range.push((start, len));
+        }
+        return (l, range);
+    }
+
+    #[test]
+    fn test_multi_repeat() {
+        let io_hosts = vec!["http://172.18.104.84:5000/getfile/10005/t021462"];
+        let reader = RangeReader::new_from_key(
+            "/home/ipfsunion/.dfs/cache/s-t021479-233411/sc-02-data-tree-r-last-3.dat",
+            &io_hosts,
+            "123",
+            "456",
+            0,
+            "test",
+            true,
+            false,
+        );
+        let x = "8137216-8137247,8137248-8137279,8137280-8137311,8137312-8137343,8137344-8137375,8137408-8137439,8137440-8137471,9405696-9405727,9405728-9405759,9405792-9405823,9405824-9405855,9405856-9405887,9405888-9405919,9405920-9405951,9564160-9564191,9564192-9564223,9564224-9564255,9564256-9564287,9564288-9564319,9564352-9564383,9564384-9564415,9584160-9584191,9584192-9584223,9584224-9584255,9584256-9584287,9584288-9584319,9584320-9584351,9584352-9584383,9586432-9586463,9586464-9586495,9586496-9586527,9586528-9586559,9586560-9586591,9586592-9586623,9586656-9586687,9586688-9586719,9586720-9586751,9586752-9586783,9586784-9586815,9586816-9586847,9586848-9586879,9586880-9586911,3434240-3434271,3434272-3434303,3434304-3434335,3434336-3434367,3434400-3434431,3434432-3434463,3434464-3434495,8817664-8817695,8817696-8817727,8817728-8817759,8817760-8817791,8817792-8817823,8817824-8817855,8817856-8817887,9490688-9490719,9490720-9490751,9490752-9490783,9490784-9490815,9490848-9490879,9490880-9490911,9490912-9490943,9574912-9574943,9574976-9575007,9575008-9575039,9575040-9575071,9575072-9575103,9575104-9575135,9575136-9575167,9585408-9585439,9585440-9585471,9585504-9585535,9585536-9585567,9585568-9585599,9585600-9585631,9585632-9585663,9586688-9586719,9586720-9586751,9586752-9586783,9586816-9586847,9586848-9586879,9586880-9586911,9586912-9586943";
+        let (l, range) = parse_range(x);
+        let mut read_data = vec![0; l as usize];
+        let mut pos: Vec<(u64, u64)> = Vec::with_capacity(range.len());
+        let ret = reader.read_multi_range(&mut read_data, &range, &mut pos);
+        println!("hash is {}", data_hash(&read_data));
+        assert!(ret.is_ok());
+    }
+}

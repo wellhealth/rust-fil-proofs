@@ -301,9 +301,9 @@ where
     M: ReadEntry,
 {
     /// Take the inner `Multipart` or `&mut Multipart`
-    pub fn into_inner(self) -> M {
-        self.inner.expect(DATA_INNER_ERR)
-    }
+    // pub fn into_inner(self) -> M {
+    //     self.inner.expect(DATA_INNER_ERR)
+    // }
 
     /// Set the minimum buffer size that `BufRead::fill_buf(self)` will return
     /// until the end of the stream is reached. Set this as small as you can tolerate
@@ -311,21 +311,21 @@ where
     /// is smaller than this).
     ///
     /// This value is reset between fields.
-    pub fn set_min_buf_size(&mut self, min_buf_size: usize) {
-        self.inner_mut().set_min_buf_size(min_buf_size)
-    }
+    // pub fn set_min_buf_size(&mut self, min_buf_size: usize) {
+    //     self.inner_mut().set_min_buf_size(min_buf_size)
+    // }
 
     fn inner_mut(&mut self) -> &mut M {
         self.inner.as_mut().expect(DATA_INNER_ERR)
     }
 
-    fn take_inner(&mut self) -> M {
-        self.inner.take().expect(DATA_INNER_ERR)
-    }
+    // fn take_inner(&mut self) -> M {
+    //     self.inner.take().expect(DATA_INNER_ERR)
+    // }
 
-    fn give_inner(&mut self, inner: M) {
-        self.inner = Some(inner);
-    }
+    // fn give_inner(&mut self, inner: M) {
+    //     self.inner = Some(inner);
+    // }
 }
 
 impl<M: ReadEntry> Read for MultipartData<M> {
@@ -347,29 +347,29 @@ impl<M: ReadEntry> BufRead for MultipartData<M> {
     }
 }
 
-fn split_once(s: &str, delim: char) -> Option<(&str, &str)> {
-    s.find(delim).map(|idx| s.split_at(idx))
-}
+// fn split_once(s: &str, delim: char) -> Option<(&str, &str)> {
+//     s.find(delim).map(|idx| s.split_at(idx))
+// }
 
-fn trim_quotes(s: &str) -> &str {
-    s.trim_matches('"')
-}
+// fn trim_quotes(s: &str) -> &str {
+//     s.trim_matches('"')
+// }
 
 /// Get the string after `needle` in `haystack`, stopping before `end_val_delim`
-fn get_str_after<'a>(
-    needle: &str,
-    end_val_delim: char,
-    haystack: &'a str,
-) -> Option<(&'a str, &'a str)> {
-    let val_start_idx = try_opt!(haystack.find(needle)) + needle.len();
-    let val_end_idx = haystack[val_start_idx..]
-        .find(end_val_delim)
-        .map_or(haystack.len(), |end_idx| end_idx + val_start_idx);
-    Some((
-        &haystack[val_start_idx..val_end_idx],
-        &haystack[val_end_idx..],
-    ))
-}
+// fn get_str_after<'a>(
+//     needle: &str,
+//     end_val_delim: char,
+//     haystack: &'a str,
+// ) -> Option<(&'a str, &'a str)> {
+//     let val_start_idx = try_opt!(haystack.find(needle)) + needle.len();
+//     let val_end_idx = haystack[val_start_idx..]
+//         .find(end_val_delim)
+//         .map_or(haystack.len(), |end_idx| end_idx + val_start_idx);
+//     Some((
+//         &haystack[val_start_idx..val_end_idx],
+//         &haystack[val_end_idx..],
+//     ))
+// }
 
 fn io_str_utf8(buf: &[u8]) -> io::Result<&str> {
     str::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
@@ -490,48 +490,48 @@ impl<M: ReadEntry, Entry> ReadEntryResult<M, Entry> {
         }
     }
 
-    /// Attempt to unwrap `Entry`, panicking if this is `End` or `Error`.
-    pub fn unwrap(self) -> Entry {
-        self.expect_alt(
-            "`ReadEntryResult::unwrap()` called on `End` value",
-            "`ReadEntryResult::unwrap()` called on `Error` value: {:?}",
-        )
-    }
+    // Attempt to unwrap `Entry`, panicking if this is `End` or `Error`.
+    // pub fn unwrap(self) -> Entry {
+    //     self.expect_alt(
+    //         "`ReadEntryResult::unwrap()` called on `End` value",
+    //         "`ReadEntryResult::unwrap()` called on `Error` value: {:?}",
+    //     )
+    // }
 
-    /// Attempt to unwrap `Entry`, panicking if this is `End` or `Error`
-    /// with the given message. Adds the error's message in the `Error` case.
-    pub fn expect(self, msg: &str) -> Entry {
-        self.expect_alt(msg, msg)
-    }
+    // Attempt to unwrap `Entry`, panicking if this is `End` or `Error`
+    // with the given message. Adds the error's message in the `Error` case.
+    // pub fn expect(self, msg: &str) -> Entry {
+    //     self.expect_alt(msg, msg)
+    // }
 
-    /// Attempt to unwrap `Entry`, panicking if this is `End` or `Error`.
-    /// If this is `End`, panics with `end_msg`; if `Error`, panics with `err_msg`
-    /// as well as the error's message.
-    pub fn expect_alt(self, end_msg: &str, err_msg: &str) -> Entry {
-        match self {
-            Entry(entry) => entry,
-            End(_) => panic!("{}", end_msg),
-            Error(_, err) => panic!("{}: {:?}", err_msg, err),
-        }
-    }
+    // Attempt to unwrap `Entry`, panicking if this is `End` or `Error`.
+    // If this is `End`, panics with `end_msg`; if `Error`, panics with `err_msg`
+    // as well as the error's message.
+    // pub fn expect_alt(self, end_msg: &str, err_msg: &str) -> Entry {
+    //     match self {
+    //         Entry(entry) => entry,
+    //         End(_) => panic!("{}", end_msg),
+    //         Error(_, err) => panic!("{}: {:?}", err_msg, err),
+    //     }
+    // }
 
-    /// Attempt to unwrap as `Option<Entry>`, panicking in the `Error` case.
-    pub fn unwrap_opt(self) -> Option<Entry> {
-        self.expect_opt("`ReadEntryResult::unwrap_opt()` called on `Error` value")
-    }
+    // Attempt to unwrap as `Option<Entry>`, panicking in the `Error` case.
+    // pub fn unwrap_opt(self) -> Option<Entry> {
+    //     self.expect_opt("`ReadEntryResult::unwrap_opt()` called on `Error` value")
+    // }
 
-    /// Attempt to unwrap as `Option<Entry>`, panicking in the `Error` case
-    /// with the given message as well as the error's message.
-    pub fn expect_opt(self, msg: &str) -> Option<Entry> {
-        match self {
-            Entry(entry) => Some(entry),
-            End(_) => None,
-            Error(_, err) => panic!("{}: {:?}", msg, err),
-        }
-    }
+    // Attempt to unwrap as `Option<Entry>`, panicking in the `Error` case
+    // with the given message as well as the error's message.
+    // pub fn expect_opt(self, msg: &str) -> Option<Entry> {
+    //     match self {
+    //         Entry(entry) => Some(entry),
+    //         End(_) => None,
+    //         Error(_, err) => panic!("{}: {:?}", msg, err),
+    //     }
+    // }
 }
 
-const GENERIC_PARSE_ERR: &str = "an error occurred while parsing field headers";
+// const GENERIC_PARSE_ERR: &str = "an error occurred while parsing field headers";
 
 quick_error! {
     #[derive(Debug)]
