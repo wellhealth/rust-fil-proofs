@@ -235,8 +235,14 @@ fn hs_gpu(
         .recv()
         .expect("rx_fails to recv param_h for gpu calculation");
     rx_h.into_iter()
-        .map(|x| multiexp_full(&Worker::new(), param_h.clone(), FullDensity, x, kern))
         .enumerate()
+        .inspect(|(index, _)| info!("{:?}: h-gpu started {}", *SECTOR_ID, index + 1))
+        .map(|(index, x)| {
+            (
+                index,
+                multiexp_full(&Worker::new(), param_h.clone(), FullDensity, x, kern),
+            )
+        })
         .inspect(|(index, _)| info!("{:?}: h-gpu done {}", *SECTOR_ID, index + 1))
         .map(|(_, x)| x)
         .collect()
