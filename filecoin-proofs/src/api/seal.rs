@@ -1083,7 +1083,7 @@ where
         let comm_d = commitment_from_fr(comm_d_root);
 
         //利用unsealed文件，生成unsealed.index文件
-        let filename = format!("tree.index");
+        let filename = "tree.index";
         let new_path = in_path.as_ref().with_file_name(filename);
         info!("newPath is {:?}", new_path);
         //创建文件并保存中间结果
@@ -1093,12 +1093,12 @@ where
             .open(new_path)
             .unwrap();
         //保存comm_d数据
-        outputfile.write(&comm_d).unwrap();
+        outputfile.write_all(&comm_d).unwrap();
         //保存data_tree.len() 数据
         unsafe {
             let lensize = data_tree.len() as u64;
             let treelen = std::mem::transmute::<u64, [u8; 8]>(lensize);
-            outputfile.write(&treelen).unwrap();
+            outputfile.write_all(&treelen).unwrap();
         }
         config.size = Some(data_tree.len());
 
@@ -1205,18 +1205,18 @@ where
     //从文件中读取treed生成的数据用于layer计算
     //config.size = Some(127);
     //利用unsealed文件，生成unsealed.index文件
-    let filename = format!("tree.index");
+    let filename = "tree.index";
     let new_path = in_path.as_ref().with_file_name(filename);
     println!("newPath is {:?}", new_path);
 
     let mut comm_d: [u8; 32] = [0; 32];
     unsafe {
         let mut outputfile = OpenOptions::new().read(true).open(new_path).unwrap();
-        outputfile.read(&mut comm_d).unwrap();
+        outputfile.read_exact(&mut comm_d).unwrap();
         //读取data_tree.len 数据
 
         let mut treelen: [u8; 8] = [0; 8];
-        outputfile.read(&mut treelen).unwrap();
+        outputfile.read_exact(&mut treelen).unwrap();
         let lensize = std::mem::transmute::<[u8; 8], u64>(treelen);
         config.size = Some(lensize as usize);
     }
