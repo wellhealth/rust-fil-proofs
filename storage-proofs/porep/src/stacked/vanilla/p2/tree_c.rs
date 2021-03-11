@@ -43,7 +43,7 @@ pub fn run<ColumnArity, TreeArity>(
     labels: &[(PathBuf, String)],
     replica_path: &Path,
     gpu_index: usize,
-	cpu_start_condition: Option<std::sync::mpsc::Receiver<()>>
+    cpu_start_condition: Option<std::sync::mpsc::Receiver<()>>,
 ) -> Result<()>
 where
     ColumnArity: PoseidonArity + 'static,
@@ -64,6 +64,7 @@ where
     let (column_tx, column_rx) = crossbeam::bounded(*CHANNEL_CAPACITY);
     let mut files = open_column_data_file(labels)?;
     let Channels { txs, rxs } = channels(configs.len());
+    let txs = txs;
 
     let scope_result = crossbeam::scope(move |s| {
         s.spawn(move |_| {
@@ -86,7 +87,8 @@ where
         });
 
         s.spawn(move |_| {
-            generate_columns::<ColumnArity>(file_data_rx.clone(), column_tx, replica_path)
+            generate_columns::<ColumnArity>(file_data_rx.clone(), column_tx, replica_path);
+            info!("{:?}: debuglog: generate column finished", replica_path);
         });
 
         s.spawn({
@@ -110,7 +112,12 @@ where
 
         s.spawn(move |_| {
             P2_POOL.install(move || {
-                generate_tree_c_cpu::<ColumnArity, TreeArity>(column_rx, &txs, replica_path, cpu_start_condition)
+                generate_tree_c_cpu::<ColumnArity, TreeArity>(
+                    column_rx,
+                    &txs,
+                    replica_path,
+                    cpu_start_condition,
+                )
             })
         });
 
@@ -197,6 +204,7 @@ fn read_data_from_file(
                 .with_context(|| format!("{:?}: cannot send file data", replica_path))?;
         }
     }
+    info!("{:?}: debuglog: read_data_from_file finished", replica_path);
 
     Ok(())
 }
@@ -265,7 +273,7 @@ pub fn generate_tree_c_cpu<ColumnArity, TreeArity>(
     if let Some(x) = start_condition {
         x.recv().expect("cannot receive from start_condition");
     }
-	info!("{:?}: start using CPU to hash columns", replica_path);
+    info!("{:?}: start using CPU to hash columns", replica_path);
 
     for ColumnData {
         columns,
@@ -285,6 +293,8 @@ pub fn generate_tree_c_cpu<ColumnArity, TreeArity>(
             .send((node_index, result))
             .expect("cannot send to hashed_tx");
     }
+
+    info!("{:?}: debuglog: cpu tree-c finished", replica_path);
 }
 
 pub fn collect_and_persist_tree_c<TreeArity>(
@@ -332,8 +342,9 @@ where
                 replica_path,
                 index + 1
             );
-            tx.send((index, tree_c_column))
-                .with_context(|| format!(""))?;
+            tx.send((index, tree_c_column)).with_context(|| {
+                format!("{:?}: cannot send column for tree building", replica_path)
+            })?;
         }
         drop(tx);
         Ok(())
@@ -479,6 +490,7 @@ where
             .send((node_index, result))
             .expect("cannot send gpu data to hashed_tx");
     }
+    info!("{:?}: debuglog: gpu tree-c finished", replica_path);
 
     Ok(())
 }
