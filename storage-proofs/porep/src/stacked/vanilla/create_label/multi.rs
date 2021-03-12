@@ -561,7 +561,14 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
 
 fn write_layer_retry(data: &[u8], config: &StoreConfig) -> Result<()> {
     let data_path = StoreConfig::data_path(&config.path, &config.id);
-    let tmp_data_path = data_path.with_extension(".tmp");
+    let tmp_data_path = data_path.with_extension("tmp");
+    let checksum_path = data_path.with_extension("checksum");
+    let checksum = sha256::digest_bytes(data);
+
+    while let Err(e) = std::fs::write(&checksum_path, &checksum) {
+        warn!("write checksum error: {:?}, retrying ...", e);
+        std::thread::sleep(Duration::from_secs(5 * 60));
+    }
 
     if let Some(parent) = data_path.parent() {
         std::fs::create_dir_all(parent).context("failed to create parent directories")?;
