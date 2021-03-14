@@ -545,9 +545,8 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     .expect("generate label panic")?;
 
     drop(err_tx);
-    match err_rx.iter().collect::<Vec<_>>().into_iter().next() {
-        Some(e) => return Err(e),
-        None => {}
+    if let Some(e) = err_rx.iter().collect::<Vec<_>>().into_iter().next() {
+        return Err(e);
     }
 
     Ok((
