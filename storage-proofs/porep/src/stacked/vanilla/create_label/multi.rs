@@ -525,8 +525,8 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                     move |_| {
                         let input = &exp_labels.read().unwrap()[..];
                         tx.send(()).unwrap();
-                        if let Err(e) =
-                            write_layer_retry(input, layer_config).context("failed to store labels")
+                        if let Err(e) = write_layer_retry(sector_id, input, layer_config)
+                            .context("failed to store labels")
                         {
                             err_tx.send(e).unwrap();
                         }
@@ -559,14 +559,17 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     ))
 }
 
-fn write_layer_retry(data: &[u8], config: &StoreConfig) -> Result<()> {
+fn write_layer_retry(sector_id: SectorId, data: &[u8], config: &StoreConfig) -> Result<()> {
     let data_path = StoreConfig::data_path(&config.path, &config.id);
     let tmp_data_path = data_path.with_extension("tmp");
     let checksum_path = data_path.with_extension("checksum");
     let checksum = sha256::digest_bytes(data);
 
     while let Err(e) = std::fs::write(&checksum_path, &checksum) {
-        warn!("write checksum error: {:?}, retrying ...", e);
+        warn!(
+            "{:?}: file: {:?} write error: {:?}, retrying ...",
+            sector_id, checksum_path, e
+        );
         std::thread::sleep(Duration::from_secs(5 * 60));
     }
 
@@ -575,11 +578,15 @@ fn write_layer_retry(data: &[u8], config: &StoreConfig) -> Result<()> {
     }
 
     while let Err(e) = std::fs::write(&tmp_data_path, data) {
-        warn!("write layer error: {:?}, retrying ...", e);
+        warn!(
+            "{:?}: file: {:?}: write layer error: {:?}, retrying ...",
+            sector_id, tmp_data_path, e
+        );
         std::thread::sleep(Duration::from_secs(5 * 60));
     }
 
-    std::fs::rename(tmp_data_path, data_path).context("failed to rename tmp data")?;
+    std::fs::rename(tmp_data_path, &data_path)
+        .with_context(|| format!("{:?}: failed to rename tmp data {:?}", sector_id, data_path))?;
 
     Ok(())
 }
