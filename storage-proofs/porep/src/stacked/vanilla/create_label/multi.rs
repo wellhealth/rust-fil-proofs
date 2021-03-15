@@ -61,77 +61,28 @@ fn fill_buffer(
     exp_labels: Option<&[u32]>, // None for layer0
     buf: &mut [u8],
     base_parent_missing: &mut BitMask,
-    sector_id: SectorId,
 ) {
-    info!(
-        "{:?}: debuglog file: {}, line: {}",
-        sector_id,
-        file!(),
-        line!()
-    );
     let cur_node_swap = cur_node.to_be_bytes(); // Note switch to big endian
     buf[36..44].copy_from_slice(&cur_node_swap); // update buf with current node
-    info!(
-        "{:?}: debuglog file: {}, line: {}",
-        sector_id,
-        file!(),
-        line!()
-    );
 
     // Perform the first hash
     let cur_node_ptr =
         unsafe { &mut layer_labels.as_mut_slice()[cur_node as usize * NODE_WORDS as usize..] };
 
-    info!(
-        "{:?}: debuglog file: {}, line: {}",
-        sector_id,
-        file!(),
-        line!()
-    );
     cur_node_ptr[..8].copy_from_slice(&SHA256_INITIAL_DIGEST);
     compress256!(cur_node_ptr, buf, 1);
-    info!(
-        "{:?}: debuglog file: {}, line: {}",
-        sector_id,
-        file!(),
-        line!()
-    );
 
     // Fill in the base parents
     // Node 5 (prev node) will always be missing, and there tend to be
     // frequent close references.
-    info!(
-        "{:?}: debuglog file: {}, line: {}",
-        sector_id,
-        file!(),
-        line!()
-    );
     if cur_node > MIN_BASE_PARENT_NODE {
         // Mark base parent 5 as missing
         // base_parent_missing.set_all(0x20);
-        info!(
-            "{:?}: debuglog file: {}, line: {}",
-            sector_id,
-            file!(),
-            line!()
-        );
         base_parent_missing.set(5);
 
         // Skip the last base parent - it always points to the preceding node,
         // which we know is not ready and will be filled in the main loop
-        info!(
-            "{:?}: debuglog file: {}, line: {}",
-            sector_id,
-            file!(),
-            line!()
-        );
         for k in 0..BASE_DEGREE - 1 {
-            info!(
-                "{:?}: debuglog file: {}, line: {}",
-                sector_id,
-                file!(),
-                line!()
-            );
             unsafe {
                 if cur_parent[0] as u64 >= parents_cache.get_consumer() {
                     // Node is not ready
@@ -202,12 +153,6 @@ fn create_label_runner(
     // Label data bytes per node
     loop {
         // Get next work items
-        info!(
-            "{:?}: debuglog file: {}, line: {}",
-            sector_id,
-            file!(),
-            line!()
-        );
         let work = cur_awaiting.fetch_add(stride, SeqCst);
         if work >= num_nodes {
             break;
@@ -217,51 +162,21 @@ fn create_label_runner(
         } else {
             stride
         };
-        info!(
-            "{:?}: debuglog file: {}, line: {}",
-            sector_id,
-            file!(),
-            line!()
-        );
 
         // Do the work of filling the buffers
         for cur_node in work..work + count {
             // Determine which node slot in the ring_buffer to use
-            info!(
-                "{:?}: debuglog file: {}, line: {}",
-                sector_id,
-                file!(),
-                line!()
-            );
             // Note that node 0 does not use a buffer slot
             let cur_slot = (cur_node - 1) % lookahead;
 
-            info!(
-                "{:?}: debuglog file: {}, line: {}",
-                sector_id,
-                file!(),
-                line!()
-            );
             // Don't overrun the buffer
             while cur_node > (parents_cache.get_consumer() + lookahead - 1) {
                 std::thread::sleep(std::time::Duration::from_micros(10));
             }
-            info!(
-                "{:?}: debuglog file: {}, line: {}",
-                sector_id,
-                file!(),
-                line!()
-            );
 
             let buf = unsafe { ring_buf.slot_mut(cur_slot as usize) };
             let bpm = unsafe { base_parent_missing.get_mut(cur_slot as usize) };
 
-            info!(
-                "{:?}: debuglog file: {}, line: {}",
-                sector_id,
-                file!(),
-                line!()
-            );
             let pc = unsafe { parents_cache.slice_at(cur_node as usize * DEGREE as usize) };
             fill_buffer(
                 cur_node,
@@ -271,49 +186,18 @@ fn create_label_runner(
                 exp_labels,
                 buf,
                 bpm,
-                sector_id,
-            );
-            info!(
-                "{:?}: debuglog file: {}, line: {}",
-                sector_id,
-                file!(),
-                line!()
             );
         }
 
         // Wait for the previous node to finish
-        info!(
-            "{:?}: debuglog file: {}, line: {}",
-            sector_id,
-            file!(),
-            line!()
-        );
         while work > (cur_producer.load(SeqCst) + 1) {
             std::thread::sleep(std::time::Duration::from_micros(10));
         }
-        info!(
-            "{:?}: debuglog file: {}, line: {}",
-            sector_id,
-            file!(),
-            line!()
-        );
 
         // Mark our work as done
         cur_producer.fetch_add(count, SeqCst);
-        info!(
-            "{:?}: debuglog file: {}, line: {}",
-            sector_id,
-            file!(),
-            line!()
-        );
     }
 
-    info!(
-        "{:?}: debuglog file: {}, line: {}",
-        sector_id,
-        file!(),
-        line!()
-    );
     info!("{:?}: created label runner", sector_id);
     Ok(())
 }
@@ -343,65 +227,29 @@ fn create_layer_labels(
         (lookahead, num_producers, producer_stride)
     };
 
-    info!(
-        "{:?}: debuglog file: {}, line: {}",
-        sector_id,
-        file!(),
-        line!()
-    );
     const BYTES_PER_NODE: usize = (NODE_SIZE * DEGREE) + SHA_BLOCK_SIZE;
 
     let mut ring_buf = RingBuf::new(BYTES_PER_NODE, lookahead);
     let mut base_parent_missing = vec![BitMask::default(); lookahead];
-    info!(
-        "{:?}: debuglog file: {}, line: {}",
-        sector_id,
-        file!(),
-        line!()
-    );
 
     // Fill in the fixed portion of all buffers
     for buf in ring_buf.iter_slot_mut() {
         prepare_block(replica_id, cur_layer, buf);
     }
 
-    info!(
-        "{:?}: debuglog file: {}, line: {}",
-        sector_id,
-        file!(),
-        line!()
-    );
     // Highest node that is ready from the producer
     let cur_producer = AtomicU64::new(0);
     // Next node to be filled
     let cur_awaiting = AtomicU64::new(1);
 
-    info!(
-        "{:?}: debuglog file: {}, line: {}",
-        sector_id,
-        file!(),
-        line!()
-    );
     // These UnsafeSlices are managed through the 3 Atomics above, to minimize any locking overhead.
     let layer_labels = UnsafeSlice::from_slice(layer_labels.as_mut_slice_of::<u32>().unwrap());
     // let exp_labels = exp_labels.map(|m| m.as_slice_of::<u32>().unwrap());
     let base_parent_missing = UnsafeSlice::from_slice(&mut base_parent_missing);
-    info!(
-        "{:?}: debuglog file: {}, line: {}",
-        sector_id,
-        file!(),
-        line!()
-    );
 
     thread::scope(|s| {
         let mut runners = Vec::with_capacity(num_producers);
 
-        info!(
-            "{:?}: debuglog file: {}, line: {}",
-            sector_id,
-            file!(),
-            line!()
-        );
         for i in 0..num_producers {
             let layer_labels = &layer_labels;
             // let exp_labels = exp_labels.as_ref();
@@ -410,35 +258,17 @@ fn create_layer_labels(
             let ring_buf = &ring_buf;
             let base_parent_missing = &base_parent_missing;
 
-            info!(
-                "{:?}: debuglog file: {}, line: {}",
-                sector_id,
-                file!(),
-                line!()
-            );
             let core_index = if let Some(cg) = &*core_group {
                 cg.get(i + 1)
             } else {
                 None
             };
-            info!(
-                "{:?}: debuglog file: {}, line: {}",
-                sector_id,
-                file!(),
-                line!()
-            );
             runners.push(s.spawn(move |_| {
                 // This could fail, but we will ignore the error if so.
                 // It will be logged as a warning by `bind_core`.
                 debug!("binding core in producer thread {}", i);
                 // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
                 let _cleanup_handle = core_index.map(|c| bind_core(*c));
-                info!(
-                    "{:?}: debuglog file: {}, line: {}",
-                    sector_id,
-                    file!(),
-                    line!()
-                );
 
                 info!("{:?} before create_label_runner", sector_id);
                 create_label_runner(
