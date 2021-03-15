@@ -997,12 +997,23 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
             data.ensure_data()?;
             let last_layer_labels = labels.labels_for_last_layer()?;
-
-            if settings::SETTINGS
+            let use_gpu_tree_builder = settings::SETTINGS
                 .lock()
                 .expect("use_gpu_tree_builder settings lock failure")
-                .use_gpu_tree_builder
-            {
+                .use_gpu_tree_builder;
+
+            info!(
+                "{:?}: use_gpu_tree_builder: {}",
+                replica_path, use_gpu_tree_builder
+            );
+
+            info!(
+                "{:?}: env: FIL_PROOFS_USE_GPU_TREE_BUILDER: \"{:?}\"",
+                replica_path,
+                std::env::var("FIL_PROOFS_USE_GPU_TREE_BUILDER")
+            );
+
+            if use_gpu_tree_builder {
                 info!(
                     "{:?}: generating tree r last using the GPU, replica",
                     replica_path
