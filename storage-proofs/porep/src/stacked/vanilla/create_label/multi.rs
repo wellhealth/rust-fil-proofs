@@ -1,10 +1,7 @@
+use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::mem::size_of;
-use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
-use std::sync::mpsc::channel;
-use std::sync::RwLock;
-use std::sync::{Arc, MutexGuard};
-use std::{convert::TryInto, time::Duration};
+use std::sync::{Arc, MutexGuard, atomic::{AtomicU64, Ordering::SeqCst}};
 
 use anyhow::{Context, Result};
 use byte_slice_cast::*;
@@ -454,99 +451,78 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     });
 
     // NOTE: this means we currently keep 2x sector size around, to improve speed
-    let (parents_cache, mut layer_labels, exp_labels) = setup_create_label_memory(
+    let (parents_cache, mut layer_labels, mut exp_labels) = setup_create_label_memory(
         sector_size,
         DEGREE,
         Some(default_cache_size as usize),
         &parents_cache.path,
     )?;
-    let exp_labels = RwLock::new(exp_labels);
 
-    let (err_tx, err_rx) = channel();
-    crossbeam::scope(|s| -> Result<()> {
-        for (layer, layer_state) in (1..=layers).zip(layer_states.iter()) {
-            info!("{:?}: Layer {}", sector_id, layer);
+    for (layer, layer_state) in (1..=layers).zip(layer_states.iter()) {
+        info!("{:?}: Layer {}", sector_id, layer);
 
-            if layer_state.generated {
-                info!(
-                    "{:?}: skipping layer {}, already generated",
-                    sector_id, layer
-                );
+        if layer_state.generated {
+            info!(
+                "{:?}: skipping layer {}, already generated",
+                sector_id, layer
+            );
 
-                // load the already generated layer into exp_labels
-                super::read_layer(&layer_state.config, &mut (exp_labels.write().unwrap()))?;
-                info!("{:?}: Done reading layer:{}", sector_id, layer);
-                continue;
-            }
-
-            // Cache reset happens in two parts.
-            // The second part (the finish) happens before each layer but the first.
-            if layers != 1 {
-                parents_cache.finish_reset()?;
-            }
-
-            {
-                let exp_labels = exp_labels.read().unwrap();
-                let exp_labels = exp_labels.as_slice_of::<u32>().unwrap();
-                info!(
-                    "{:?}: before create_layer_labels for layer:{}",
-                    sector_id, layer
-                );
-                create_layer_labels(
-                    &parents_cache,
-                    &replica_id.as_ref(),
-                    &mut layer_labels,
-                    if layer == 1 { None } else { Some(exp_labels) },
-                    node_count,
-                    layer as u32,
-                    core_group.clone(),
-                    sector_id,
-                )?;
-                info!(
-                    "{:?}: after create_layer_labels for layer:{}",
-                    sector_id, layer
-                );
-            }
-            // Cache reset happens in two parts.
-            // The first part (the start) happens after each layer but the last.
-            if layer != layers {
-                parents_cache.start_reset()?;
-            }
-
-            std::mem::swap(&mut layer_labels, &mut exp_labels.write().unwrap());
-            {
-                let layer_config = &layer_state.config;
-
-                info!("{:?}:storing labels on disk", sector_id);
-                let exp_labels = &exp_labels;
-                let (tx, rx) = channel();
-                s.spawn({
-                    let err_tx = err_tx.clone();
-                    move |_| {
-                        let input = &exp_labels.read().unwrap()[..];
-                        tx.send(()).unwrap();
-                        if let Err(e) = write_layer_retry(sector_id, input, layer_config)
-                            .context("failed to store labels")
-                        {
-                            err_tx.send(e).unwrap();
-                        }
-
-                        info!(
-                            "{:?}: generated layer {} store with id {}",
-                            sector_id, layer, layer_config.id
-                        );
-                    }
-                });
-                rx.recv().unwrap();
-            }
+            // load the already generated layer into exp_labels
+            super::read_layer(&layer_state.config, &mut exp_labels)?;
+            info!("{:?}: Done reading layer:{}", sector_id, layer);
+            continue;
         }
-        Ok(())
-    })
-    .expect("generate label panic")?;
 
-    drop(err_tx);
-    if let Some(e) = err_rx.iter().collect::<Vec<_>>().into_iter().next() {
-        return Err(e);
+        // Cache reset happens in two parts.
+        // The second part (the finish) happens before each layer but the first.
+        if layers != 1 {
+            parents_cache.finish_reset()?;
+        }
+
+        {
+            let exp_labels = exp_labels.as_slice_of::<u32>().unwrap();
+            info!(
+                "{:?}: before create_layer_labels for layer:{}",
+                sector_id, layer
+            );
+            create_layer_labels(
+                &parents_cache,
+                &replica_id.as_ref(),
+                &mut layer_labels,
+                if layer == 1 { None } else { Some(exp_labels) },
+                node_count,
+                layer as u32,
+                core_group.clone(),
+                sector_id,
+            )?;
+            info!(
+                "{:?}: after create_layer_labels for layer:{}",
+                sector_id, layer
+            );
+        }
+        // Cache reset happens in two parts.
+        // The first part (the start) happens after each layer but the last.
+        if layer != layers {
+            parents_cache.start_reset()?;
+        }
+
+        std::mem::swap(&mut layer_labels, &mut exp_labels);
+        {
+            let layer_config = &layer_state.config;
+
+            info!("{:?}:storing labels on disk", sector_id);
+            write_layer(sector_id, &exp_labels, layer_config).with_context(|| {
+                format!(
+                    "{:?}: failed to store labels: {:?}",
+                    sector_id, layer_config.path
+                )
+            })?;
+
+            info!(
+                "{:?}: generated layer {} store with id {}",
+                sector_id, layer, layer_config.id
+            );
+        }
     }
 
     Ok((
@@ -558,34 +534,28 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     ))
 }
 
-fn write_layer_retry(sector_id: SectorId, data: &[u8], config: &StoreConfig) -> Result<()> {
+fn write_layer(sector_id: SectorId, data: &[u8], config: &StoreConfig) -> Result<()> {
     let data_path = StoreConfig::data_path(&config.path, &config.id);
     let tmp_data_path = data_path.with_extension("tmp");
-    let checksum_path = data_path.with_extension("checksum");
-    let checksum = sha256::digest_bytes(data);
-
-    while let Err(e) = std::fs::write(&checksum_path, &checksum) {
-        warn!(
-            "{:?}: file: {:?} write error: {:?}, retrying ...",
-            sector_id, checksum_path, e
-        );
-        std::thread::sleep(Duration::from_secs(5 * 60));
-    }
 
     if let Some(parent) = data_path.parent() {
-        std::fs::create_dir_all(parent).context("failed to create parent directories")?;
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "{:?}: cannot create parent directories: {:?}",
+                sector_id, parent
+            )
+        })?;
     }
 
-    while let Err(e) = std::fs::write(&tmp_data_path, data) {
-        warn!(
-            "{:?}: file: {:?}: write layer error: {:?}, retrying ...",
-            sector_id, tmp_data_path, e
-        );
-        std::thread::sleep(Duration::from_secs(5 * 60));
-    }
+    std::fs::write(&tmp_data_path, data)
+        .with_context(|| format!("{:?}: cannot write file: {:?}", sector_id, tmp_data_path))?;
 
-    std::fs::rename(tmp_data_path, &data_path)
-        .with_context(|| format!("{:?}: failed to rename tmp data {:?}", sector_id, data_path))?;
+    std::fs::rename(&tmp_data_path, &data_path).with_context(|| {
+        format!(
+            "{:?}: failed to rename {:?} -> {:?}",
+            sector_id, tmp_data_path, data_path
+        )
+    })?;
 
     Ok(())
 }
