@@ -194,10 +194,10 @@ fn read_data_from_file(
 ) -> Result<()> {
     for config_index in 0..config_count {
         for node_index in (0..node_count).step_by(batch_size) {
-            let t = std::time::Instant::now();
             let rest_count = node_count - node_index;
             let chunked_node_count = std::cmp::min(rest_count, batch_size);
 
+            let t = std::time::Instant::now();
             let data = read_single_batch(files, paths, chunked_node_count)?;
             info!(
                 "{:?}: file read: tree-c:{}, node:{} ({:?})",
