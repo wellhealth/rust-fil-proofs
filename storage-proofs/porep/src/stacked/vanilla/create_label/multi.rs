@@ -1,7 +1,10 @@
 use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::mem::size_of;
-use std::sync::{Arc, MutexGuard, atomic::{AtomicU64, Ordering::SeqCst}};
+use std::sync::{
+    atomic::{AtomicU64, Ordering::SeqCst},
+    Arc, MutexGuard,
+};
 
 use anyhow::{Context, Result};
 use byte_slice_cast::*;
@@ -13,6 +16,7 @@ use digest::generic_array::{
 use log::*;
 use mapr::MmapMut;
 use merkletree::store::{DiskStore, StoreConfig};
+use scopeguard::defer;
 use storage_proofs_core::{
     cache_key::CacheKey,
     drgraph::{Graph, BASE_DEGREE},
@@ -268,6 +272,9 @@ fn create_layer_labels(
                 let _cleanup_handle = core_index.map(|c| bind_core(*c));
 
                 info!("{:?} before create_label_runner", sector_id);
+                defer!({
+                    info!("{:?} after create_label_runner", sector_id);
+                });
                 create_label_runner(
                     parents_cache,
                     layer_labels,
@@ -282,7 +289,6 @@ fn create_layer_labels(
                     sector_id,
                 )
             }));
-            info!("{:?} after create_label_runner", sector_id);
         }
 
         let mut cur_node_ptr = unsafe { layer_labels.as_mut_slice() };
