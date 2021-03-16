@@ -1324,7 +1324,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) -> Result<TransformedLayers<Tree, G>> {
         match neptune::cl::get_all_devices() {
             Ok(o) => o,
-            Err(_) => anyhow::bail!("{:?}: cannot find GPU", replica_path),
+            Err(e) => anyhow::bail!(
+                "{:?}: cannot find GPU, get_all_devices error: {:?}",
+                replica_path,
+                e
+            ),
         }
         .get(gpu_index)
         .with_context(|| format!("{:?}: cannot find GPU", replica_path))?;
