@@ -213,7 +213,7 @@ where
         std::env::args().collect::<Vec<_>>()
     );
 
-    info!("{:?}: git-version: {}", replica_path.as_ref(), GIT_VERSION);
+    info!("{:?}: p2 git-version: {}", replica_path.as_ref(), GIT_VERSION);
 
     std::panic::set_hook(Box::new(|_| {
         let bt = backtrace::Backtrace::new();
