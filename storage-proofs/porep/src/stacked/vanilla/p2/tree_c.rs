@@ -547,11 +547,6 @@ fn persist_tree_c(
     tree_c
         .write_all(&cursor.into_inner())
         .with_context(|| format!("cannot write to file: {:?}", path))?;
-
-    tree_c
-        .sync_data()
-        .with_context(|| format!("cannot sync tree-c data into the filesystem: {:?}", path))?;
-
     info!(
         "{:?}.persisting, done: file written for tree-c {}",
         replica_path,
