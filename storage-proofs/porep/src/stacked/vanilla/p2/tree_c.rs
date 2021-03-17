@@ -16,9 +16,9 @@ use neptune::BatchHasher;
 use neptune::{batch_hasher::Batcher, tree_builder::TreeBuilder};
 use neptune::{batch_hasher::BatcherType, tree_builder::TreeBuilderTrait};
 use paired::bls12_381::Fr;
+use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::IntoParallelRefMutIterator;
 use rayon::iter::ParallelIterator;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator};
 use std::convert::TryInto;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -75,7 +75,6 @@ where
                 .install(move || {
                     if let Err(e) = read_data_from_file(
                         &mut files,
-                        labels,
                         configs.len(),
                         nodes_count,
                         max_gpu_column_batch_size,
@@ -160,32 +159,27 @@ where
     config_index: usize,
 }
 
-fn open_column_data_file(paths: &[(PathBuf, String)]) -> Result<Vec<(File, String)>> {
+fn open_column_data_file(paths: &[(PathBuf, String)]) -> Result<Vec<File>> {
     paths
         .iter()
         .map(|x| StoreConfig::data_path(&x.0, &x.1))
         .map(|x| {
-            Ok((
-                File::open(&x)
-                    .with_context(|| format!("cannot open layer file [{:?}] for tree-c", x))?,
-                std::fs::read_to_string(x.with_extension("checksum"))?,
-            ))
+            File::open(&x).with_context(|| format!("cannot open layer file [{:?}] for tree-c", x))
         })
         .collect()
 }
 
-pub fn bytes_into_fr(path_data: &(PathBuf, String), bytes: &[u8; 32]) -> Result<Fr> {
+pub fn bytes_into_fr(bytes: &[u8; 32]) -> Result<Fr> {
     let mut fr_repr = <<Fr as PrimeField>::Repr as Default>::default();
     fr_repr
         .read_le(&bytes[..])
-        .context("cannot convert bytes to FrRepr")?;
+        .context("cannot convert bytes to Fr")?;
 
     Fr::from_repr(fr_repr).context("cannot convert fr_repr to fr")
 }
 
 fn read_data_from_file(
-    files: &mut [(File, String)],
-    paths: &[(PathBuf, String)],
+    files: &mut [File],
     config_count: usize,
     node_count: usize,
     batch_size: usize,
@@ -198,7 +192,7 @@ fn read_data_from_file(
             let chunked_node_count = std::cmp::min(rest_count, batch_size);
 
             let t = std::time::Instant::now();
-            let data = read_single_batch(files, paths, chunked_node_count)?;
+            let data = read_single_batch(files, chunked_node_count)?;
             info!(
                 "{:?}: file read: tree-c:{}, node:{} ({:?})",
                 replica_path,
@@ -247,31 +241,20 @@ fn generate_columns<ColumnArity>(
     }
 }
 
-fn read_single_batch(
-    files: &mut [(File, String)],
-    paths: &[(PathBuf, String)],
-    chunked_node_count: usize,
-) -> Result<Vec<Vec<Fr>>> {
+fn read_single_batch(files: &mut [File], chunked_node_count: usize) -> Result<Vec<Vec<Fr>>> {
     const FR_SIZE: usize = std::mem::size_of::<Fr>();
     let byte_count = chunked_node_count * FR_SIZE;
 
     files
         .par_iter_mut()
-        .enumerate()
-        .map(|(file_index, (x, _checksum))| {
+        .map(|x| {
             let mut buf_bytes = vec![0u8; byte_count];
             x.read_exact(&mut buf_bytes)
                 .with_context(|| format!("error occurred when reading file [{:?}]", x))?;
 
             buf_bytes
                 .chunks(std::mem::size_of::<Fr>())
-                .enumerate()
-                .map(|(_index, x)| {
-                    bytes_into_fr(
-                        &paths[file_index],
-                        x.try_into().expect("cannot convert to a 32-byte array"),
-                    )
-                })
+                .map(|x| bytes_into_fr(x.try_into().expect("cannot convert to a 32-byte array")))
                 .collect::<Result<Vec<_>>>()
                 .with_context(|| format!("cannot convert bytes to Fr for file: {:?})", x))
         })
