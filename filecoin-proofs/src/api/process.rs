@@ -124,6 +124,9 @@ where
         .create(true)
         .open(&in_path)
         .with_context(|| "cannot open file to pass p2 parameter".to_string())?;
+    defer!({
+        let _ = std::fs::remove_file(&out_path);
+    });
 
     info!(
         "{:?}: writing parameter to file: {:?}",
@@ -140,9 +143,6 @@ where
         .with_context(|| format!("{:?}, cannot start {:?} ", replica_path, p2))?;
 
     let status = p2_process.wait().expect("p2 is not running");
-    defer!({
-        let _ = std::fs::remove_file(&out_path);
-    });
     match status.code() {
         Some(0) => {
             info!("{:?} p2 finished", replica_path);
@@ -202,6 +202,9 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         .create(true)
         .open(&in_path)
         .with_context(|| format!("{:?}: cannot open file to pass in c2 parameter", sector_id))?;
+    defer!({
+        let _ = std::fs::remove_file(&out_path);
+    });
 
     info!("{:?}: writing parameter to file: {:?}", sector_id, in_path);
     serde_json::to_writer(infile, &data)
@@ -232,10 +235,6 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
 
     let status = c2_process.wait().expect("c2 is not running");
 
-    defer!({
-        let _ = std::fs::remove_file(&out_path);
-    });
-
     match status.code() {
         Some(0) => {
             info!("{:?} c2 finished", sector_id);
@@ -261,7 +260,7 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
     randomness: &ChallengeSeed,
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
-	gpu_index: usize,
+    gpu_index: usize,
 ) -> Result<Vec<u8>> {
     let data = {
         let post_config = post_config.clone();
