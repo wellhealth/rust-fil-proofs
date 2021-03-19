@@ -1162,6 +1162,8 @@ where
     S: AsRef<Path>,
     T: AsRef<Path>,
 {
+    info!("{:?}: p1 git-version: {}", sector_id, &*GIT_VERSION);
+
     info!("seal_pre_commit_phase1_layer:start: {:?}", sector_id);
     // Sanity check all input path types.
     /*    ensure!(
