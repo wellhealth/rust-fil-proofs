@@ -65,8 +65,8 @@ fn get_uuid() -> String {
     uuid.to_owned()
 }
 
-fn get_param_folder() -> Option<PathBuf> {
-    Some(Path::new(&std::env::var("WORKER_PATH").ok()?).join("param"))
+fn get_param_folder() -> PathBuf {
+    Path::new(&std::env::var("WORKER_PATH").unwrap_or_else(|_| ".".to_string())).join("param")
 }
 
 pub fn p2<R, S, Tree: 'static + MerkleTreeTrait>(
@@ -99,7 +99,7 @@ where
     info!("{:?}: set_var finished", replica_path.as_ref());
     let cache_path = cache_path.as_ref().to_owned();
     let replica_path = replica_path.as_ref().to_owned();
-    let param_folder = get_param_folder().context("cannot get param folder")?;
+    let param_folder = get_param_folder();
     info!("{:?}: get_param_folder finished", replica_path);
     std::fs::create_dir_all(&param_folder)
         .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
@@ -187,7 +187,7 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
     };
     let uuid = get_uuid();
 
-    let param_folder = get_param_folder().context("cannot get param folder")?;
+    let param_folder = get_param_folder();
     std::fs::create_dir_all(&param_folder)
         .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
     let in_path = Path::new(&param_folder).join(&uuid);
@@ -275,7 +275,7 @@ pub fn window_post<Tree: 'static + MerkleTreeTrait>(
     };
     let uuid = get_uuid();
 
-    let param_folder = get_param_folder().context("cannot get param folder")?;
+    let param_folder = get_param_folder();
     std::fs::create_dir_all(&param_folder)
         .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
     let in_path = Path::new(&param_folder).join(&uuid);
