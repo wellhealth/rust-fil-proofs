@@ -947,10 +947,12 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
 ) -> Result<SnarkProof> {
     let gpu_index = super::select_gpu_device().unwrap_or_default();
+
     defer! {
         info!("release gpu index: {}", gpu_index);
         super::release_gpu_device(gpu_index);
     };
+
     info!("generate_window_post: selected gpu index: {}", gpu_index);
 
     if settings::SETTINGS.window_post_subprocess {
@@ -1086,8 +1088,13 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     info!("generate_window_post5:{:?} {:?}", prover_id, t4.elapsed());
 
     info!("generate_window_post:finish {:?}", timestamp.elapsed());
+    info!("generate_window_post:finish {:?}", timestamp.elapsed());
 
-    Ok(proof.to_vec()?)
+    let t = std::time::Instant::now();
+    let x = proof.to_vec()?;
+    info!("proof.to_vec()?  takes: {:?}", t.elapsed());
+
+    Ok(x)
 }
 
 /// Verifies a window proof-of-spacetime.
