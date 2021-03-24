@@ -1,10 +1,10 @@
-use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::{
     atomic::{AtomicU64, Ordering::SeqCst},
     Arc, MutexGuard,
 };
+use std::{convert::TryInto, sync::RwLock};
 
 use anyhow::{Context, Result};
 use byte_slice_cast::*;
@@ -457,87 +457,106 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     });
 
     // NOTE: this means we currently keep 2x sector size around, to improve speed
-    let (parents_cache, mut layer_labels, mut exp_labels) = setup_create_label_memory(
+    let (parents_cache, mut layer_labels, exp_labels) = setup_create_label_memory(
         sector_size,
         DEGREE,
         Some(default_cache_size as usize),
         &parents_cache.path,
     )?;
 
-    for (layer, layer_state) in (1..=layers).zip(layer_states.iter()) {
-        info!("{:?}: Layer {}", sector_id, layer);
+    let exp_labels = RwLock::new(exp_labels);
 
-        if layer_state.generated {
-            info!(
-                "{:?}: skipping layer {}, already generated",
-                sector_id, layer
-            );
+    let res = crossbeam::scope(|s| {
+        for (layer, layer_state) in (1..=layers).zip(layer_states.iter()) {
+            info!("{:?}: Layer {}", sector_id, layer);
 
-            // load the already generated layer into exp_labels
-            super::read_layer(&layer_state.config, &mut exp_labels)?;
-            info!("{:?}: Done reading layer:{}", sector_id, layer);
-            continue;
-        }
+            if layer_state.generated {
+                info!(
+                    "{:?}: skipping layer {}, already generated",
+                    sector_id, layer
+                );
 
-        // Cache reset happens in two parts.
-        // The second part (the finish) happens before each layer but the first.
-        if layers != 1 {
-            parents_cache.finish_reset()?;
-        }
+                // load the already generated layer into exp_labels
+                super::read_layer(&layer_state.config, &mut exp_labels.write().unwrap())?;
+                info!("{:?}: Done reading layer:{}", sector_id, layer);
+                continue;
+            }
 
-        {
-            let exp_labels = exp_labels.as_slice_of::<u32>().unwrap();
+            // Cache reset happens in two parts.
+            // The second part (the finish) happens before each layer but the first.
+            if layers != 1 {
+                parents_cache.finish_reset()?;
+            }
+
             info!(
                 "{:?}: before create_layer_labels for layer:{}",
                 sector_id, layer
             );
+            let exp = exp_labels.read().unwrap();
+            // let exp_labels = exp_labels.as_slice_of::<u32>().unwrap();
             create_layer_labels(
                 &parents_cache,
                 &replica_id.as_ref(),
                 &mut layer_labels,
-                if layer == 1 { None } else { Some(exp_labels) },
+                if layer == 1 {
+                    None
+                } else {
+                    Some(exp.as_slice_of::<u32>().unwrap())
+                },
                 node_count,
                 layer as u32,
                 core_group.clone(),
                 sector_id,
             )?;
+            drop(exp);
             info!(
                 "{:?}: after create_layer_labels for layer:{}",
                 sector_id, layer
             );
-        }
-        // Cache reset happens in two parts.
-        // The first part (the start) happens after each layer but the last.
-        if layer != layers {
-            parents_cache.start_reset()?;
+            // Cache reset happens in two parts.
+            // The first part (the start) happens after each layer but the last.
+            if layer != layers {
+                parents_cache.start_reset()?;
+            }
+
+            std::mem::swap(&mut layer_labels, &mut exp_labels.write().unwrap());
+            let layer_config = layer_state.config.clone();
+
+            s.spawn({
+                let exp_labels = &exp_labels;
+                move |_| {
+                    info!("{:?}:storing labels on disk", sector_id);
+                    if let Err(e) =
+                        write_layer(sector_id, &exp_labels.read().unwrap(), &layer_config)
+                    {
+                        warn!(
+                            "{:?}: cannot persist layer data for p1, error: {:?}",
+                            sector_id, e
+                        );
+                    }
+
+                    info!(
+                        "{:?}: generated layer {} store with id {}",
+                        sector_id, layer, layer_config.id
+                    );
+                }
+            });
         }
 
-        std::mem::swap(&mut layer_labels, &mut exp_labels);
-        {
-            let layer_config = &layer_state.config;
+        Ok(())
+    });
 
-            info!("{:?}:storing labels on disk", sector_id);
-            write_layer(sector_id, &exp_labels, layer_config).with_context(|| {
-                format!(
-                    "{:?}: failed to store labels: {:?}",
-                    sector_id, layer_config.path
-                )
-            })?;
-
-            info!(
-                "{:?}: generated layer {} store with id {}",
-                sector_id, layer, layer_config.id
-            );
-        }
+    match res {
+        Ok(Ok(())) => Ok((
+            Labels::<Tree> {
+                labels: layer_states.iter().map(|s| s.config.clone()).collect(),
+                _h: PhantomData,
+            },
+            layer_states,
+        )),
+        Ok(Err(e)) => Err(e),
+        Err(e) => Err(anyhow::anyhow!("p1 panic: {:?}", e)),
     }
-
-    Ok((
-        Labels::<Tree> {
-            labels: layer_states.iter().map(|s| s.config.clone()).collect(),
-            _h: PhantomData,
-        },
-        layer_states,
-    ))
 }
 
 fn write_layer(sector_id: SectorId, data: &[u8], config: &StoreConfig) -> Result<()> {
