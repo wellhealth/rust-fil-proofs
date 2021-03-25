@@ -27,13 +27,18 @@ pub struct CoreIndex(usize);
 pub fn checkout_core_group() -> Option<MutexGuard<'static, CoreGroup>> {
     match &*CORE_GROUPS {
         Some(groups) => {
+            info!("max p1 count: {}", groups.len());
             for (i, group) in groups.iter().enumerate() {
                 match group.try_lock() {
                     Ok(guard) => {
                         debug!("checked out core group {}", i);
                         return Some(guard);
                     }
-                    Err(_) => debug!("core group {} locked, could not checkout", i),
+                    Err(_) => debug!(
+                        "core group {} locked, could not checkout, max p1 count: {}",
+                        i,
+                        groups.len()
+                    ),
                 }
             }
             None
