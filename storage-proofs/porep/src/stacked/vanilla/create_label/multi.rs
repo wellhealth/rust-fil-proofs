@@ -4,7 +4,7 @@ use std::sync::{
     Arc, MutexGuard,
 };
 use std::{convert::TryInto, sync::RwLock};
-use std::{marker::PhantomData, sync::mpsc::sync_channel};
+use std::marker::PhantomData;
 
 use anyhow::{Context, Result};
 use byte_slice_cast::*;
