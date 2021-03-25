@@ -72,13 +72,10 @@ pub struct Cleanup {
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        match self.prior_state.take() {
-            Some(prior) => {
-                let child_topo = &TOPOLOGY;
-                let mut locked_topo = child_topo.lock().unwrap();
-                let _ = locked_topo.set_cpubind_for_thread(self.tid, prior, CPUBIND_THREAD);
-            }
-            None => (),
+        if let Some(prior) = self.prior_state.take() {
+            let child_topo = &TOPOLOGY;
+            let mut locked_topo = child_topo.lock().unwrap();
+            let _ = locked_topo.set_cpubind_for_thread(self.tid, prior, CPUBIND_THREAD);
         }
     }
 }
@@ -129,7 +126,11 @@ fn get_core_by_index<'a>(topo: &'a Topology, index: CoreIndex) -> Result<&'a Top
             idx,
             all_cores.len()
         )),
-        _e => Err(anyhow::format_err!("failed to get core by index {}", idx,)),
+        Err(e) => Err(anyhow::format_err!(
+            "failed to get core by index {}, error: {:?}",
+            idx,
+            e
+        )),
     }
 }
 
