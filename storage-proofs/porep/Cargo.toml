@@ -37,7 +37,7 @@ bincode = "1.1.2"
 byteorder = "1.3.4"
 lazy_static = "1.2"
 byte-slice-cast = "1.0.0"
-hwloc = "0.3.0"
+hwloc2 = { git = "https://github.com/Krysme/hwloc2-rs", rev = "38a0a2cb2edf30e01dd21be3121b24ce6cfc652f" }
 libc = "0.2"
 
 [dev-dependencies]
