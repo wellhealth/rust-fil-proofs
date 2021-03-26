@@ -5,9 +5,31 @@ use hwloc2::{CpuBindFlags, ObjectType, Topology, TopologyObject};
 use lazy_static::lazy_static;
 
 lazy_static! {
-    pub static ref TOPOLOGY: Mutex<Topology> = Mutex::new(Topology::new().unwrap());
-    pub static ref L3_TOPOLOGY: Vec<Vec<u32>> = split_by_task();
-    pub static ref TOPOLOGY_INDEX: std::sync::atomic::AtomicUsize = Default::default();
+    static ref TOPOLOGY: Mutex<Topology> = Mutex::new(Topology::new().unwrap());
+    static ref L3_TOPOLOGY: Mutex<Vec<Vec<u32>>> = Mutex::new(split_by_task());
+    static ref TOPOLOGY_INDEX: std::sync::atomic::AtomicUsize = Default::default();
+}
+pub struct L3Index(Vec<u32>);
+
+impl L3Index {
+    pub fn get_main(&self) -> u32 {
+        self.0[0]
+    }
+    pub fn get_rest(&self) -> &[u32] {
+        &self.0[1..]
+    }
+}
+
+impl Drop for L3Index {
+    fn drop(&mut self) {
+        let mut v = Default::default();
+        std::mem::swap(&mut v, &mut self.0);
+        L3_TOPOLOGY.lock().unwrap().push(v);
+    }
+}
+
+pub fn get_l3_index() -> Option<L3Index> {
+    L3_TOPOLOGY.lock().unwrap().pop().map(L3Index)
 }
 
 pub fn split_by_task() -> Vec<Vec<u32>> {
@@ -17,7 +39,11 @@ pub fn split_by_task() -> Vec<Vec<u32>> {
         .objects_with_type(&ObjectType::L3Cache)
         .expect("cannot get L3 type");
     info!("L3 array {:?}", l3_array);
-    let v = l3_array.into_iter().map(get_pu_from_l3).collect::<Vec<_>>();
+    let v = l3_array
+        .into_iter()
+        .map(get_pu_from_l3)
+        .filter(|x| !x.is_empty())
+        .collect::<Vec<_>>();
 
     if v[0].len() >= 8 {
         let mut res = vec![];
