@@ -45,22 +45,15 @@ pub fn split_by_task() -> Vec<Vec<u32>> {
         .filter(|x| !x.is_empty())
         .collect::<Vec<_>>();
 
-    if v[0].len() >= 8 {
-        let mut res = vec![];
-        for it in &v {
-            let mut sub = vec![];
-            sub.extend_from_slice(&it[..4]);
-            res.push(sub);
+    let mut res = vec![];
+
+    for l3_cache_pus in v {
+        for cores in l3_cache_pus.chunks(4).filter(|x| x.len() == 4) {
+            res.push(cores.to_owned())
         }
-        for it in &v {
-            let mut sub = vec![];
-            sub.extend_from_slice(&it[4..]);
-            res.push(sub);
-        }
-        res
-    } else {
-        v
     }
+
+    res
 }
 
 pub fn get_pu_from_l3(obj: &TopologyObject) -> Vec<u32> {
