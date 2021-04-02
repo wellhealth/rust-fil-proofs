@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use merkletree::merkle::Element;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use storage_proofs_core::hasher::PoseidonArity;
 use storage_proofs_core::merkle::MerkleTreeTrait;
 use storage_proofs_core::{hasher::Hasher, util::NODE_SIZE};
@@ -29,13 +30,14 @@ where
     for it in 0..tree_count {
         let mut buf = vec![0u8; single_size * NODE_SIZE];
         layer_last.read_exact(&mut buf)?;
-        let buf = buf
+        let element_buf = buf
             .chunks(NODE_SIZE)
             .map(<<<Tree as MerkleTreeTrait>::Hasher as Hasher>::Domain>::from_slice)
             .collect::<Vec<_>>();
+		drop(buf);
 
         let tree = make_merkle(
-            buf,
+            element_buf,
             TreeArity::to_usize(),
             &parent.join(format!("sc-02-data-{}", it)),
         );
@@ -69,5 +71,18 @@ fn make_merkle<E>(buf: Vec<E>, branch: usize, path: &Path) -> Vec<u8>
 where
     E: Element,
 {
+    buf.par_iter().map(|x| ());
+    todo!()
+}
+
+fn hash_leaf<E>(element: &E) -> E
+where
+    E: Element,
+{
+    let mut buf = [0u8; NODE_SIZE + 1];
+    let mut buf_element = &mut buf[1..];
+    buf_element.copy_from_slice(element.as_ref());
+
+    // TODO: hash this array
     todo!()
 }
