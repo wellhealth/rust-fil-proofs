@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use anyhow::ensure;
 use lazy_static::lazy_static;
+use merkletree::merkle::Element;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Cursor;
@@ -554,8 +555,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         tx: SyncSender<(usize, Vec<Vec<Fr>>)>,
         replica_path: &Path,
     ) -> Result<()> {
-        use merkletree::merkle::Element;
-
         for node_index in (0..nodes_count).step_by(batch_size) {
             let chunked_nodes_count = std::cmp::min(nodes_count - node_index, batch_size);
             let chunk_byte_count = chunked_nodes_count * std::mem::size_of::<Fr>();
