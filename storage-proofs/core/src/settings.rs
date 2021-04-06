@@ -67,7 +67,7 @@ impl Default for Settings {
             // for durable, canonical Groth parameters and verifying keys.
             // The name is retained for backwards compatibility.
             parent_cache: cache("filecoin-parents"),
-            use_multicore_sdr: false,
+            use_multicore_sdr: true,
             multicore_sdr_producers: 3,
             multicore_sdr_producer_stride: 128,
             multicore_sdr_lookahead: 800,
