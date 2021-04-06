@@ -9,6 +9,7 @@ lazy_static! {
     static ref L3_TOPOLOGY: Mutex<Vec<Vec<u32>>> = Mutex::new(split_by_task());
     static ref TOPOLOGY_INDEX: std::sync::atomic::AtomicUsize = Default::default();
 }
+#[derive(Debug, Default)]
 pub struct L3Index(Vec<u32>);
 
 impl L3Index {
