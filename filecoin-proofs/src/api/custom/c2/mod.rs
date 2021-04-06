@@ -123,6 +123,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
 
     info!("{:?}: c2 stage1 finished", sector_id);
     let proofs = stage2::run(&mut provers, &params, r_s, s_s, gpu_index)?;
+    info!("{:?}: c2 stage2 finished", sector_id);
 
     let groth_proofs = proofs
         .into_iter()
@@ -133,6 +134,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
             Ok(gp)
         })
         .collect::<Result<Vec<_>>>()?;
+    info!("{:?}: c2 groth proof generated", sector_id);
 
     let proof = MultiProof::new(groth_proofs, &params.pvk);
 
@@ -141,6 +143,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     );
 
     proof.write(&mut buf)?;
+    info!("{:?}: c2 proof serialized", sector_id);
 
     // Verification is cheap when parameters are cached,
     // and it is never correct to return a proof which does not verify.
