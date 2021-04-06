@@ -41,7 +41,7 @@ impl Default for Settings {
             verify_cache: false,
             verify_production_params: false,
             pedersen_hash_exp_window_size: 16,
-            use_gpu_column_builder: false,
+            use_gpu_column_builder: true,
             max_gpu_column_batch_size: 400_000,
             column_write_batch_size: 262_144,
             use_gpu_tree_builder: false,
