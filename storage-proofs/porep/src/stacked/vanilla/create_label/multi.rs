@@ -442,7 +442,9 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     // yangdonglin
     let l3_index = get_l3_index();
     info!("{:?}: L3 index: {:?}", sector_id, l3_index);
-    l3_index.as_ref().map(|x| bind_core(x.get_main()));
+    if let Some(x) = l3_index.as_ref() {
+        bind_core(x.get_main())
+    }
     // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
 
     // NOTE: this means we currently keep 2x sector size around, to improve speed
