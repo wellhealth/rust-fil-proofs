@@ -39,7 +39,6 @@ pub fn split_by_task() -> Vec<Vec<u32>> {
     let l3_array = topo
         .objects_with_type(&ObjectType::L3Cache)
         .expect("cannot get L3 type");
-    info!("L3 array {:?}", l3_array);
     let v = l3_array
         .into_iter()
         .map(get_pu_from_l3)
@@ -54,6 +53,7 @@ pub fn split_by_task() -> Vec<Vec<u32>> {
         }
     }
 
+    info!("L3 array {:?}", res);
     res
 }
 
