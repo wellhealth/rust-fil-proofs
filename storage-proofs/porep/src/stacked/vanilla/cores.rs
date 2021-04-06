@@ -25,7 +25,8 @@ impl Drop for L3Index {
     fn drop(&mut self) {
         let mut v = Default::default();
         std::mem::swap(&mut v, &mut self.0);
-        L3_TOPOLOGY.lock().unwrap().push(v);
+        // L3_TOPOLOGY.lock().unwrap().push(v);
+        L3_TOPOLOGY.lock().unwrap().insert(0, v);
     }
 }
 
@@ -47,11 +48,12 @@ pub fn split_by_task() -> Vec<Vec<u32>> {
 
     let mut res = vec![];
 
-    for l3_cache_pus in v {
-        for cores in l3_cache_pus.chunks(4).filter(|x| x.len() == 4) {
-            res.push(cores.to_owned())
-        }
-    }
+    v.into_iter().for_each(|l3_cache_pus| {
+        l3_cache_pus
+            .chunks(4)
+            .filter(|x| x.len() == 4)
+            .for_each(|cores| res.push(cores.to_owned()))
+    });
 
     info!("L3 array {:?}", res);
     res
