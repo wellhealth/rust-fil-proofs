@@ -64,9 +64,10 @@ pub fn get_pu_from_l3(obj: &TopologyObject) -> Vec<u32> {
     obj.children().into_iter().for_each(|it| {
         it.children().into_iter().for_each(|it| {
             it.children().into_iter().for_each(|it| {
-                it.children()
-                    .into_iter()
-                    .for_each(|it| ret.push(it.logical_index()))
+                it.children().into_iter().for_each(|it| {
+                    info!("pu-type -> {:?}", it.object_type());
+                    ret.push(it.logical_index())
+                })
             })
         })
     });
