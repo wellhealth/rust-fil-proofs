@@ -429,7 +429,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     config: StoreConfig,
     sector_id: SectorId,
 ) -> Result<(Labels<Tree>, Vec<LayerState>)> {
-    info!("create labels");
+    info!("{:?}: create labels", sector_id);
 
     let layer_states = super::prepare_layers::<Tree>(graph, &config, layers);
 
