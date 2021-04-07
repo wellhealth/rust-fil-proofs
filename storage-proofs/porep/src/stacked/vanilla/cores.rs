@@ -47,11 +47,13 @@ pub fn split_by_task() -> Vec<Vec<u32>> {
         .collect::<Vec<_>>();
 
     let mut res = vec![];
+    use storage_proofs_core::settings::SETTINGS;
+    let core_count = SETTINGS.multicore_sdr_producers + 1;
 
     v.into_iter().for_each(|l3_cache_pus| {
         l3_cache_pus
-            .chunks(4)
-            .filter(|x| x.len() == 4)
+            .chunks(core_count)
+            .filter(|x| x.len() == core_count)
             .for_each(|cores| res.push(cores.to_owned()))
     });
 
