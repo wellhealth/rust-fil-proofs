@@ -183,6 +183,20 @@ where
         comm_d,
         &porep_config.porep_id,
     );
+    use storage_proofs::settings::SETTINGS;
+    let timelog = if SETTINGS.benchmark {
+        Some(
+            OpenOptions::new()
+                .write(true)
+                .append(true)
+                .create(true)
+                .open(cache_path.as_ref().join(format!("timelog-{}", sector_id.0)))?,
+        )
+    } else {
+        None
+    };
+
+    let time = std::time::Instant::now();
 
     let labels = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase1(
         &compound_public_params.vanilla_params,
@@ -190,6 +204,15 @@ where
         config.clone(),
         sector_id,
     )?;
+
+    if let Some(mut timelog) = timelog {
+        writeln!(
+            &mut timelog,
+            "{:?}: p1 cost: {:?}",
+            sector_id,
+            humantime::format_duration(time.elapsed())
+        )?;
+    }
 
     let out = SealPreCommitPhase1Output {
         labels,

@@ -23,6 +23,7 @@ const PREFIX: &str = "FIL_PROOFS";
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub benchmark: bool,
     pub verify_cache: bool,
     pub verify_production_params: bool,
     pub use_gpu_column_builder: bool,
@@ -52,6 +53,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            benchmark: false,
             verify_cache: false,
             verify_production_params: false,
             use_gpu_column_builder: false,
