@@ -1,8 +1,8 @@
 use anyhow::bail;
+use anyhow::Context;
 use anyhow::Result;
 use log::*;
 use std::sync::Mutex;
-use anyhow::Context;
 
 use lazy_static::lazy_static;
 
@@ -49,9 +49,10 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
 
     info!("Cache Count: {}", cache_count);
     info!("Unit Count: {}", unit_count);
+    let l3_core_count = unit_count / cache_count;
     let res = (0..unit_count)
-        .step_by(cache_count as usize)
-        .map(|x| (x..x + cache_count).collect())
+        .step_by(l3_core_count as usize)
+        .map(|x| (x..x + l3_core_count).collect())
         .collect();
 
     info!("L3 array: {:?}", res);
