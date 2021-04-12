@@ -18,7 +18,6 @@ use digest::generic_array::{
 use log::*;
 use mapr::MmapMut;
 use merkletree::store::{DiskStore, StoreConfig};
-use scopeguard::defer;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
@@ -255,19 +254,11 @@ fn create_layer_labels(
             let ring_buf = &ring_buf;
             let base_parent_missing = &base_parent_missing;
 
-            core_group.get(i).map(|i| bind_core(*i));
-            // yangdonglin
             runners.push(s.spawn(move |_| {
-                // This could fail, but we will ignore the error if so.
-                // It will be logged as a warning by `bind_core`.
-                debug!("binding core in producer thread {}", i);
-                // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
-                // yangdonglin
+                if let Some(i) = core_group.get(i) {
+                    bind_core(*i)?;
+                }
 
-                info!("{:?} before create_label_runner", sector_id);
-                defer!({
-                    info!("{:?} after create_label_runner", sector_id);
-                });
                 create_label_runner(
                     parents_cache,
                     layer_labels,
@@ -442,8 +433,9 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     // yangdonglin
     let l3_index = get_l3_index();
     info!("{:?}: L3 index: {:?}", sector_id, l3_index);
+
     if let Some(x) = l3_index.as_ref() {
-        bind_core(x.get_main())
+        bind_core(x.get_main())?;
     }
     // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
 

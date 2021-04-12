@@ -1,13 +1,13 @@
+use anyhow::bail;
+use anyhow::Result;
 use log::*;
 use std::sync::Mutex;
+use anyhow::Context;
 
-use hwloc2::{CpuBindFlags, ObjectType, Topology, TopologyObject};
 use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref TOPOLOGY: Mutex<Topology> = Mutex::new(Topology::new().unwrap());
-    static ref L3_TOPOLOGY: Mutex<Vec<Vec<u32>>> = Mutex::new(split_by_task());
-    static ref TOPOLOGY_INDEX: std::sync::atomic::AtomicUsize = Default::default();
+    static ref L3_TOPOLOGY: Mutex<Vec<Vec<u32>>> = Mutex::new(get_l3_topo());
 }
 #[derive(Debug, Default)]
 pub struct L3Index(Vec<u32>);
@@ -25,84 +25,51 @@ impl Drop for L3Index {
     fn drop(&mut self) {
         let mut v = Default::default();
         std::mem::swap(&mut v, &mut self.0);
-        // L3_TOPOLOGY.lock().unwrap().push(v);
-        L3_TOPOLOGY.lock().unwrap().insert(0, v);
+        L3_TOPOLOGY.lock().unwrap().push(v);
     }
 }
-
 pub fn get_l3_index() -> Option<L3Index> {
-    L3_TOPOLOGY.lock().unwrap().pop().map(L3Index)
+    let mut topo = L3_TOPOLOGY.lock().unwrap();
+    if topo.is_empty() {
+        None
+    } else {
+        Some(L3Index(topo.remove(0)))
+    }
 }
+pub fn get_l3_topo() -> Vec<Vec<u32>> {
+    let cache_count: u32 = std::env::var("L3_CACHE_COUNT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap();
 
-pub fn split_by_task() -> Vec<Vec<u32>> {
-    let topo = TOPOLOGY.lock().expect("cannot lock TOPOLOGY");
+    let unit_count: u32 = std::env::var("PU_COUNT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap();
 
-    let l3_array = topo
-        .objects_with_type(&ObjectType::L3Cache)
-        .expect("cannot get L3 type");
-    let v = l3_array
-        .into_iter()
-        .map(get_pu_from_l3)
-        .filter(|x| !x.is_empty())
-        .collect::<Vec<_>>();
+    info!("Cache Count: {}", cache_count);
+    info!("Unit Count: {}", unit_count);
+    let res = (0..unit_count)
+        .step_by(cache_count as usize)
+        .map(|x| (x..x + cache_count).collect())
+        .collect();
 
-    let mut res = vec![];
-    use storage_proofs_core::settings::SETTINGS;
-    let core_count = SETTINGS.multicore_sdr_producers + 1;
-
-    v.into_iter().for_each(|l3_cache_pus| {
-        l3_cache_pus
-            .chunks(core_count)
-            .filter(|x| x.len() == core_count)
-            .for_each(|cores| res.push(cores.to_owned()))
-    });
-
-    info!("L3 array {:?}", res);
+    info!("L3 array: {:?}", res);
     res
 }
 
-pub fn get_pu_from_l3(obj: &TopologyObject) -> Vec<u32> {
-    let mut ret = vec![];
-    obj.children().into_iter().for_each(|it| {
-        it.children().into_iter().for_each(|it| {
-            it.children().into_iter().for_each(|it| {
-                it.children().into_iter().for_each(|it| {
-                    info!("pu-type -> {:?}", it.object_type());
-                    ret.push(it.logical_index())
-                })
-            })
-        })
-    });
-    ret
-}
+pub fn bind_core(index: u32) -> Result<()> {
+    let status = std::process::Command::new("hwloc-bind")
+        .arg("--tid")
+        .arg(gettid::gettid().to_string())
+        .arg(format!("pu:{}", index))
+        .status()
+        .context("cannot execute program hwloc-bind")?
+        .code()
+        .context("hwloc-bind crashed")?;
 
-pub fn bind_core(index: u32) {
-    let mut topology = TOPOLOGY.lock().expect("cannot lock TOPOLOGY");
-    let mut v = topology
-        .objects_with_type(&ObjectType::PU)
-        .expect("cannot get PU objects");
-    v.sort_by_key(|x| x.logical_index());
-    let cpuset = v[index as usize].cpuset().unwrap();
-
-    topology
-        .set_cpubind_for_thread(get_thread_id(), cpuset, CpuBindFlags::CPUBIND_THREAD)
-        .unwrap();
-}
-
-#[cfg(not(target_os = "windows"))]
-pub type ThreadId = libc::pthread_t;
-
-#[cfg(target_os = "windows")]
-pub type ThreadId = winapi::winnt::HANDLE;
-
-/// Helper method to get the thread id through libc, with current rust stable (1.5.0) its not
-/// possible otherwise I think.
-#[cfg(not(target_os = "windows"))]
-fn get_thread_id() -> ThreadId {
-    unsafe { libc::pthread_self() }
-}
-
-#[cfg(target_os = "windows")]
-fn get_thread_id() -> ThreadId {
-    unsafe { kernel32::GetCurrentThread() }
+    if status != 0 {
+        bail!("hwloc-bind returned {}", status);
+    }
+    Ok(())
 }
