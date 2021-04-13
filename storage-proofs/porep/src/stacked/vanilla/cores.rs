@@ -53,10 +53,6 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
     let num_cores = SETTINGS.multicore_sdr_producers + 1;
     let mut task_cores = vec![];
 
-    // (0..unit_count)
-    //     .step_by(l3_core_count as usize)
-    //     .map(|x| (x..x + l3_core_count).collect())
-    //     .collect();
     for x in (0..unit_count).step_by(l3_core_count as usize) {
         let sub_res: Vec<_> = (x..x + l3_core_count).collect();
         let y: Vec<_> = sub_res
@@ -79,7 +75,7 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
 	}
 
 
-    info!("L3 array: {:?}", task_cores);
+    info!("L3 array: {:?}", res);
 	res
 }
 
