@@ -55,12 +55,12 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
 
     for x in (0..unit_count).step_by(l3_core_count as usize) {
         let sub_res: Vec<_> = (x..x + l3_core_count).collect();
-        let y: Vec<_> = sub_res
+        let core_groups: Vec<_> = sub_res
             .chunks(num_cores)
             .filter(|x| x.len() == num_cores)
             .map(ToOwned::to_owned)
             .collect();
-        task_cores.push(y);
+        task_cores.push(core_groups);
     }
 
     if task_cores.is_empty() || task_cores[0].is_empty() {
