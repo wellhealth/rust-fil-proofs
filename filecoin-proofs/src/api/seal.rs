@@ -200,7 +200,7 @@ where
                 .write(true)
                 .append(true)
                 .create(true)
-                .open(cache_path.as_ref().join(format!("timelog-{}", sector_id.0)))?,
+                .open(cache_path.as_ref().join("timelog"))?,
         )
     } else {
         None
