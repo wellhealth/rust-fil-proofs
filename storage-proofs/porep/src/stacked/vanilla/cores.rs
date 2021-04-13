@@ -57,26 +57,26 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
         let sub_res: Vec<_> = (x..x + l3_core_count).collect();
         let y: Vec<_> = sub_res
             .chunks(num_cores)
+            .filter(|x| x.len() == num_cores)
             .map(ToOwned::to_owned)
             .collect();
         task_cores.push(y);
     }
 
-	if task_cores.is_empty() || task_cores[0].is_empty() {
-		return Default::default();
-	}
+    if task_cores.is_empty() || task_cores[0].is_empty() {
+        return Default::default();
+    }
 
-	let mut res = vec![];
+    let mut res = vec![];
 
-	for index in 0.. task_cores[0].len() {
-		for sub in &task_cores {
-			res.push(sub[index].clone());
-		}
-	}
-
+    for index in 0..task_cores[0].len() {
+        for sub in &task_cores {
+            res.push(sub[index].clone());
+        }
+    }
 
     info!("L3 array: {:?}", res);
-	res
+    res
 }
 
 pub fn bind_core(index: u32) -> Result<()> {
