@@ -37,18 +37,38 @@ pub fn get_l3_index() -> Option<L3Index> {
     }
 }
 pub fn get_l3_topo() -> Vec<Vec<u32>> {
-    let cache_count: u32 = std::env::var("L3_CACHE_COUNT")
+    let hwloc_info = std::process::Command::new("hwloc-info")
+        .output()
         .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap();
+        .and_then(|x| String::from_utf8(x.stdout).ok())
+        .expect("cannot get info from hwloc-info");
 
-    let unit_count: u32 = std::env::var("PU_COUNT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap();
+    let l3_cache_regex = regex::Regex::new(r#"([[:digit:]]*)[[:space:]]+L3Cache"#).unwrap();
+    let pu_regex = regex::Regex::new(r#"([[:digit:]]*)[[:space:]]+PU"#).unwrap();
+
+    let l3_cache_match = l3_cache_regex
+        .captures_iter(&hwloc_info)
+        .next()
+        .expect("invalid hwloc-info");
+    info!("l3_cache_match[0] -> {}", &l3_cache_match[1]);
+
+    let pu_match = pu_regex
+        .captures_iter(&hwloc_info)
+        .next()
+        .expect("invalid hwloc-info");
+    info!("pu_match[0] -> {}", &pu_match[1]);
+
+    let cache_count: u32 = l3_cache_match[1]
+        .parse()
+        .expect("l3_cache_match cannot be parsed to u32");
+
+    let unit_count: u32 = pu_match[1]
+        .parse()
+        .expect("pu_match cannot be parsed to u32");
 
     info!("Cache Count: {}", cache_count);
     info!("Unit Count: {}", unit_count);
+
     let l3_core_count = unit_count / cache_count;
     let num_cores = SETTINGS.multicore_sdr_producers + 1;
     let mut task_cores = vec![];

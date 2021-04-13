@@ -38,6 +38,7 @@ byteorder = "1.3.4"
 lazy_static = "1.2"
 byte-slice-cast = "1.0.0"
 gettid = "*"
+regex = "*"
 libc = "0.2"
 
 [dev-dependencies]
