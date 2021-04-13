@@ -183,6 +183,16 @@ where
         comm_d,
         &porep_config.porep_id,
     );
+
+    let time = std::time::Instant::now();
+
+    let labels = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase1(
+        &compound_public_params.vanilla_params,
+        &replica_id,
+        config.clone(),
+        sector_id,
+    )?;
+
     use storage_proofs::settings::SETTINGS;
     let timelog = if SETTINGS.benchmark {
         Some(
@@ -195,15 +205,6 @@ where
     } else {
         None
     };
-
-    let time = std::time::Instant::now();
-
-    let labels = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase1(
-        &compound_public_params.vanilla_params,
-        &replica_id,
-        config.clone(),
-        sector_id,
-    )?;
 
     if let Some(mut timelog) = timelog {
         writeln!(
