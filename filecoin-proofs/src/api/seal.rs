@@ -208,7 +208,7 @@ where
     if let Some(mut timelog) = timelog {
         writeln!(
             &mut timelog,
-            "{:?}: p1 cost: {:?}",
+            "{:?}: p1 cost: {}",
             sector_id,
             humantime::format_duration(time.elapsed())
         )?;
