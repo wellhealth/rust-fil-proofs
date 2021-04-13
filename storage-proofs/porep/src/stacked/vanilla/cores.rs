@@ -50,7 +50,7 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
     info!("Cache Count: {}", cache_count);
     info!("Unit Count: {}", unit_count);
     let l3_core_count = unit_count / cache_count;
-    let num_producers = SETTINGS.multicore_sdr_producers;
+    let num_cores = SETTINGS.multicore_sdr_producers + 1;
     let mut task_cores = vec![];
 
     // (0..unit_count)
@@ -60,7 +60,7 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
     for x in (0..unit_count).step_by(l3_core_count as usize) {
         let sub_res: Vec<_> = (x..x + l3_core_count).collect();
         let y: Vec<_> = sub_res
-            .chunks(num_producers)
+            .chunks(num_cores)
             .map(ToOwned::to_owned)
             .collect();
         task_cores.push(y);
