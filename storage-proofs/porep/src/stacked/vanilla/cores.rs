@@ -1,10 +1,10 @@
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use lazy_static::lazy_static;
 use log::*;
 use std::sync::Mutex;
-
-use lazy_static::lazy_static;
+use storage_proofs_core::settings::SETTINGS;
 
 lazy_static! {
     static ref L3_TOPOLOGY: Mutex<Vec<Vec<u32>>> = Mutex::new(get_l3_topo());
@@ -50,13 +50,37 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
     info!("Cache Count: {}", cache_count);
     info!("Unit Count: {}", unit_count);
     let l3_core_count = unit_count / cache_count;
-    let res = (0..unit_count)
-        .step_by(l3_core_count as usize)
-        .map(|x| (x..x + l3_core_count).collect())
-        .collect();
+    let num_producers = SETTINGS.multicore_sdr_producers;
+    let mut task_cores = vec![];
 
-    info!("L3 array: {:?}", res);
-    res
+    // (0..unit_count)
+    //     .step_by(l3_core_count as usize)
+    //     .map(|x| (x..x + l3_core_count).collect())
+    //     .collect();
+    for x in (0..unit_count).step_by(l3_core_count as usize) {
+        let sub_res: Vec<_> = (x..x + l3_core_count).collect();
+        let y: Vec<_> = sub_res
+            .chunks(num_producers)
+            .map(ToOwned::to_owned)
+            .collect();
+        task_cores.push(y);
+    }
+
+	if task_cores.is_empty() || task_cores[0].is_empty() {
+		return Default::default();
+	}
+
+	let mut res = vec![];
+
+	for index in 0.. task_cores[0].len() {
+		for sub in &task_cores {
+			res.push(sub[index].clone());
+		}
+	}
+
+
+    info!("L3 array: {:?}", task_cores);
+	res
 }
 
 pub fn bind_core(index: u32) -> Result<()> {
