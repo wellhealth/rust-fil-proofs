@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use std::cell::UnsafeCell;
 use std::fs::File;
 use std::marker::{PhantomData, Sync};
