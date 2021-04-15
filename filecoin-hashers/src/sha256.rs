@@ -148,7 +148,7 @@ impl Element for Sha256Domain {
     fn from_slice(bytes: &[u8]) -> Self {
         match Sha256Domain::try_from_bytes(bytes) {
             Ok(res) => res,
-            Err(err) => panic!(err),
+            Err(err) => panic!("{:?}", err),
         }
     }
 
