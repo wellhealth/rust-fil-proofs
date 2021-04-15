@@ -13,7 +13,7 @@ pub type OrderedSectorSet = BTreeSet<SectorId>;
 #[derive(
     Default, Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Serialize, Deserialize,
 )]
-pub struct SectorId(u64);
+pub struct SectorId(pub u64);
 
 impl From<u64> for SectorId {
     fn from(n: u64) -> Self {
