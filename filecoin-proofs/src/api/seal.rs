@@ -293,6 +293,7 @@ where
     let comm_r = commitment_from_fr(tau.comm_r.into());
 
     // Persist p_aux and t_aux here
+
     let p_aux_path = cache_path.as_ref().join(CacheKey::PAux.to_string());
     let mut f_p_aux = File::create(&p_aux_path)
         .with_context(|| format!("could not create file p_aux={:?}", p_aux_path))?;

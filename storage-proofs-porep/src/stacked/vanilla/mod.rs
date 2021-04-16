@@ -2,6 +2,7 @@
 mod macros;
 
 pub mod create_label;
+pub mod p2;
 pub(crate) mod hash;
 
 mod cache;
@@ -18,6 +19,8 @@ mod porep;
 mod proof;
 mod proof_scheme;
 mod utils;
+
+
 
 pub use challenges::{ChallengeRequirements, LayerChallenges};
 pub use column::Column;

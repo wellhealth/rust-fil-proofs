@@ -376,25 +376,25 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         Ok(tree)
     }
 
-    #[cfg(any(feature = "gpu", feature = "gpu2"))]
     fn generate_tree_c<ColumnArity, TreeArity>(
         layers: usize,
         nodes_count: usize,
         tree_count: usize,
         configs: Vec<StoreConfig>,
-        labels: &LabelsCache<Tree>,
+        labels: &[(PathBuf, String)],
+        old_labels: &LabelsCache<Tree>,
+        replica_path: &Path,
     ) -> Result<DiskTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         ColumnArity: 'static + PoseidonArity,
         TreeArity: PoseidonArity,
     {
         if SETTINGS.use_gpu_column_builder {
-            Self::generate_tree_c_gpu::<ColumnArity, TreeArity>(
-                layers,
+            super::p2::tree_c::run::<Tree, ColumnArity, TreeArity>(
                 nodes_count,
-                tree_count,
-                configs,
+                &configs,
                 labels,
+                replica_path,
             )
         } else {
             Self::generate_tree_c_cpu::<ColumnArity, TreeArity>(
@@ -402,7 +402,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 nodes_count,
                 tree_count,
                 configs,
-                labels,
+                old_labels,
             )
         }
     }
@@ -430,6 +430,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
     #[allow(clippy::needless_range_loop)]
     #[cfg(any(feature = "gpu", feature = "gpu2"))]
+    #[allow(dead_code)]
     fn generate_tree_c_gpu<ColumnArity, TreeArity>(
         layers: usize,
         nodes_count: usize,
@@ -472,7 +473,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             let column_write_batch_size = SETTINGS.column_write_batch_size as usize;
 
             // This channel will receive batches of columns and add them to the ColumnTreeBuilder.
-            let (builder_tx, builder_rx) = sync_channel(0);
+            let (builder_tx, builder_rx) = sync_channel(10);
 
             let config_count = configs.len(); // Don't move config into closure below.
             rayon::scope(|s| {
@@ -548,6 +549,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                             let columns: Vec<
                                 GenericArray<Fr, ColumnArity>,
                             > = {
+                                use scopeguard::defer;
+                                let now = std::time::Instant::now();
+                                defer!(info!("file read: {:?}", now.elapsed()));
                                 use fr32::bytes_into_fr;
 
                                 // Allocate layer data array and insert a placeholder for each layer.
@@ -630,9 +634,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
                             // Just add non-final column batches.
                             if !is_final {
+                                let now = std::time::Instant::now();
                                 column_tree_builder
                                     .add_columns(&columns)
                                     .expect("failed to add columns");
+                                info!("GPU batch time: {:?}", now.elapsed());
                                 continue;
                             };
 
@@ -843,29 +849,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         }
     }
 
-    #[cfg(not(any(feature = "gpu", feature = "gpu2")))]
-    fn generate_tree_r_last<TreeArity>(
-        data: &mut Data<'_>,
-        nodes_count: usize,
-        tree_count: usize,
-        tree_r_last_config: StoreConfig,
-        replica_path: PathBuf,
-        labels: &LabelsCache<Tree>,
-    ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
-    where
-        TreeArity: PoseidonArity,
-    {
-        Self::generate_tree_r_last_cpu::<TreeArity>(
-            data,
-            nodes_count,
-            tree_count,
-            tree_r_last_config,
-            replica_path,
-            labels,
-        )
-    }
-
-    #[cfg(any(feature = "gpu", feature = "gpu2"))]
     fn generate_tree_r_last_gpu<TreeArity>(
         data: &mut Data<'_>,
         nodes_count: usize,
@@ -1015,7 +998,9 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                     #[cfg(feature = "gpu")]
                     Some(BatcherType::GPU),
                     #[cfg(feature = "gpu2")]
-                    Some(BatcherType::OpenCL),
+                    Some(BatcherType::CustomGPU(
+                        rust_gpu_tools::opencl::GPUSelector::Index(*super::p2::GPU_INDEX),
+                    )),
                     nodes_count,
                     max_gpu_tree_batch_size,
                     tree_r_last_config.rows_to_discard,
@@ -1281,7 +1266,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         tree_c_config.rows_to_discard =
             default_rows_to_discard(nodes_count, Tree::Arity::to_usize());
 
-        let labels =
+        let old_labels =
             LabelsCache::<Tree>::new(&label_configs).context("failed to create labels cache")?;
         let configs = split_config(tree_c_config.clone(), tree_count)?;
 
@@ -1292,39 +1277,42 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             None => error!("Failed to raise the fd limit"),
         };
 
+        let labels = label_configs
+            .labels
+            .iter()
+            .map(|x| (x.path.clone(), x.id.clone()))
+            .collect::<Vec<(PathBuf, String)>>();
         let tree_c_root = match layers {
-            2 => {
-                let tree_c = Self::generate_tree_c::<U2, Tree::Arity>(
-                    layers,
-                    nodes_count,
-                    tree_count,
-                    configs,
-                    &labels,
-                )?;
-                tree_c.root()
-            }
-            8 => {
-                let tree_c = Self::generate_tree_c::<U8, Tree::Arity>(
-                    layers,
-                    nodes_count,
-                    tree_count,
-                    configs,
-                    &labels,
-                )?;
-                tree_c.root()
-            }
-            11 => {
-                let tree_c = Self::generate_tree_c::<U11, Tree::Arity>(
-                    layers,
-                    nodes_count,
-                    tree_count,
-                    configs,
-                    &labels,
-                )?;
-                tree_c.root()
-            }
+            2 => Self::generate_tree_c::<U2, Tree::Arity>(
+                layers,
+                nodes_count,
+                tree_count,
+                configs,
+                &labels,
+                &old_labels,
+                &replica_path,
+            ),
+            8 => Self::generate_tree_c::<U8, Tree::Arity>(
+                layers,
+                nodes_count,
+                tree_count,
+                configs,
+                &labels,
+                &old_labels,
+                &replica_path,
+            ),
+            11 => Self::generate_tree_c::<U11, Tree::Arity>(
+                layers,
+                nodes_count,
+                tree_count,
+                configs,
+                &labels,
+                &old_labels,
+                &replica_path,
+            ),
             _ => panic!("Unsupported column arity"),
-        };
+        }?
+        .root();
         info!("tree_c done");
 
         // Build the MerkleTree over the original data (if needed).
@@ -1360,7 +1348,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 tree_count,
                 tree_r_last_config.clone(),
                 replica_path.clone(),
-                &labels,
+                &old_labels,
             )
             .context("failed to generate tree_r_last")
         })?;

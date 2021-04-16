@@ -11,3 +11,7 @@ members = [
   "sha2raw",
   "filecoin-hashers",
 ]
+
+[patch.crates-io]
+neptune = { path = "../neptune" }
+rust-gpu-tools = { path = "../rust-gpu-tools" }
