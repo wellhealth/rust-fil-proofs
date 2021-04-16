@@ -1,10 +1,11 @@
 use std::fmt::{self, Debug, Display, Formatter};
 use std::str::FromStr;
 
+use serde::{Serialize, Deserialize};
 use anyhow::{format_err, Error, Result};
 use semver::Version;
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ApiVersion {
     V1_0_0,
     V1_1_0,
