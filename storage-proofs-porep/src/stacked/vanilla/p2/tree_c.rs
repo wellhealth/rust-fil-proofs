@@ -11,7 +11,6 @@ use lazy_static::lazy_static;
 use log::{error, info};
 use merkletree::store::StoreConfig;
 use neptune::{batch_hasher::Batcher, BatchHasher};
-// use neptune::{triton::gpu::GPUBatchHasher, BatchHasher};
 use rayon::prelude::*;
 use std::io::Read;
 use std::{
@@ -24,12 +23,11 @@ use storage_proofs_core::{
 };
 
 use crate::stacked::hash::hash_single_column;
-use neptune::batch_hasher::BatcherType;
-use neptune::batch_hasher::BatcherType::CustomGPU;
-use neptune::batch_hasher::GPUSelector;
-use neptune::proteus::gpu::CLBatchHasher;
-use neptune::tree_builder::TreeBuilder;
-use neptune::tree_builder::TreeBuilderTrait;
+
+use neptune::{
+    batch_hasher::{BatcherType::CustomGPU, GPUSelector},
+    proteus::gpu::CLBatchHasher,
+};
 
 struct Channels {
     txs: Vec<std::sync::mpsc::Sender<(usize, Vec<Fr>)>>,
@@ -60,14 +58,7 @@ where
     ColumnArity: PoseidonArity + 'static,
     TreeArity: PoseidonArity,
 {
-	let gpu_index = *super::GPU_INDEX;
-    let (max_gpu_column_batch_size, max_gpu_tree_batch_size) = {
-        (
-            settings::SETTINGS.max_gpu_column_batch_size as usize,
-            settings::SETTINGS.max_gpu_tree_batch_size as usize,
-        )
-    };
-
+    let gpu_index = *super::GPU_INDEX;
     let (file_data_tx, file_data_rx) = crossbeam::channel::bounded(*CHANNEL_CAPACITY);
     let (column_tx, column_rx) = crossbeam::channel::bounded(*CHANNEL_CAPACITY);
     let mut files = open_column_data_file(labels)?;
@@ -85,7 +76,7 @@ where
                         &mut files,
                         configs.len(),
                         nodes_count,
-                        max_gpu_column_batch_size,
+                        settings::SETTINGS.max_gpu_column_batch_size as usize,
                         file_data_tx,
                         replica_path,
                     ) {
@@ -128,9 +119,8 @@ where
                 .iter()
                 .map(|x| StoreConfig::data_path(&x.path, &x.id))
                 .collect::<Vec<_>>(),
-            max_gpu_column_batch_size,
+            settings::SETTINGS.max_gpu_column_batch_size as usize,
             nodes_count,
-            max_gpu_tree_batch_size,
             replica_path,
             gpu_index,
         )?;
@@ -309,6 +299,7 @@ fn channels(config_count: usize) -> Channels {
 pub fn cpu_build_column<A: PoseidonArity>(data: &[GenericArray<Fr, A>]) -> Vec<Fr> {
     data.par_iter().map(|x| hash_single_column(x)).collect()
 }
+
 pub fn gpu_build_column<A, B>(batcher: &mut B, data: &[GenericArray<Fr, A>]) -> Result<Vec<Fr>>
 where
     A: PoseidonArity,
@@ -373,7 +364,6 @@ pub fn collect_and_persist_tree_c<TreeArity>(
     paths: &[PathBuf],
     batch_size: usize,
     node_count: usize,
-    tree_batch_size: usize,
     replica_path: &Path,
     gpu_index: usize,
 ) -> Result<()>
@@ -385,14 +375,8 @@ where
         let (tx, rx) = std::sync::mpsc::channel();
 
         s.spawn(move |_| {
-            let data = build_tree_and_persist::<TreeArity>(
-                rx,
-                paths,
-                node_count,
-                tree_batch_size,
-                replica_path,
-                gpu_index,
-            );
+            let data =
+                build_tree_and_persist::<TreeArity>(rx, paths, node_count, replica_path, gpu_index);
             info!("tree-c persisted");
             build_tx
                 .send(data)
@@ -434,21 +418,22 @@ fn build_tree_and_persist<TreeArity>(
     rx: std::sync::mpsc::Receiver<(usize, Vec<Fr>)>,
     paths: &[PathBuf],
     node_count: usize,
-    tree_batch_size: usize,
     replica_path: &Path,
     gpu_index: usize,
 ) -> Result<()>
 where
     TreeArity: PoseidonArity,
 {
-    info!("start creating builder");
-    let mut builder = TreeBuilder::<TreeArity>::new(
-        Some(BatcherType::CustomGPU(GPUSelector::Index(gpu_index))),
-        node_count,
-        tree_batch_size,
-        0,
-    )
-    .with_context(|| format!("{:?}: cannot create tree_builder", replica_path))?;
+    info!("{:?}: start creating builder", replica_path);
+
+    let mut batcher: CLBatchHasher<TreeArity> =
+        match Batcher::<TreeArity>::new(&CustomGPU(GPUSelector::Index(gpu_index)), node_count)
+            .with_context(|| format!("failed to create tree_c batcher {}", gpu_index))?
+        {
+            Batcher::OpenCL(x) => x,
+            Batcher::CPU(_) => panic!("neptune bug, batcher should be GPU"),
+        };
+
     info!("{:?}: done creating builder", replica_path);
 
     let (tx_err, rx_err) = std::sync::mpsc::channel();
@@ -461,9 +446,14 @@ where
                 replica_path,
                 index + 1
             );
-            let (base, tree) = builder
-                .add_final_leaves(&column)
-                .with_context(|| format!("{:?} cannot add final leaves", replica_path))?;
+
+            let tree = super::build_tree(&mut batcher, &column, 0).with_context(|| {
+                format!(
+                    "{:?}: cannot build tree for tree-c:{}",
+                    replica_path,
+                    index + 1
+                )
+            })?;
 
             info!(
                 "{:?}: tree-c {} has been built from column",
@@ -473,7 +463,7 @@ where
 
             let tx = tx_err.clone();
             s.spawn(move |_| {
-                if let Err(e) = persist_tree_c(index, &paths[index], &base, &tree, replica_path) {
+                if let Err(e) = persist_tree_c(index, &paths[index], &column, &tree, replica_path) {
                     error!("cannot persisit tree-c {}, error: {:?}", index + 1, e);
                     tx.send((index + 1, e))
                         .expect("cannot send persisting error to tx");
@@ -494,26 +484,6 @@ where
     }
 }
 
-pub fn collect_column_for_config(
-    rx: &std::sync::mpsc::Receiver<(usize, Vec<Fr>)>,
-    batch_size: usize,
-    node_count: usize,
-    replica_path: &Path,
-) -> Result<Vec<Fr>> {
-    let last_batch = if node_count % batch_size == 0 { 0 } else { 1 };
-    let recv_count = node_count / batch_size + last_batch;
-    let mut final_data = vec![Fr::zero(); node_count];
-
-    for _ in 0..recv_count {
-        let (index, data) = rx
-            .recv()
-            .with_context(|| format!("{:?}: cannot recv column", replica_path))?;
-
-        final_data.as_mut_slice()[index..data.len() + index].copy_from_slice(&data);
-    }
-    Ok(final_data)
-}
-
 fn persist_tree_c(
     index: usize,
     path: &Path,
@@ -521,9 +491,7 @@ fn persist_tree_c(
     tree: &[Fr],
     replica_path: &Path,
 ) -> Result<()> {
-    use std::fs::OpenOptions;
     use std::io::Cursor;
-    use std::io::Write;
     let mut cursor = Cursor::new(Vec::<u8>::with_capacity(
         (base.len() + tree.len()) * std::mem::size_of::<Fr>(),
     ));
@@ -543,21 +511,9 @@ fn persist_tree_c(
         index + 1
     );
 
-    let mut tree_c = OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .create(true)
-        .open(&path)
-        .with_context(|| format!("cannot open file: {:?}", path))?;
+    let tree_c_bytes = cursor.into_inner();
+    std::fs::write(&path, tree_c_bytes).with_context(|| format!("cannot open file: {:?}", path))?;
 
-    info!(
-        "{:?}.persisting, done: file opened for {}",
-        replica_path,
-        index + 1
-    );
-    tree_c
-        .write_all(&cursor.into_inner())
-        .with_context(|| format!("cannot write to file: {:?}", path))?;
     info!(
         "{:?}.persisting, done: file written for tree-c {}",
         replica_path,
@@ -565,4 +521,24 @@ fn persist_tree_c(
     );
 
     Ok(())
+}
+
+pub fn collect_column_for_config(
+    rx: &std::sync::mpsc::Receiver<(usize, Vec<Fr>)>,
+    batch_size: usize,
+    node_count: usize,
+    replica_path: &Path,
+) -> Result<Vec<Fr>> {
+    let last_batch = if node_count % batch_size == 0 { 0 } else { 1 };
+    let recv_count = node_count / batch_size + last_batch;
+    let mut final_data = vec![Fr::zero(); node_count];
+
+    for _ in 0..recv_count {
+        let (index, data) = rx
+            .recv()
+            .with_context(|| format!("{:?}: cannot recv column", replica_path))?;
+
+        final_data.as_mut_slice()[index..data.len() + index].copy_from_slice(&data);
+    }
+    Ok(final_data)
 }
