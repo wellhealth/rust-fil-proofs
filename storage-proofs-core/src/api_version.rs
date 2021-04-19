@@ -11,6 +11,12 @@ pub enum ApiVersion {
     V1_1_0,
 }
 
+impl Default for ApiVersion {
+    fn default() -> Self {
+        ApiVersion::V1_0_0
+    }
+}
+
 impl ApiVersion {
     pub fn as_semver(&self) -> Version {
         match self {

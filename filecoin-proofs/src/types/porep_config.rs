@@ -23,6 +23,7 @@ pub struct PoRepConfig {
     pub sector_size: SectorSize,
     pub partitions: PoRepProofPartitions,
     pub porep_id: [u8; 32],
+	#[serde(default)]
     pub api_version: ApiVersion,
 }
 
