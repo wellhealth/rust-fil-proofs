@@ -81,8 +81,13 @@ where
             let mut v = prepare_batch(&mut disk_data, chunked_node_count)?;
             tree_r_base.append(&mut v);
         }
-        persist_sealed(index, &tree_r_base, &mut sealed_file)
+        persist_sealed(&tree_r_base, &mut sealed_file)
             .with_context(|| format!("cannot save to sealed file: {:?}", sealed_file))?;
+        info!(
+            "{:?} sealed file done for tree-r-{}",
+            replica_path,
+            index + 1
+        );
 
         let tree_r = super::build_tree(&mut batcher, &tree_r_base, config.rows_to_discard)?;
         persist_tree_r(index, path, &tree_r, replica_path)?;
@@ -123,37 +128,20 @@ fn prepare_batch(disk_data: &mut [File; 2], node_count: usize) -> Result<Vec<Fr>
     Ok(first)
 }
 
-fn persist_sealed(index: usize, data: &[Fr], sealed: &mut File) -> Result<()> {
+fn persist_sealed(data: &[Fr], sealed: &mut File) -> Result<()> {
     use std::io::Cursor;
     let mut cursor = Cursor::new(Vec::<u8>::with_capacity(
         data.len() * std::mem::size_of::<Fr>(),
     ));
 
-    info!(
-        "{:?}.persisting, done: cursor created for tree-c {}",
-        sealed,
-        index + 1
-    );
-
     for fr in data.iter().map(|x| x.into_repr()) {
         fr.write_le(&mut cursor)
             .with_context(|| format!("cannot write to cursor {:?}", sealed))?;
     }
-    info!(
-        "{:?}.persisting, done: put data into cursor for tree-c {}",
-        sealed,
-        index + 1
-    );
 
     sealed
         .write_all(&cursor.into_inner())
         .with_context(|| format!("cannot write {:?} to file", sealed))?;
-
-    info!(
-        "{:?}.persisting, done: file written for tree-r {}",
-        sealed,
-        index + 1
-    );
 
     Ok(())
 }
