@@ -6,7 +6,7 @@ use ff::PrimeField;
 use ff::PrimeFieldRepr;
 use filecoin_hashers::PoseidonArity;
 use log::info;
-use neptune::batch_hasher::Batcher;
+use neptune::{batch_hasher::Batcher, BatchHasher};
 use neptune::{
     batch_hasher::{BatcherType::CustomGPU, GPUSelector},
     proteus::gpu::CLBatchHasher,
@@ -78,21 +78,68 @@ where
         for node_index in (0..config.node_count).step_by(batch_size) {
             let rest_count = config.node_count - node_index;
             let chunked_node_count = std::cmp::min(rest_count, batch_size);
+
             let mut v = prepare_batch(&mut disk_data, chunked_node_count)?;
+
             tree_r_base.append(&mut v);
         }
-        persist_sealed(&tree_r_base, &mut sealed_file)
-            .with_context(|| format!("cannot save to sealed file: {:?}", sealed_file))?;
-        info!(
-            "{:?} sealed file done for tree-r-{}",
-            replica_path,
-            index + 1
-        );
 
-        let tree_r = super::build_tree(&mut batcher, &tree_r_base, config.rows_to_discard)?;
-        persist_tree_r(index, path, &tree_r, replica_path)?;
+        let (seal_tx, seal_rx) = std::sync::mpsc::channel();
+        let (build_tree_tx, build_tree_rx) = std::sync::mpsc::channel();
+        crossbeam::scope(|s| {
+            s.spawn({
+                let tree_r_base = &tree_r_base;
+                let sealed_file = &mut sealed_file;
+                move |_| {
+                    seal_tx
+                        .send(persist_sealed(tree_r_base, sealed_file).with_context(|| {
+                            format!("cannot save to sealed file: {:?}", sealed_file)
+                        }))
+                        .expect("cannot send persist_sealed");
+
+                    info!(
+                        "{:?} sealed file done for tree-r-{}",
+                        replica_path,
+                        index + 1
+                    );
+                }
+            });
+
+            let res = build_persist(
+                &mut batcher,
+                &tree_r_base,
+                config.rows_to_discard,
+                replica_path,
+                path,
+                index,
+            );
+
+            build_tree_tx.send(res).expect("cannot send build_tree_tx");
+        })
+        .expect("tree-r thread panic");
+
+        seal_rx.recv().expect("cannot recv seal_rx")?;
+        build_tree_rx.recv().expect("cannot recv build_tree_rx")?;
     }
 
+    Ok(())
+}
+
+fn build_persist<B, A>(
+    batcher: &mut B,
+    tree_r_base: &[Fr],
+    rows_to_discard: usize,
+    replica_path: &Path,
+    path: &Path,
+    index: usize,
+) -> Result<()>
+where
+    B: BatchHasher<A>,
+    A: PoseidonArity,
+{
+    let tree_r = super::build_tree(batcher, &tree_r_base, rows_to_discard)?;
+    info!("{:?} tree built tree-r-{}", replica_path, index + 1);
+    persist_tree_r(path, &tree_r)?;
     Ok(())
 }
 
@@ -146,35 +193,19 @@ fn persist_sealed(data: &[Fr], sealed: &mut File) -> Result<()> {
     Ok(())
 }
 
-fn persist_tree_r(index: usize, path: &Path, tree: &[Fr], replica_path: &Path) -> Result<()> {
+fn persist_tree_r(path: &Path, tree: &[Fr]) -> Result<()> {
     use std::io::Cursor;
     let mut cursor = Cursor::new(Vec::<u8>::with_capacity(
         tree.len() * std::mem::size_of::<Fr>(),
     ));
-    info!(
-        "{:?}.persisting, done: cursor created for tree-c {}",
-        replica_path,
-        index + 1
-    );
 
     for fr in tree.iter().map(|x| x.into_repr()) {
         fr.write_le(&mut cursor)
             .with_context(|| format!("cannot write to cursor {:?}", path))?;
     }
-    info!(
-        "{:?}.persisting, done: put data into cursor for tree-c {}",
-        replica_path,
-        index + 1
-    );
 
     std::fs::write(&path, cursor.into_inner())
         .with_context(|| format!("cannot write {:?} to file", path))?;
-
-    info!(
-        "{:?}.persisting, done: file written for tree-r {}",
-        replica_path,
-        index + 1
-    );
 
     Ok(())
 }
