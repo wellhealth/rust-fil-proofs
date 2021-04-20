@@ -102,17 +102,6 @@ where
             }
         });
 
-        // s.spawn(move |_| {
-        //     P2_POOL.install(move || {
-        //         generate_tree_c_cpu::<ColumnArity, TreeArity>(
-        //             column_rx,
-        //             &txs,
-        //             replica_path,
-        //             cpu_start_condition,
-        //         )
-        //     })
-        // });
-
         collect_and_persist_tree_c::<TreeArity>(
             &rxs,
             &configs
