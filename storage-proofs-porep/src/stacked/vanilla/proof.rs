@@ -357,6 +357,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         }
     }
 
+	#[allow(dead_code)]
     fn build_binary_tree<K: Hasher>(
         tree_data: &[u8],
         config: StoreConfig,
@@ -818,37 +819,58 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
     #[cfg(any(feature = "gpu", feature = "gpu2"))]
     fn generate_tree_r_last<TreeArity>(
-        data: &mut Data<'_>,
-        nodes_count: usize,
+        node_count: usize,
         tree_count: usize,
         tree_r_last_config: StoreConfig,
         replica_path: PathBuf,
-        labels: &LabelsCache<Tree>,
+        last_layer_path: &Path,
     ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
     where
         TreeArity: PoseidonArity,
     {
-        if SETTINGS.use_gpu_tree_builder {
-            Self::generate_tree_r_last_gpu::<TreeArity>(
-                data,
-                nodes_count,
-                tree_count,
-                tree_r_last_config,
-                replica_path,
-                labels,
-            )
-        } else {
-            Self::generate_tree_r_last_cpu::<TreeArity>(
-                data,
-                nodes_count,
-                tree_count,
-                tree_r_last_config,
-                replica_path,
-                labels,
-            )
-        }
+        let (configs, replica_config) = split_config_and_replica(
+            tree_r_last_config.clone(),
+            replica_path.clone(),
+            node_count,
+            tree_count,
+        )?;
+
+        let config = super::p2::tree_r::TreeRConfig {
+            node_count,
+            rows_to_discard: tree_r_last_config.rows_to_discard,
+            paths: configs
+                .iter()
+                .map(|x| StoreConfig::data_path(&x.path, &x.id))
+                .collect(),
+        };
+
+        let last_layer = last_layer_path;
+        let unsealed = Path::new(&SETTINGS.origin_file_dir).join("s-unsealed-0");
+
+        super::p2::tree_r::run::<TreeArity>(
+            &config,
+            last_layer,
+            &unsealed,
+            &replica_path,
+            *super::p2::GPU_INDEX,
+        )?;
+
+        create_lc_tree::<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>(
+            tree_r_last_config.size.expect("config size failure"),
+            &configs,
+            &replica_config,
+        )
+        // Self::generate_tree_r_last_gpu::<TreeArity>(
+        // data,
+        // node_count,
+        // tree_count,
+        // tree_r_last_config,
+        // replica_path,
+        // labels,
+        // )
     }
 
+    #[allow(dead_code)]
     fn generate_tree_r_last_gpu<TreeArity>(
         data: &mut Data<'_>,
         nodes_count: usize,
@@ -994,6 +1016,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             });
             s.spawn(move |_| {
                 let _gpu_lock = GPU_LOCK.lock().unwrap();
+                info!("rows to discard: {:?}", tree_r_last_config.rows_to_discard);
                 let mut tree_builder = TreeBuilder::<Tree::Arity>::new(
                     #[cfg(feature = "gpu")]
                     Some(BatcherType::GPU),
@@ -1085,91 +1108,12 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         )
     }
 
-    fn generate_tree_r_last_cpu<TreeArity>(
-        data: &mut Data<'_>,
-        nodes_count: usize,
-        tree_count: usize,
-        tree_r_last_config: StoreConfig,
-        replica_path: PathBuf,
-        labels: &LabelsCache<Tree>,
-    ) -> Result<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>
-    where
-        TreeArity: PoseidonArity,
-    {
-        let (configs, replica_config) = split_config_and_replica(
-            tree_r_last_config.clone(),
-            replica_path,
-            nodes_count,
-            tree_count,
-        )?;
 
-        data.ensure_data()?;
-        let last_layer_labels = labels.labels_for_last_layer()?;
-
-        info!("generating tree r last using the CPU");
-        let size = Store::len(last_layer_labels);
-
-        let mut start = 0;
-        let mut end = size / tree_count;
-
-        for (i, config) in configs.iter().enumerate() {
-            let encoded_data = last_layer_labels
-                .read_range(start..end)?
-                .into_par_iter()
-                .zip(
-                    data.as_mut()[(start * NODE_SIZE)..(end * NODE_SIZE)].par_chunks_mut(NODE_SIZE),
-                )
-                .map(|(key, data_node_bytes)| {
-                    let data_node =
-                        <Tree::Hasher as Hasher>::Domain::try_from_bytes(data_node_bytes)
-                            .expect("try from bytes failed");
-                    let encoded_node = encode::<<Tree::Hasher as Hasher>::Domain>(key, data_node);
-                    data_node_bytes.copy_from_slice(AsRef::<[u8]>::as_ref(&encoded_node));
-
-                    encoded_node
-                });
-
-            info!(
-                "building base tree_r_last with CPU {}/{}",
-                i + 1,
-                tree_count
-            );
-
-            // Remove the tree_r_last store if it exists already
-            let tree_r_last_store_path = StoreConfig::data_path(&config.path, &config.id);
-            let tree_r_last_store_exists = Path::new(&tree_r_last_store_path).exists();
-            trace!(
-                "tree_r_last store path {:?} -- exists? {}",
-                tree_r_last_store_path,
-                tree_r_last_store_exists
-            );
-            if tree_r_last_store_exists {
-                std::fs::remove_file(&tree_r_last_store_path)
-                    .expect("failed to remove tree_r_last_store_path");
-            }
-
-            LCTree::<Tree::Hasher, Tree::Arity, U0, U0>::from_par_iter_with_config(
-                encoded_data,
-                config.clone(),
-            )
-            .with_context(|| format!("failed tree_r_last CPU {}/{}", i + 1, tree_count))?;
-
-            start = end;
-            end += size / tree_count;
-        }
-
-        create_lc_tree::<LCTree<Tree::Hasher, Tree::Arity, Tree::SubTreeArity, Tree::TopTreeArity>>(
-            tree_r_last_config.size.expect("config size failure"),
-            &configs,
-            &replica_config,
-        )
-    }
-
+	#[allow(dead_code)]
     pub(crate) fn transform_and_replicate_layers(
         graph: &StackedBucketGraph<Tree::Hasher>,
         layer_challenges: &LayerChallenges,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
-        data: Data<'_>,
         data_tree: Option<BinaryMerkleTree<G>>,
         config: StoreConfig,
         replica_path: PathBuf,
@@ -1184,7 +1128,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         Self::transform_and_replicate_layers_inner(
             graph,
             layer_challenges,
-            data,
             data_tree,
             config,
             replica_path,
@@ -1196,17 +1139,12 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     pub(crate) fn transform_and_replicate_layers_inner(
         graph: &StackedBucketGraph<Tree::Hasher>,
         layer_challenges: &LayerChallenges,
-        mut data: Data<'_>,
         data_tree: Option<BinaryMerkleTree<G>>,
         config: StoreConfig,
         replica_path: PathBuf,
         label_configs: Labels<Tree>,
     ) -> Result<TransformedLayers<Tree, G>> {
         trace!("transform_and_replicate_layers");
-        let nodes_count = graph.size();
-
-        assert_eq!(data.len(), nodes_count * NODE_SIZE);
-        trace!("nodes count {}, data len {}", nodes_count, data.len());
 
         let tree_count = get_base_tree_count::<Tree>();
         let nodes_count = graph.size() / tree_count;
@@ -1282,6 +1220,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             .iter()
             .map(|x| (x.path.clone(), x.id.clone()))
             .collect::<Vec<(PathBuf, String)>>();
+        info!("{:?}", labels);
+
+        let x = labels.last().expect("labels cannot be empty");
+        let layer_last_path = StoreConfig::data_path(&x.0, &x.1);
+
         let tree_c_root = match layers {
             2 => Self::generate_tree_c::<U2, Tree::Arity>(
                 layers,
@@ -1316,21 +1259,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         info!("tree_c done");
 
         // Build the MerkleTree over the original data (if needed).
-        let tree_d = match data_tree {
-            Some(t) => {
-                trace!("using existing original data merkle tree");
-                assert_eq!(t.len(), 2 * (data.len() / NODE_SIZE) - 1);
-
-                t
-            }
-            None => {
-                trace!("building merkle tree for the original data");
-                data.ensure_data()?;
-                measure_op(Operation::CommD, || {
-                    Self::build_binary_tree::<G>(data.as_ref(), tree_d_config.clone())
-                })?
-            }
-        };
+        let tree_d = data_tree.expect("cannot find tree-d");
         tree_d_config.size = Some(tree_d.len());
         assert_eq!(
             tree_d_config.size.expect("config size failure"),
@@ -1343,12 +1272,11 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         info!("building tree_r_last");
         let tree_r_last = measure_op(Operation::GenerateTreeRLast, || {
             Self::generate_tree_r_last::<Tree::Arity>(
-                &mut data,
                 nodes_count,
                 tree_count,
                 tree_r_last_config.clone(),
                 replica_path.clone(),
-                &old_labels,
+                &layer_last_path,
             )
             .context("failed to generate tree_r_last")
         })?;
@@ -1356,8 +1284,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         let tree_r_last_root = tree_r_last.root();
         drop(tree_r_last);
-
-        data.drop_data();
 
         // comm_r = H(comm_c || comm_r_last)
         let comm_r: <Tree::Hasher as Hasher>::Domain =
@@ -1403,7 +1329,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     pub fn replicate_phase2(
         pp: &'a PublicParams<Tree>,
         labels: Labels<Tree>,
-        data: Data<'a>,
         data_tree: BinaryMerkleTree<G>,
         config: StoreConfig,
         replica_path: PathBuf,
@@ -1416,7 +1341,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let (tau, paux, taux) = Self::transform_and_replicate_layers_inner(
             &pp.graph,
             &pp.layer_challenges,
-            data,
             Some(data_tree),
             config,
             replica_path,

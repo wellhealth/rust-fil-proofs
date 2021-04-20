@@ -1,6 +1,6 @@
 use std::fs::{self, metadata, File, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
 use bellperson::bls::Fr;
@@ -19,7 +19,6 @@ use storage_proofs_core::{
     proof::ProofScheme,
     sector::SectorId,
     util::default_rows_to_discard,
-    Data,
 };
 use storage_proofs_porep::stacked::{
     self, generate_replica_id, ChallengeRequirements, StackedCompound, StackedDrg, Tau,
@@ -209,10 +208,6 @@ where
         metadata(cache_path.as_ref())?.is_dir(),
         "cache_path must be a directory"
     );
-    ensure!(
-        metadata(replica_path.as_ref())?.is_file(),
-        "replica_path must be a file"
-    );
 
     let SealPreCommitPhase1Output {
         mut labels,
@@ -223,26 +218,6 @@ where
 
     labels.update_root(cache_path.as_ref());
     config.path = cache_path.as_ref().into();
-
-    let f_data = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&replica_path)
-        .with_context(|| {
-            format!(
-                "could not open replica_path={:?}",
-                replica_path.as_ref().display()
-            )
-        })?;
-    let data = unsafe {
-        MmapOptions::new().map_mut(&f_data).with_context(|| {
-            format!(
-                "could not mmap replica_path={:?}",
-                replica_path.as_ref().display()
-            )
-        })?
-    };
-    let data: Data<'_> = (data, PathBuf::from(replica_path.as_ref())).into();
 
     // Load data tree from disk
     let data_tree = {
@@ -284,7 +259,6 @@ where
     let (tau, (p_aux, t_aux)) = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
         &compound_public_params.vanilla_params,
         labels,
-        data,
         data_tree,
         config,
         replica_path.as_ref().to_path_buf(),

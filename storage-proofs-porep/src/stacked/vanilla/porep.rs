@@ -26,24 +26,14 @@ impl<'a, 'c, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> PoRep<'a, Tre
     );
 
     fn replicate(
-        pp: &'a PublicParams<Tree>,
-        replica_id: &<Tree::Hasher as Hasher>::Domain,
-        data: Data<'a>,
-        data_tree: Option<BinaryMerkleTree<G>>,
-        config: StoreConfig,
-        replica_path: PathBuf,
+        _pp: &'a PublicParams<Tree>,
+        _replica_id: &<Tree::Hasher as Hasher>::Domain,
+        _data: Data<'a>,
+        _data_tree: Option<BinaryMerkleTree<G>>,
+        _config: StoreConfig,
+        _replica_path: PathBuf,
     ) -> Result<(Self::Tau, Self::ProverAux)> {
-        let (tau, p_aux, t_aux) = Self::transform_and_replicate_layers(
-            &pp.graph,
-            &pp.layer_challenges,
-            replica_id,
-            data,
-            data_tree,
-            config,
-            replica_path,
-        )?;
-
-        Ok((tau, (p_aux, t_aux)))
+		unimplemented!()
     }
 
     fn extract_all<'b>(

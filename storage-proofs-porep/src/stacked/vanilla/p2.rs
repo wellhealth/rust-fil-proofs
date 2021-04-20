@@ -6,9 +6,10 @@ use generic_array::GenericArray;
 use lazy_static::lazy_static;
 use neptune::{Arity, BatchHasher};
 use std::borrow::Cow;
+use anyhow::Context;
 
 use bellperson::bls::Fr;
-use ff::Field;
+use ff::{Field, PrimeField};
 
 lazy_static! {
     pub static ref GPU_INDEX: usize = select_gpu_device();
@@ -41,7 +42,6 @@ where
 
     tree_size
 }
-
 
 pub fn build_tree<TreeArity, B>(
     batcher: &mut B,
@@ -97,4 +97,14 @@ fn as_generic_arrays<A: Arity<Fr>>(vec: &[Fr]) -> &[GenericArray<Fr, A>] {
             vec.len() / A::to_usize(),
         )
     }
+}
+
+fn bytes_into_fr(bytes: &[u8]) -> Result<Fr> {
+    use ff::PrimeFieldRepr;
+    let mut fr_repr = <<Fr as PrimeField>::Repr as Default>::default();
+    fr_repr
+        .read_le(bytes)
+        .context("cannot convert bytes to Fr")?;
+
+    Fr::from_repr(fr_repr).context("cannot convert fr_repr to fr")
 }
