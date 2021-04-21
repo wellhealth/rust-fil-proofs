@@ -114,11 +114,7 @@ where
                 index,
             );
 
-            info!(
-                "{:?} persist done for tree-r-{}",
-                replica_path,
-                index + 1
-            );
+            info!("{:?} persist done for tree-r-{}", replica_path, index + 1);
             build_tree_tx.send(res).expect("cannot send build_tree_tx");
         })
         .expect("tree-r thread panic");
@@ -199,18 +195,13 @@ fn persist_sealed(data: &[Fr], sealed: &mut File) -> Result<()> {
 }
 
 fn persist_tree_r(path: &Path, tree: &[Fr]) -> Result<()> {
-    use std::io::Cursor;
-    let mut cursor = Cursor::new(Vec::<u8>::with_capacity(
-        tree.len() * std::mem::size_of::<Fr>(),
-    ));
+    let mut tree_r = OpenOptions::new()
+        .truncate(true)
+        .write(true)
+        .create(true)
+        .open(path)
+        .with_context(|| format!("cannot open file {:?}", path))?;
 
-    for fr in tree.iter().map(|x| x.into_repr()) {
-        fr.write_le(&mut cursor)
-            .with_context(|| format!("cannot write to cursor {:?}", path))?;
-    }
-
-    std::fs::write(&path, cursor.into_inner())
-        .with_context(|| format!("cannot write {:?} to file", path))?;
-
+    super::persist_frs(tree, &mut tree_r)?;
     Ok(())
 }

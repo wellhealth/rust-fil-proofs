@@ -63,7 +63,7 @@ where
                 .expect("cannot write_le ,persist_frs");
         });
 
-    file.write_all(&&fr_bytes)
+    file.write_all(&fr_bytes)
         .with_context(|| format!("cannot write to file: {:?}", file))?;
 
     Ok(())
