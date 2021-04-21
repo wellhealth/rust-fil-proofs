@@ -41,7 +41,10 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
         .output()
         .ok()
         .and_then(|x| String::from_utf8(x.stdout).ok())
-        .expect("cannot get info from hwloc-info");
+        .unwrap_or_else(|| {
+            error!("cannot get info from hwloc-info");
+            std::process::exit(255)
+        });
 
     let l3_cache_regex = regex::Regex::new(r#"([[:digit:]]*)[[:space:]]+L3Cache"#).unwrap();
     let pu_regex = regex::Regex::new(r#"([[:digit:]]*)[[:space:]]+PU"#).unwrap();
@@ -49,22 +52,31 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
     let l3_cache_match = l3_cache_regex
         .captures_iter(&hwloc_info)
         .next()
-        .expect("invalid hwloc-info");
+        .unwrap_or_else(|| {
+            error!("invalid hwloc-info");
+            std::process::exit(255)
+        });
+
     info!("l3_cache_match[0] -> {}", &l3_cache_match[1]);
 
     let pu_match = pu_regex
         .captures_iter(&hwloc_info)
         .next()
-        .expect("invalid hwloc-info");
+        .unwrap_or_else(|| {
+            error!("invalid hwloc-info");
+            std::process::exit(255)
+        });
     info!("pu_match[0] -> {}", &pu_match[1]);
 
-    let cache_count: u32 = l3_cache_match[1]
-        .parse()
-        .expect("l3_cache_match cannot be parsed to u32");
+    let cache_count: u32 = l3_cache_match[1].parse().unwrap_or_else(|_| {
+        error!("l3_cache_match cannot be parsed to u32");
+        std::process::exit(255)
+    });
 
-    let unit_count: u32 = pu_match[1]
-        .parse()
-        .expect("pu_match cannot be parsed to u32");
+    let unit_count: u32 = pu_match[1].parse().unwrap_or_else(|_| {
+        error!("pu_match cannot be parsed to u32");
+        std::process::exit(255)
+    });
 
     info!("Cache Count: {}", cache_count);
     info!("Unit Count: {}", unit_count);
