@@ -1,14 +1,18 @@
 pub mod tree_c;
 pub mod tree_r;
+use anyhow::Context;
 use anyhow::Result;
 use filecoin_hashers::PoseidonArity;
 use generic_array::GenericArray;
 use lazy_static::lazy_static;
+use log::error;
 use neptune::{Arity, BatchHasher};
-use std::borrow::Cow;
-use anyhow::Context;
+use rayon::prelude::*;
+use std::fmt::Debug;
+use std::{borrow::Cow, io::Write};
 
 use bellperson::bls::Fr;
+use ff::PrimeFieldRepr;
 use ff::{Field, PrimeField};
 
 lazy_static! {
@@ -43,6 +47,48 @@ where
     tree_size
 }
 
+fn persist_frs<W>(data: &[Fr], file: &mut W) -> Result<()>
+where
+    W: Write + Debug,
+{
+    const FR_SIZE: usize = std::mem::size_of::<Fr>();
+    let mut fr_bytes = vec![0u8; data.len() * FR_SIZE];
+
+    fr_bytes
+        .par_chunks_mut(FR_SIZE)
+        .zip(data.par_iter())
+        .for_each(|(bytes, fr)| {
+            fr.into_repr()
+                .write_le(bytes)
+                .expect("cannot write_le ,persist_frs");
+        });
+
+    file.write_all(&&fr_bytes)
+        .with_context(|| format!("cannot write to file: {:?}", file))?;
+
+    Ok(())
+}
+
+fn hash_batches<B, Arity>(
+    batcher: &mut B,
+    batch_size: usize,
+    preimages: &[GenericArray<Fr, Arity>],
+    result: &mut [Fr],
+) where
+    B: BatchHasher<Arity>,
+    Arity: PoseidonArity,
+{
+    for (p_chunk, r_chunk) in preimages
+        .chunks(batch_size)
+        .zip(result.chunks_mut(batch_size))
+    {
+        while let Err(e) = batcher.hash_into_slice(r_chunk, p_chunk) {
+            error!("opencl error, {:?}", e);
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
+}
+
 pub fn build_tree<TreeArity, B>(
     batcher: &mut B,
     data: &[Fr],
@@ -54,25 +100,33 @@ where
 {
     let tree_size = calculate_tree_size(data.len(), TreeArity::to_usize(), rows_to_discard);
     let arity = TreeArity::to_usize();
+    let batch_size = {
+        let tmp = data.len() / arity / arity;
+        if tmp == 0 {
+            1
+        } else {
+            tmp
+        }
+    };
 
     // calculate discarded rows
     let hashed = (0..rows_to_discard).fold(Cow::Borrowed(data), |x, _| {
         let preimages = as_generic_arrays::<TreeArity>(&x);
-        let hashed = batcher
-            .hash(&preimages)
-            .expect("cannot hash preimages to build tree");
+        let mut hashed = vec![Fr::zero(); preimages.len()];
+
+        hash_batches(batcher, batch_size, preimages, &mut hashed);
         Cow::Owned(hashed)
     });
 
     let mut tree: Vec<Fr> = vec![Fr::zero(); tree_size];
-    let mut rest: &mut [_] = &mut tree;
+    let mut rest = &mut tree[..];
     let mut origin = &hashed[..];
     while !rest.is_empty() {
         let layer_len = origin.len() / arity;
         let preimages = as_generic_arrays::<TreeArity>(&origin);
         let (to_be_hashed, unhashed) = rest.split_at_mut(layer_len);
 
-        batcher.hash_into_slice(to_be_hashed, preimages)?;
+        hash_batches(batcher, batch_size, preimages, to_be_hashed);
 
         origin = to_be_hashed;
         rest = unhashed;
@@ -100,7 +154,6 @@ fn as_generic_arrays<A: Arity<Fr>>(vec: &[Fr]) -> &[GenericArray<Fr, A>] {
 }
 
 fn bytes_into_fr(bytes: &[u8]) -> Result<Fr> {
-    use ff::PrimeFieldRepr;
     let mut fr_repr = <<Fr as PrimeField>::Repr as Default>::default();
     fr_repr
         .read_le(bytes)

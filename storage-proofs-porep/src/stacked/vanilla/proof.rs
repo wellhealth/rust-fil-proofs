@@ -357,7 +357,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         }
     }
 
-	#[allow(dead_code)]
+    #[allow(dead_code)]
     fn build_binary_tree<K: Hasher>(
         tree_data: &[u8],
         config: StoreConfig,
@@ -1108,8 +1108,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         )
     }
 
-
-	#[allow(dead_code)]
+    #[allow(dead_code)]
     pub(crate) fn transform_and_replicate_layers(
         graph: &StackedBucketGraph<Tree::Hasher>,
         layer_challenges: &LayerChallenges,
@@ -1225,40 +1224,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let x = labels.last().expect("labels cannot be empty");
         let layer_last_path = StoreConfig::data_path(&x.0, &x.1);
 
-        let tree_c_root = match layers {
-            2 => Self::generate_tree_c::<U2, Tree::Arity>(
-                layers,
-                nodes_count,
-                tree_count,
-                configs,
-                &labels,
-                &old_labels,
-                &replica_path,
-            ),
-            8 => Self::generate_tree_c::<U8, Tree::Arity>(
-                layers,
-                nodes_count,
-                tree_count,
-                configs,
-                &labels,
-                &old_labels,
-                &replica_path,
-            ),
-            11 => Self::generate_tree_c::<U11, Tree::Arity>(
-                layers,
-                nodes_count,
-                tree_count,
-                configs,
-                &labels,
-                &old_labels,
-                &replica_path,
-            ),
-            _ => panic!("Unsupported column arity"),
-        }?
-        .root();
-        info!("tree_c done");
-
-        // Build the MerkleTree over the original data (if needed).
+        let tree_d_start = std::time::Instant::now();
         let tree_d = data_tree.expect("cannot find tree-d");
         tree_d_config.size = Some(tree_d.len());
         assert_eq!(
@@ -1267,23 +1233,66 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         );
         let tree_d_root = tree_d.root();
         drop(tree_d);
+        info!("{:?}: tree-d: {:?}", replica_path, tree_d_start.elapsed());
 
+        let (c_tx, c_rx) = std::sync::mpsc::channel();
+        let (r_tx, r_rx) = std::sync::mpsc::channel();
+        crossbeam::scope({
+            let labels = &labels;
+            let old_labels = &old_labels;
+            let replica_path = &replica_path;
+            let c_tx = &c_tx;
+            let tree_r_last_config = tree_r_last_config.clone();
+            move |s| {
+                s.spawn(move |_| {
+                    let tree_r = Self::generate_tree_r_last::<Tree::Arity>(
+                        nodes_count,
+                        tree_count,
+                        tree_r_last_config.clone(),
+                        replica_path.clone(),
+                        &layer_last_path,
+                    );
+                    r_tx.send(tree_r).expect("cannot send tree_r");
+                });
+                let tree_c = match layers {
+                    2 => Self::generate_tree_c::<U2, Tree::Arity>(
+                        layers,
+                        nodes_count,
+                        tree_count,
+                        configs,
+                        labels,
+                        old_labels,
+                        replica_path,
+                    ),
+                    8 => Self::generate_tree_c::<U8, Tree::Arity>(
+                        layers,
+                        nodes_count,
+                        tree_count,
+                        configs,
+                        labels,
+                        old_labels,
+                        replica_path,
+                    ),
+                    11 => Self::generate_tree_c::<U11, Tree::Arity>(
+                        layers,
+                        nodes_count,
+                        tree_count,
+                        configs,
+                        labels,
+                        old_labels,
+                        replica_path,
+                    ),
+                    _ => panic!("Unsupported column arity"),
+                };
+
+                c_tx.send(tree_c).expect("cannot send tree-c");
+            }
+        })
+        .expect("tree-c|tree-r scope failure");
+
+        let tree_c_root = c_rx.recv().expect("cannot recv c_rx")?.root();
         // Encode original data into the last layer.
-        info!("building tree_r_last");
-        let tree_r_last = measure_op(Operation::GenerateTreeRLast, || {
-            Self::generate_tree_r_last::<Tree::Arity>(
-                nodes_count,
-                tree_count,
-                tree_r_last_config.clone(),
-                replica_path.clone(),
-                &layer_last_path,
-            )
-            .context("failed to generate tree_r_last")
-        })?;
-        info!("tree_r_last done");
-
-        let tree_r_last_root = tree_r_last.root();
-        drop(tree_r_last);
+        let tree_r_last_root = r_rx.recv().expect("cannot recv r_rx")?.root();
 
         // comm_r = H(comm_c || comm_r_last)
         let comm_r: <Tree::Hasher as Hasher>::Domain =

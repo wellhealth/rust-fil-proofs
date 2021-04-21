@@ -114,6 +114,11 @@ where
                 index,
             );
 
+            info!(
+                "{:?} persist done for tree-r-{}",
+                replica_path,
+                index + 1
+            );
             build_tree_tx.send(res).expect("cannot send build_tree_tx");
         })
         .expect("tree-r thread panic");

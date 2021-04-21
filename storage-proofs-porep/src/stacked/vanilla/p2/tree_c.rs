@@ -12,6 +12,8 @@ use log::{error, info};
 use merkletree::store::StoreConfig;
 use neptune::{batch_hasher::Batcher, BatchHasher};
 use rayon::prelude::*;
+use scopeguard::defer;
+use std::fs::OpenOptions;
 use std::io::Read;
 use std::{
     fs::File,
@@ -63,6 +65,7 @@ where
     let (column_tx, column_rx) = crossbeam::channel::bounded(*CHANNEL_CAPACITY);
     let mut files = open_column_data_file(labels)?;
     let Channels { txs, rxs } = channels(configs.len());
+    let rxs = rxs;
     let txs = txs;
 
     let scope_result = crossbeam::scope(move |s| {
@@ -90,8 +93,40 @@ where
             info!("{:?}: debuglog: generate column finished", replica_path);
         });
 
+        s.spawn({
+            let column_rx = column_rx.clone();
+            let txs = txs.clone();
+            move |_| {
+                if let Err(e) = gpu_build::<ColumnArity, TreeArity>(
+                    nodes_count,
+                    gpu_index,
+                    column_rx,
+                    &txs,
+                    replica_path,
+                ) {
+                    info!("generate_tree_c_gpu error: {:?}", e);
+                }
+            }
+        });
+
+        s.spawn({
+            let column_rx = column_rx.clone();
+            let txs = txs.clone();
+            move |_| {
+                if let Err(e) = gpu_build::<ColumnArity, TreeArity>(
+                    nodes_count,
+                    gpu_index,
+                    column_rx,
+                    &txs,
+                    replica_path,
+                ) {
+                    info!("generate_tree_c_gpu error: {:?}", e);
+                }
+            }
+        });
+
         s.spawn(move |_| {
-            if let Err(e) = generate_tree_c_gpu::<ColumnArity, TreeArity>(
+            if let Err(e) = gpu_build::<ColumnArity, TreeArity>(
                 nodes_count,
                 gpu_index,
                 column_rx,
@@ -297,7 +332,7 @@ where
     batcher.hash(data).context("batcher.hash failed")
 }
 
-pub fn generate_tree_c_gpu<ColumnArity, TreeArity>(
+pub fn gpu_build<ColumnArity, TreeArity>(
     nodes_count: usize,
     gpu_index: usize,
     column_rx: crossbeam::channel::Receiver<ColumnData<ColumnArity>>,
@@ -341,7 +376,12 @@ where
 
         hashed_tx[config_index]
             .send((node_index, result))
-            .expect("cannot send gpu data to hashed_tx");
+            .with_context(|| {
+                format!(
+                    "cannot send hashed_tx[{}], node:{}",
+                    config_index, node_index
+                )
+            })?;
     }
     info!("{:?}: debuglog: gpu tree-c finished", replica_path);
 
@@ -359,11 +399,14 @@ pub fn collect_and_persist_tree_c<TreeArity>(
 where
     TreeArity: PoseidonArity,
 {
+    defer! { info!("collect_and_persist_tree_c exit");}
     let (build_tx, build_rx) = std::sync::mpsc::channel();
+
     let res = crossbeam::scope(move |s| -> Result<()> {
         let (tx, rx) = std::sync::mpsc::channel();
 
         s.spawn(move |_| {
+            defer! { info!("build_tree_and_persist exit");}
             let data =
                 build_tree_and_persist::<TreeArity>(rx, paths, node_count, replica_path, gpu_index);
             info!("tree-c persisted");
@@ -425,92 +468,100 @@ where
 
     info!("{:?}: done creating builder", replica_path);
 
-    let (tx_err, rx_err) = std::sync::mpsc::channel();
-    info!("{:?}: done creating channel", replica_path);
+    for (index, column) in rx.iter() {
+        let mut tree_c_file = OpenOptions::new()
+            .truncate(true)
+            .create(true)
+            .write(true)
+            .open(&paths[index])
+            .with_context(|| format!("cannot open file {:?}", paths[index]))?;
 
-    let res = crossbeam::scope(|s| -> Result<()> {
-        for (index, column) in rx.iter() {
-            info!(
-                "{:?}: tree-c {} start building final leaves",
-                replica_path,
-                index + 1
-            );
-
-            let tree = super::build_tree(&mut batcher, &column, 0).with_context(|| {
-                format!(
-                    "{:?}: cannot build tree for tree-c:{}",
+        let (tx_err, rx_err) = std::sync::mpsc::channel();
+        info!("{:?}: done creating channel", replica_path);
+        let res = crossbeam::scope({
+            let column = &column;
+            let batcher = &mut batcher;
+            let tree_c_file = &mut tree_c_file;
+            move |s| {
+                info!(
+                    "{:?}: tree-c {} start building final leaves",
                     replica_path,
                     index + 1
-                )
-            })?;
+                );
 
-            info!(
-                "{:?}: tree-c {} has been built from column",
-                replica_path,
-                index + 1
-            );
+                s.spawn(move |_| {
+                    let res = super::persist_frs(column, tree_c_file)
+                        .with_context(|| format!("cannot persist_frs for {:?}", tree_c_file));
+                    info!(
+                        "{:?}: persisted tree-base for tree-c-{}",
+                        replica_path,
+                        index + 1
+                    );
+                    tx_err.send(res).expect("cannot send res persist_frs");
+                });
 
-            let tx = tx_err.clone();
-            s.spawn(move |_| {
-                if let Err(e) = persist_tree_c(index, &paths[index], &column, &tree, replica_path) {
-                    error!("cannot persisit tree-c {}, error: {:?}", index + 1, e);
-                    tx.send((index + 1, e))
-                        .expect("cannot send persisting error to tx");
-                }
-            });
-        }
-        Ok(())
-    });
-    drop(tx_err);
-    if let Ok((index, e)) = rx_err.try_recv() {
-        bail!("cannot persisit tree-c {}, error: {:?}", index, e);
+                let tree = super::build_tree(batcher, &column, 0).with_context(|| {
+                    format!(
+                        "{:?}: cannot build tree for tree-c:{}",
+                        replica_path,
+                        index + 1
+                    )
+                })?;
+
+                Ok(tree)
+            }
+        });
+        rx_err.recv().expect("cannot recv rx_err")?;
+
+        let tree = match res {
+            Ok(Ok(tree)) => tree,
+            Ok(Err(e)) => return Err(e),
+            Err(e) => return Err(anyhow::anyhow!("building tree-c panic, error: {:?}", e)),
+        };
+        super::persist_frs(&tree, &mut tree_c_file)
+            .with_context(|| format!("cannot persist tree-c-{}'s tree", index + 1))?;
     }
-
-    match res {
-        Ok(Ok(_)) => Ok(()),
-        Ok(Err(e)) => Err(e),
-        Err(e) => Err(anyhow::anyhow!("building tree-c panic, error: {:?}", e)),
-    }
-}
-
-fn persist_tree_c(
-    index: usize,
-    path: &Path,
-    base: &[Fr],
-    tree: &[Fr],
-    replica_path: &Path,
-) -> Result<()> {
-    use std::io::Cursor;
-    let mut cursor = Cursor::new(Vec::<u8>::with_capacity(
-        (base.len() + tree.len()) * std::mem::size_of::<Fr>(),
-    ));
-    info!(
-        "{:?}.persisting, done: cursor created for tree-c {}",
-        replica_path,
-        index + 1
-    );
-
-    for fr in base.iter().chain(tree.iter()).map(|x| x.into_repr()) {
-        fr.write_le(&mut cursor)
-            .with_context(|| format!("cannot write to cursor {:?}", path))?;
-    }
-    info!(
-        "{:?}.persisting, done: put data into cursor for tree-c {}",
-        replica_path,
-        index + 1
-    );
-
-    let tree_c_bytes = cursor.into_inner();
-    std::fs::write(&path, tree_c_bytes).with_context(|| format!("cannot open file: {:?}", path))?;
-
-    info!(
-        "{:?}.persisting, done: file written for tree-c {}",
-        replica_path,
-        index + 1
-    );
-
     Ok(())
 }
+
+// fn persist_tree_c(
+//     index: usize,
+//     path: &Path,
+//     base: &[Fr],
+//     tree: &[Fr],
+//     replica_path: &Path,
+// ) -> Result<()> {
+//     use std::io::Cursor;
+//     let mut cursor = Cursor::new(Vec::<u8>::with_capacity(
+//         (base.len() + tree.len()) * std::mem::size_of::<Fr>(),
+//     ));
+//     info!(
+//         "{:?}.persisting, done: cursor created for tree-c {}",
+//         replica_path,
+//         index + 1
+//     );
+//
+//     for fr in base.iter().chain(tree.iter()).map(|x| x.into_repr()) {
+//         fr.write_le(&mut cursor)
+//             .with_context(|| format!("cannot write to cursor {:?}", path))?;
+//     }
+//     info!(
+//         "{:?}.persisting, done: put data into cursor for tree-c {}",
+//         replica_path,
+//         index + 1
+//     );
+//
+//     let tree_c_bytes = cursor.into_inner();
+//     std::fs::write(&path, tree_c_bytes).with_context(|| format!("cannot open file: {:?}", path))?;
+//
+//     info!(
+//         "{:?}.persisting, done: file written for tree-c {}",
+//         replica_path,
+//         index + 1
+//     );
+//
+//     Ok(())
+// }
 
 pub fn collect_column_for_config(
     rx: &std::sync::mpsc::Receiver<(usize, Vec<Fr>)>,
