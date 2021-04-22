@@ -41,6 +41,11 @@ use crate::{
     },
 };
 
+pub const GIT_VERSION: &str = git_version::git_version!(
+    args = ["--abbrev=40", "--always", "--dirty=-modified"],
+    prefix = "git:"
+);
+
 #[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
@@ -201,7 +206,7 @@ where
     R: AsRef<Path>,
     S: AsRef<Path>,
 {
-    info!("seal_pre_commit_phase2:start");
+    info!("{:?}: p2 git-version: {}", replica_path.as_ref(), GIT_VERSION);
 
     // Sanity check all input path types.
     ensure!(
