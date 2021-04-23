@@ -169,25 +169,36 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
 pub fn c2_stage1<Tree: 'static + MerkleTreeTrait>(
     circuits: Vec<StackedCircuit<'static, Tree, DefaultPieceHasher>>,
 ) -> Result<Vec<ProvingAssignment<Bls12>>, SynthesisError> {
-    circuits
-        .into_par_iter()
-        .enumerate()
-        .map(|(index, circuit)| -> Result<_, SynthesisError> {
-            let mut prover = ProvingAssignment::new();
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(circuits.len())
+        .build()
+        .expect("cannot initialize thread-pool")
+        .install(|| {
+            circuits
+                .into_par_iter()
+                .enumerate()
+                .map(|(index, circuit)| -> Result<_, SynthesisError> {
+                    let mut prover = ProvingAssignment::new();
 
-            prover.alloc_input(|| "", || Ok(Fr::one()))?;
+                    prover.alloc_input(|| "", || Ok(Fr::one()))?;
 
-            circuit.synthesize(&mut prover)?;
-            // stage1::circuit_synthesize(circuit, &mut prover)?;
+                    circuit.synthesize(&mut prover)?;
+                    // stage1::circuit_synthesize(circuit, &mut prover)?;
 
-            for i in 0..prover.input_assignment.len() {
-                prover.enforce(|| "", |lc| lc + Variable(Index::Input(i)), |lc| lc, |lc| lc);
-            }
+                    for i in 0..prover.input_assignment.len() {
+                        prover.enforce(
+                            || "",
+                            |lc| lc + Variable(Index::Input(i)),
+                            |lc| lc,
+                            |lc| lc,
+                        );
+                    }
 
-            info!("{:?}: done prover: {}", *SECTOR_ID, index + 1);
-            Ok(prover)
+                    info!("{:?}: done prover: {}", *SECTOR_ID, index + 1);
+                    Ok(prover)
+                })
+                .collect::<Result<Vec<_>, SynthesisError>>()
         })
-        .collect::<Result<Vec<_>, SynthesisError>>()
 }
 
 pub fn init<Tree: 'static + MerkleTreeTrait>(

@@ -2,7 +2,6 @@ use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
-use std::sync::{Arc, MutexGuard};
 
 use anyhow::{Context, Result};
 use byte_slice_cast::*;
@@ -244,7 +243,7 @@ fn create_layer_labels(
     thread::scope(|s| {
         let mut runners = Vec::with_capacity(num_producers);
 
-        for i in 0..num_producers {
+        for _ in 0..num_producers {
             let layer_labels = &layer_labels;
             let exp_labels = exp_labels.as_ref();
             let cur_producer = &cur_producer;

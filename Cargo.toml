@@ -2,13 +2,8 @@
 
 members = [
   "filecoin-proofs",
-  "storage-proofs",
-  "storage-proofs/core",
-  "storage-proofs/porep",
-  "storage-proofs/post",
-  "fil-proofs-tooling",
-  "sha2raw"
 ]
 
 [patch.crates-io]
 bellperson = { path = "../my-bellman" }
+neptune = { path = "../my-neptune" }
