@@ -1030,31 +1030,21 @@ where
     fs::metadata(&in_path)
         .with_context(|| format!("could not read in_path={:?})", in_path.as_ref().display()))?;
 
-    fs::metadata(&out_path)
-        .with_context(|| format!("could not read out_path={:?}", out_path.as_ref().display()))?;
-
     // Copy unsealed data to output location, where it will be sealed in place.
-    fs::copy(&in_path, &out_path).with_context(|| {
-        format!(
-            "could not copy in_path={:?} to out_path={:?}",
-            in_path.as_ref().display(),
-            out_path.as_ref().display()
-        )
-    })?;
 
     let f_data = OpenOptions::new()
         .read(true)
         .write(true)
-        .open(&out_path)
-        .with_context(|| format!("could not open out_path={:?}", out_path.as_ref().display()))?;
+        .open(&in_path)
+        .with_context(|| format!("could not open out_path={:?}", in_path.as_ref().display()))?;
 
     // Zero-pad the data to the requested size by extending the underlying file if needed.
     f_data.set_len(sector_bytes as u64)?;
 
     let data = unsafe {
         MmapOptions::new()
-            .map_mut(&f_data)
-            .with_context(|| format!("could not mmap out_path={:?}", out_path.as_ref().display()))?
+            .map(&f_data)
+            .with_context(|| format!("could not mmap out_path={:?}", in_path.as_ref().display()))?
     };
 
     let compound_setup_params = compound_proof::SetupParams {
