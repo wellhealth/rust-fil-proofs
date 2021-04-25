@@ -860,14 +860,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             &configs,
             &replica_config,
         )
-        // Self::generate_tree_r_last_gpu::<TreeArity>(
-        // data,
-        // node_count,
-        // tree_count,
-        // tree_r_last_config,
-        // replica_path,
-        // labels,
-        // )
     }
 
     #[allow(dead_code)]
