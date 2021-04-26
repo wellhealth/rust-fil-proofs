@@ -111,6 +111,23 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
     res
 }
 
+
+pub fn unbind_core() -> Result<()> {
+    let status = std::process::Command::new("hwloc-bind")
+        .arg("--tid")
+        .arg(gettid::gettid().to_string())
+        .arg("all")
+        .status()
+        .context("cannot execute program hwloc-bind")?
+        .code()
+        .context("hwloc-bind crashed")?;
+
+    if status != 0 {
+        bail!("hwloc-bind returned {}", status);
+    }
+    Ok(())
+}
+
 pub fn bind_core(index: u32) -> Result<()> {
     let status = std::process::Command::new("hwloc-bind")
         .arg("--tid")

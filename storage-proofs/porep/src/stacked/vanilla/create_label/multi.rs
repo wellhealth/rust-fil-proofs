@@ -6,8 +6,8 @@ use super::super::{
     proof::LayerState,
     utils::*,
 };
-use crate::stacked::vanilla::cores::bind_core;
 use crate::stacked::vanilla::cores::get_l3_index;
+use crate::stacked::vanilla::cores::{bind_core, unbind_core};
 use anyhow::{Context, Result};
 use byte_slice_cast::*;
 use crossbeam::thread;
@@ -18,6 +18,7 @@ use digest::generic_array::{
 use log::*;
 use mapr::MmapMut;
 use merkletree::store::{DiskStore, StoreConfig};
+use scopeguard::defer;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
@@ -259,6 +260,14 @@ fn create_layer_labels(
                     bind_core(*i)?;
                 }
 
+                defer!(if let Err(e) = unbind_core() {
+                    error!(
+                        "cannot unbind core for thread: {}, error: {:?}",
+                        gettid::gettid(),
+                        e
+                    )
+                });
+
                 create_label_runner(
                     parents_cache,
                     layer_labels,
@@ -437,7 +446,13 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     if let Some(x) = l3_index.as_ref() {
         bind_core(x.get_main())?;
     }
-    // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
+    defer!(if let Err(e) = unbind_core() {
+        error!(
+            "cannot unbind core for thread: {}, error: {:?}",
+            gettid::gettid(),
+            e
+        )
+    });
 
     // NOTE: this means we currently keep 2x sector size around, to improve speed
     let (parents_cache, mut layer_labels, exp_labels) = setup_create_label_memory(
