@@ -439,7 +439,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
 
     let default_cache_size = DEGREE * 4 * cache_window_nodes;
 
-    // yangdonglin
+
     let l3_index = get_l3_index();
     info!("{:?}: L3 index: {:?}", sector_id, l3_index);
 

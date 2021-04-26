@@ -28,19 +28,24 @@ impl Drop for L3Index {
         L3_TOPOLOGY.lock().unwrap().push(v);
     }
 }
+
 pub fn get_l3_index() -> Option<L3Index> {
     let mut topo = L3_TOPOLOGY.lock().unwrap();
+
     if topo.is_empty() {
         None
     } else {
         Some(L3Index(topo.remove(0)))
     }
 }
+
 pub fn get_l3_topo() -> Vec<Vec<u32>> {
     let hwloc_info = std::process::Command::new("hwloc-info")
         .output()
         .ok()
-        .and_then(|x| String::from_utf8(x.stdout).ok())
+        .map(|x| x.stdout)
+        .map(String::from_utf8)
+        .and_then(Result::ok)
         .unwrap_or_else(|| {
             error!("cannot get info from hwloc-info");
             std::process::exit(255)
