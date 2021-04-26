@@ -526,7 +526,10 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                 s.spawn({
                     let tx = tx.clone();
                     move |_| {
-                        info!("{:?}:storing labels on disk", sector_id);
+                        info!(
+                            "{:?}:storing labels on disk for layer: {}",
+                            sector_id, layer_config.id
+                        );
                         if let Err(e) =
                             write_layer(sector_id, &exp_labels.read().unwrap(), &layer_config)
                         {
