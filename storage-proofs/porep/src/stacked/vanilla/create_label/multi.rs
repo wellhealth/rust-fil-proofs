@@ -617,8 +617,6 @@ pub fn create_labels_for_decoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
 
     let default_cache_size = DEGREE * 4 * cache_window_nodes;
 
-    // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
-
     // NOTE: this means we currently keep 2x sector size around, to improve speed
     let (parents_cache, mut layer_labels, mut exp_labels) = setup_create_label_memory(
         sector_size,
