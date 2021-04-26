@@ -94,6 +94,7 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
             .collect();
         task_cores.push(core_groups);
     }
+    let task_cores = task_cores;
 
     if task_cores.is_empty() || task_cores[0].is_empty() {
         return Default::default();
@@ -110,7 +111,6 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
     info!("L3 array: {:?}", res);
     res
 }
-
 
 pub fn unbind_core() -> Result<()> {
     let status = std::process::Command::new("hwloc-bind")
