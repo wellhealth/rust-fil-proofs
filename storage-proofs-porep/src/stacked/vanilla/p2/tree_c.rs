@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
@@ -442,7 +443,11 @@ where
     match res {
         Ok(Ok(_)) => Ok(()),
         Ok(Err(e)) => Err(e),
-        Err(_) => bail!("{:?} collect_and_persist_tree_c panic", replica_path),
+        Err(e) => Err(anyhow!(
+            "{:?} collect_and_persist_tree_c panic: {:?}",
+            replica_path,
+            e
+        )),
     }
 }
 
