@@ -113,6 +113,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
         info!("{:?}", *C2_RANDOM_FACTOR);
         C2_RANDOM_FACTOR.clone()
     } else {
+        info!("self generated random factor");
         (0..circuits.len())
             .map(|_| (Fr::random(&mut rng), Fr::random(&mut rng)))
             .unzip()
