@@ -46,6 +46,7 @@ use crate::types::{
 };
 
 pub const SHENSUANYUN_GPU_INDEX: &str = "SHENSUANYUN_GPU_INDEX";
+pub const TREE_INDEX: &str = "SHENSUANYUN_GPU_INDEX";
 
 pub const GIT_VERSION: &str = git_version::git_version!(
     args = ["--abbrev=40", "--always", "--dirty=-modified"],
@@ -1096,29 +1097,27 @@ where
         let comm_d_root: Fr = data_tree.root().into();
         let comm_d = commitment_from_fr(comm_d_root);
 
-        //利用unsealed文件，生成unsealed.index文件
-        let filename = "tree.index";
-        let new_path = in_path.as_ref().with_file_name(filename);
-        info!("newPath is {:?}", new_path);
-        //创建文件并保存中间结果
+        let tree_index = in_path.as_ref().with_file_name(TREE_INDEX);
+
+        info!("tree-index path:{:?}", tree_index);
+
         let mut outputfile = OpenOptions::new()
             .create(true)
             .write(true)
-            .open(new_path)
+            .open(tree_index)
             .unwrap();
-        //保存comm_d数据
-        outputfile.write_all(&comm_d).unwrap();
-        //保存data_tree.len() 数据
-        unsafe {
-            let lensize = data_tree.len() as u64;
-            let treelen = std::mem::transmute::<u64, [u8; 8]>(lensize);
-            outputfile.write_all(&treelen).unwrap();
-        }
+        outputfile
+            .write_all(&comm_d)
+            .context("cannot write comm_d to tree-index")?;
+        outputfile
+            .write_all(&(data_tree.len() as u64).to_le_bytes())
+            .context("cannot write tree length to tree-index")?;
+
         config.size = Some(data_tree.len());
 
-        println!("write seal_pre_commit_phase1_tree comm_d is {:?}", comm_d);
+        info!("write seal_pre_commit_phase1_tree comm_d is {:?}", comm_d);
 
-        println!("config is {:?}", config);
+        info!("config is {:?}", config);
 
         drop(data_tree);
 
@@ -1179,20 +1178,6 @@ where
     info!("{:?}: p1 git-version: {}", sector_id, &*GIT_VERSION);
 
     info!("seal_pre_commit_phase1_layer:start: {:?}", sector_id);
-    // Sanity check all input path types.
-    /*    ensure!(
-        metadata(in_path.as_ref())?.is_file(),
-        "in_path must be a file"
-    );
-    ensure!(
-        metadata(out_path.as_ref())?.is_file(),
-        "out_path must be a file"
-    );
-    ensure!(
-        metadata(cache_path.as_ref())?.is_dir(),
-        "cache_path must be a directory"
-    );*/
-
     let compound_setup_params = compound_proof::SetupParams {
         vanilla_params: setup_params(
             PaddedBytesAmount::from(porep_config),
@@ -1221,21 +1206,17 @@ where
     //从文件中读取treed生成的数据用于layer计算
     //config.size = Some(127);
     //利用unsealed文件，生成unsealed.index文件
-    let filename = "tree.index";
-    let new_path = in_path.as_ref().with_file_name(filename);
-    println!("newPath is {:?}", new_path);
+    let new_path = in_path.as_ref().with_file_name(TREE_INDEX);
+    println!("tree-index: {:?}", new_path);
 
     let mut comm_d: [u8; 32] = [0; 32];
-    unsafe {
-        let mut outputfile = OpenOptions::new().read(true).open(new_path).unwrap();
-        outputfile.read_exact(&mut comm_d).unwrap();
-        //读取data_tree.len 数据
+    let mut outputfile = OpenOptions::new().read(true).open(new_path).unwrap();
+    outputfile.read_exact(&mut comm_d).unwrap();
+    //读取data_tree.len 数据
 
-        let mut treelen: [u8; 8] = [0; 8];
-        outputfile.read_exact(&mut treelen).unwrap();
-        let lensize = std::mem::transmute::<[u8; 8], u64>(treelen);
-        config.size = Some(lensize as usize);
-    }
+    let mut treelen: [u8; 8] = [0; 8];
+    outputfile.read_exact(&mut treelen).unwrap();
+    config.size = Some(u64::from_le_bytes(treelen) as usize);
     println!("read seal_pre_commit_phase1_layer comm_d is {:?}", comm_d);
     println!("{:?}", config);
 
