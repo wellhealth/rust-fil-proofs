@@ -1149,7 +1149,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
     /// Phase1 of replication.
     pub fn replicate_phase1(
-        pp: &'a PublicParams<Tree>,
+        pp: &PublicParams<Tree>,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
         sector_id: SectorId,

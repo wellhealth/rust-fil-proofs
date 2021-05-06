@@ -439,12 +439,11 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
 
     let default_cache_size = DEGREE * 4 * cache_window_nodes;
 
-
     let l3_index = get_l3_index();
     info!("{:?}: L3 index: {:?}", sector_id, l3_index);
 
     if let Some(x) = l3_index.as_ref() {
-        bind_core(x.get_main())?;
+        bind_core(x[0])?;
     }
     defer!(if let Err(e) = unbind_core() {
         error!(
@@ -506,7 +505,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                     },
                     node_count,
                     layer as u32,
-                    l3_index.as_ref().map(|x| x.get_rest()).unwrap_or_default(),
+                    l3_index.as_ref().map(|x| &x[1..]).unwrap_or_default(),
                     sector_id,
                 )?;
                 drop(exp);

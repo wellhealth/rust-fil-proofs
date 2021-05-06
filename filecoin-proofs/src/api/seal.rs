@@ -1217,6 +1217,7 @@ where
     let mut treelen: [u8; 8] = [0; 8];
     outputfile.read_exact(&mut treelen).unwrap();
     config.size = Some(u64::from_le_bytes(treelen) as usize);
+
     println!("read seal_pre_commit_phase1_layer comm_d is {:?}", comm_d);
     println!("{:?}", config);
 
@@ -1261,21 +1262,6 @@ lazy_static::lazy_static! {
 }
 
 pub fn select_gpu_device() -> Option<usize> {
-    /*
-    let key = "LOTUS_LOCAL_DEBUG";
-
-    match std::env::var(key) {
-         Ok(_val) => {
-             return Some(0);
-         },
-         Err(_e) => {},
-    }*/
-
-    /*    if let _val = std::env::var(key){
-        info!("-----------------------------------------LOTUS_LOCAL_DEBUG");
-        Some(0)
-    }*/
-
     if bellperson::gpu::gpu_count() == 0 {
         Some(0)
     } else {
