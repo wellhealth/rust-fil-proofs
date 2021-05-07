@@ -1,17 +1,15 @@
-use std::collections::VecDeque;
 use std::fs::{self, metadata, File, OpenOptions};
 use std::io::prelude::*;
 use std::marker::PhantomData;
 use std::panic::AssertUnwindSafe;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
 use bellperson::bls::Fr;
 use bincode::{deserialize, serialize};
 use log::{info, trace};
 use memmap::MmapOptions;
-use merkletree::store::{DiskStore, Store, StoreConfig};
-use std::sync::Mutex;
+use merkletree::store::StoreConfig;
 use storage_proofs::cache_key::CacheKey;
 use storage_proofs::compound_proof::{self, CompoundProof};
 use storage_proofs::drgraph::Graph;
@@ -45,8 +43,7 @@ use crate::types::{
     SectorSize, Ticket, BINARY_ARITY,
 };
 
-pub const SHENSUANYUN_GPU_INDEX: &str = "SHENSUANYUN_GPU_INDEX";
-pub const TREE_INDEX: &str = "SHENSUANYUN_GPU_INDEX";
+pub const TREE_INDEX: &str = "tree.index";
 
 pub const GIT_VERSION: &str = git_version::git_version!(
     args = ["--abbrev=40", "--always", "--dirty=-modified"],
@@ -226,173 +223,6 @@ where
     Ok(out)
 }
 
-pub fn seal_pre_commit_phase2<R, S, Tree: 'static + MerkleTreeTrait>(
-    porep_config: PoRepConfig,
-    phase1_output: SealPreCommitPhase1Output<Tree>,
-    cache_path: S,
-    replica_path: R,
-) -> Result<SealPreCommitOutput>
-where
-    R: AsRef<Path>,
-    S: AsRef<Path>,
-{
-    info!("{:?}: first log for p2", replica_path.as_ref());
-    super::process::p2(porep_config, phase1_output, cache_path, replica_path)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn official_p2<R, S, Tree: 'static + MerkleTreeTrait>(
-    porep_config: PoRepConfig,
-    phase1_output: SealPreCommitPhase1Output<Tree>,
-    cache_path: S,
-    replica_path: R,
-) -> Result<SealPreCommitOutput>
-where
-    R: AsRef<Path>,
-    S: AsRef<Path>,
-{
-    info!("seal_pre_commit_phase2:start");
-
-    // Sanity check all input path types.
-    ensure!(
-        metadata(cache_path.as_ref())?.is_dir(),
-        "cache_path must be a directory"
-    );
-    ensure!(
-        metadata(replica_path.as_ref())?.is_file(),
-        "replica_path must be a file"
-    );
-
-    let SealPreCommitPhase1Output {
-        mut labels,
-        mut config,
-        comm_d,
-        ..
-    } = phase1_output;
-
-    labels.update_root(cache_path.as_ref());
-    config.path = cache_path.as_ref().into();
-
-    let f_data = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&replica_path)
-        .with_context(|| {
-            format!(
-                "could not open replica_path={:?}",
-                replica_path.as_ref().display()
-            )
-        })?;
-    let data = unsafe {
-        MmapOptions::new().map_mut(&f_data).with_context(|| {
-            format!(
-                "could not mmap replica_path={:?}",
-                replica_path.as_ref().display()
-            )
-        })?
-    };
-    let data: storage_proofs::Data<'_> = (data, PathBuf::from(replica_path.as_ref())).into();
-
-    // Load data tree from disk
-    let data_tree = {
-        let base_tree_size = get_base_tree_size::<DefaultBinaryTree>(porep_config.sector_size)?;
-        let base_tree_leafs = get_base_tree_leafs::<DefaultBinaryTree>(base_tree_size)?;
-
-        trace!(
-            "seal phase 2: base tree size {}, base tree leafs {}, rows to discard {}",
-            base_tree_size,
-            base_tree_leafs,
-            default_rows_to_discard(base_tree_leafs, BINARY_ARITY)
-        );
-        ensure!(
-            config.rows_to_discard == default_rows_to_discard(base_tree_leafs, BINARY_ARITY),
-            "Invalid cache size specified"
-        );
-
-        let store: DiskStore<DefaultPieceDomain> =
-            DiskStore::new_from_disk(base_tree_size, BINARY_ARITY, &config)?;
-        BinaryMerkleTree::<DefaultPieceHasher>::from_data_store(store, base_tree_leafs)?
-    };
-
-    let compound_setup_params = compound_proof::SetupParams {
-        vanilla_params: setup_params(
-            PaddedBytesAmount::from(porep_config),
-            usize::from(PoRepProofPartitions::from(porep_config)),
-            porep_config.porep_id,
-        )?,
-        partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
-        priority: false,
-    };
-
-    let compound_public_params = <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
-        StackedDrg<Tree, DefaultPieceHasher>,
-        _,
-    >>::setup(&compound_setup_params)?;
-
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //select gpu index
-
-    let gpu_index = std::env::var(SHENSUANYUN_GPU_INDEX)
-        .unwrap_or_else(|_| "0".to_string())
-        .parse()
-        .with_context(|| format!("{:?}: wrong gpu index", replica_path.as_ref(),))?;
-
-    info!("select gpu index: {}", gpu_index);
-
-    defer!({
-        info!("release gpu index: {}", gpu_index);
-        release_gpu_device(gpu_index);
-    });
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        std::panic::set_hook(Box::new(|_| {
-            let bt = backtrace::Backtrace::new();
-            info!("panic occured, backtrace: {:?}", bt);
-        }));
-        StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
-            &compound_public_params.vanilla_params,
-            labels,
-            data,
-            data_tree,
-            config,
-            replica_path.as_ref().to_path_buf(),
-            gpu_index,
-        )
-    }));
-
-    let (tau, (p_aux, t_aux)) = match result {
-        Ok(r) => r?,
-        Err(e) => {
-            info!("{:?}: p2 panic, error: {:?}", replica_path.as_ref(), e);
-            panic!("error: {:?}", e);
-        }
-    };
-
-    let comm_r = commitment_from_fr(tau.comm_r.into());
-
-    // Persist p_aux and t_aux here
-    let p_aux_path = cache_path.as_ref().join(CacheKey::PAux.to_string());
-    let mut f_p_aux = File::create(&p_aux_path)
-        .with_context(|| format!("could not create file p_aux={:?}", p_aux_path))?;
-    let p_aux_bytes = serialize(&p_aux)?;
-    f_p_aux
-        .write_all(&p_aux_bytes)
-        .with_context(|| format!("could not write to file p_aux={:?}", p_aux_path))?;
-
-    let t_aux_path = cache_path.as_ref().join(CacheKey::TAux.to_string());
-    let mut f_t_aux = File::create(&t_aux_path)
-        .with_context(|| format!("could not create file t_aux={:?}", t_aux_path))?;
-    let t_aux_bytes = serialize(&t_aux)?;
-    f_t_aux
-        .write_all(&t_aux_bytes)
-        .with_context(|| format!("could not write to file t_aux={:?}", t_aux_path))?;
-
-    let out = SealPreCommitOutput { comm_r, comm_d };
-
-    info!("seal_pre_commit_phase2:finish");
-    Ok(out)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
@@ -520,16 +350,6 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     Ok(out)
 }
 
-use scopeguard::defer;
-pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
-    porep_config: PoRepConfig,
-    phase1_output: SealCommitPhase1Output<Tree>,
-    prover_id: ProverId,
-    sector_id: SectorId,
-) -> Result<SealCommitOutput> {
-    std::env::set_var("SECTOR_ID", sector_id.0.to_string());
-    super::process::c2(porep_config, phase1_output, prover_id, sector_id)
-}
 
 #[allow(clippy::too_many_arguments)]
 pub fn official_c2<Tree: 'static + MerkleTreeTrait>(
@@ -539,19 +359,6 @@ pub fn official_c2<Tree: 'static + MerkleTreeTrait>(
     sector_id: SectorId,
 ) -> Result<SealCommitOutput> {
     info!("seal_commit_phase2:start: {:?}, ", sector_id);
-
-    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //select gpu index
-    let gpu_index = std::env::var(SHENSUANYUN_GPU_INDEX)
-        .unwrap_or_else(|_| "0".to_string())
-        .parse()
-        .with_context(|| format!("{:?}: wrong gpu index", sector_id))?;
-    log::info!("select gpu index: {}", gpu_index);
-
-    defer! {
-        log::info!("release gpu index: {}", gpu_index);
-        release_gpu_device(gpu_index);
-    }
 
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let SealCommitPhase1Output {
@@ -609,7 +416,6 @@ pub fn official_c2<Tree: 'static + MerkleTreeTrait>(
             &compound_public_params.vanilla_params,
             &groth_params,
             compound_public_params.priority,
-            gpu_index,
         )?;
         info!("snark_proof:finish");
 
@@ -688,7 +494,6 @@ pub fn verify_seal_inner<Tree: 'static + MerkleTreeTrait>(
     ticket: Ticket,
     seed: Ticket,
     proof_vec: &[u8],
-    gpu_index: usize,
 ) -> Result<bool> {
     info!("verify_seal:start: {:?}", sector_id);
     ensure!(comm_d_in != [0; 32], "Invalid all zero commitment (comm_d)");
@@ -754,7 +559,6 @@ pub fn verify_seal_inner<Tree: 'static + MerkleTreeTrait>(
                     .get(&u64::from(SectorSize::from(porep_config)))
                     .expect("unknown sector size") as usize,
             },
-            gpu_index,
         )
     };
 
@@ -784,9 +588,7 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     ticket: Ticket,
     seed: Ticket,
     proof_vec: &[u8],
-    //gpu_index:usize,
 ) -> Result<bool> {
-    let gpu_index = 0;
     verify_seal_inner::<Tree>(
         porep_config,
         comm_r_in,
@@ -796,7 +598,6 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
         ticket,
         seed,
         proof_vec,
-        gpu_index,
     )
 }
 
@@ -823,7 +624,6 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
     seeds: &[Ticket],
     proof_vecs: &[&[u8]],
 ) -> Result<bool> {
-    let gpu_index: usize = 0;
     info!("verify_batch_seal:start");
     ensure!(!comm_r_ins.is_empty(), "Cannot prove empty batch");
     let l = comm_r_ins.len();
@@ -913,7 +713,6 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
                 .get(&u64::from(SectorSize::from(porep_config)))
                 .expect("unknown sector size") as usize,
         },
-        gpu_index,
     )
     .map_err(Into::into);
 
@@ -925,10 +724,9 @@ pub fn fauxrep<R: AsRef<Path>, S: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
     out_path: S,
-    gpu_index: usize,
 ) -> Result<Commitment> {
     let mut rng = rand::thread_rng();
-    fauxrep_aux::<_, R, S, Tree>(&mut rng, porep_config, cache_path, out_path, gpu_index)
+    fauxrep_aux::<_, R, S, Tree>(&mut rng, porep_config, cache_path, out_path)
 }
 
 pub fn fauxrep_aux<
@@ -941,7 +739,6 @@ pub fn fauxrep_aux<
     porep_config: PoRepConfig,
     cache_path: R,
     out_path: S,
-    gpu_index: usize,
 ) -> Result<Commitment> {
     let sector_bytes = PaddedBytesAmount::from(porep_config).0;
 
@@ -957,7 +754,6 @@ pub fn fauxrep_aux<
         out_path,
         &cache_path,
         sector_bytes as usize,
-        gpu_index,
     )?;
 
     let p_aux_path = cache_path.as_ref().join(CacheKey::PAux.to_string());
@@ -1254,26 +1050,4 @@ where
     };
     info!("seal_pre_commit_phase1_layer:finish: {:?}", sector_id);
     Ok(out)
-}
-
-#[cfg(feature = "gpu")]
-lazy_static::lazy_static! {
-    pub static ref GPU_NVIDIA_DEVICES_QUEUE:  Mutex<VecDeque<usize>> = Mutex::new((0..bellperson::gpu::gpu_count()).collect());
-}
-
-pub fn select_gpu_device() -> Option<usize> {
-    if bellperson::gpu::gpu_count() == 0 {
-        Some(0)
-    } else {
-        GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap().pop_front()
-    }
-}
-
-pub fn release_gpu_device(gpu_index: usize) {
-    if bellperson::gpu::gpu_count() > 0 {
-        GPU_NVIDIA_DEVICES_QUEUE
-            .lock()
-            .unwrap()
-            .push_back(gpu_index)
-    }
 }

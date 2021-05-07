@@ -15,7 +15,3 @@ members = [
 #bellperson = { path = "/home/gzhao/go/src/github.com/filecoin-project/my/my-bellman" }
 #neptune = { path = "/home/gzhao/go/src/github.com/filecoin-project/my/my-neptune" }
 
-[patch.crates-io]
-bellperson = { path = "../my-bellman" }
-neptune = { path = "../my-neptune" }
-phase21 = { git = "https://github.com/Krysme/phase2" }
