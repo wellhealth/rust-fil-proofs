@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{Commitment, UnpaddedBytesAmount};
 
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PieceInfo {
     pub commitment: Commitment,
     pub size: UnpaddedBytesAmount,

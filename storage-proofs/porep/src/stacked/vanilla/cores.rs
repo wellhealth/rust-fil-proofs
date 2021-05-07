@@ -10,7 +10,7 @@ lazy_static! {
     static ref L3_TOPOLOGY: Mutex<Vec<Vec<u32>>> = Mutex::new(get_l3_topo());
 }
 #[derive(Debug, Default)]
-pub struct L3Index(Vec<u32>);
+pub struct L3Index(pub Vec<u32>);
 
 impl L3Index {
     pub fn get_main(&self) -> u32 {

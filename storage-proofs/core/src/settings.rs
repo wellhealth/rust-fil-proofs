@@ -43,6 +43,7 @@ pub struct Settings {
     pub param_folder: String,
     pub program_folder: String,
     pub c2_program_name: String,
+    pub p1_program_name: String,
     pub p2_program_name: String,
     pub window_post_program_name: String,
     pub window_post_subprocess: bool,
@@ -81,6 +82,7 @@ impl Default for Settings {
             window_post_subprocess: false,
             cores_for_c2: num_cpus::get() as u32 / 2,
             c2_cpu_hs: 5,
+            p1_program_name: "lotus-p1".to_owned(),
         }
     }
 }
