@@ -2,8 +2,14 @@ use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
 
+
+/// Get L3 indexes from argument passwd from parent process
 pub fn get_l3_index() -> Option<Vec<u32>> {
-    Some(serde_json::from_str(&std::env::args().nth(3)?).ok()?)
+    std::env::args()
+        .nth(4)?
+        .split(',')
+        .map(|x| x.parse().ok())
+        .collect()
 }
 
 pub fn unbind_core() -> Result<()> {
