@@ -493,7 +493,6 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                     sector_id, layer
                 );
                 let exp = exp_labels.read().unwrap();
-                // let exp_labels = exp_labels.as_slice_of::<u32>().unwrap();
                 create_layer_labels(
                     &parents_cache,
                     &replica_id.as_ref(),
@@ -505,7 +504,11 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                     },
                     node_count,
                     layer as u32,
-                    l3_index.as_ref().map(|x| &x[1..]).unwrap_or_default(),
+                    l3_index
+                        .as_ref()
+                        .and_then(|x| x.split_first())
+                        .map(|x| x.1)
+                        .unwrap_or_default(),
                     sector_id,
                 )?;
                 drop(exp);
