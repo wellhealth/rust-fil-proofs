@@ -271,7 +271,7 @@ pub fn init<Tree: 'static + MerkleTreeTrait>(
         .map(|(k, vanilla_proof)| {
             StackedCompound::<Tree, DefaultPieceHasher>::circuit(
                 &pub_in,
-                Default::default(),
+                (),
                 &vanilla_proof,
                 &pub_params,
                 Some(k),

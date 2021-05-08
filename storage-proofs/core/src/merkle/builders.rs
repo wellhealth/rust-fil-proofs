@@ -109,7 +109,7 @@ where
             Tree::Arity::to_usize(),
             configs[i].clone(),
         )?;
-        if let Some(lc_store) = Any::downcast_mut::<
+        if let Some(lc_store) = <dyn Any>::downcast_mut::<
             merkletree::store::LevelCacheStore<<Tree::Hasher as Hasher>::Domain, std::fs::File>,
         >(&mut store)
         {
@@ -424,7 +424,7 @@ where
             // Beware: evil dynamic downcasting RUST MAGIC down below.
             use std::any::Any;
 
-            if let Some(lc_tree) = Any::downcast_mut::<
+            if let Some(lc_tree) = <dyn Any>::downcast_mut::<
                 merkle::MerkleTree<
                     <Tree::Hasher as Hasher>::Domain,
                     <Tree::Hasher as Hasher>::Function,
