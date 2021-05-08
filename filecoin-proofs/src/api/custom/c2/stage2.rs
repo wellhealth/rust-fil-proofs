@@ -440,7 +440,7 @@ fn get_inputs(
     provers: &mut [ProvingAssignment<Bls12>],
     input_assignments: &[Arc<Vec<FrRepr>>],
     aux_assignments: &[Arc<Vec<FrRepr>>],
-    x: InputParams,
+    input: InputParams,
     kern: &mut Option<LockedMultiexpKernel<Bls12>>,
 ) -> std::result::Result<std::vec::Vec<Input>, SynthesisError> {
     let worker = Worker::new();
@@ -448,7 +448,7 @@ fn get_inputs(
         a: param_a,
         g1: param_bg1,
         g2: param_bg2,
-    } = x;
+    } = input;
 
     provers
         .iter_mut()
