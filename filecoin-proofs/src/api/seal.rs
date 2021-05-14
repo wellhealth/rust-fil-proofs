@@ -675,18 +675,15 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
     ensure!(l == seeds.len(), "Inconsistent inputs");
     ensure!(l == proof_vecs.len(), "Inconsistent inputs");
 
-    for comm_d_in in comm_d_ins {
-        ensure!(
-            comm_d_in != &[0; 32],
-            "Invalid all zero commitment (comm_d)"
-        );
-    }
-    for comm_r_in in comm_r_ins {
-        ensure!(
-            comm_r_in != &[0; 32],
-            "Invalid all zero commitment (comm_r)"
-        );
-    }
+    ensure!(
+        comm_d_ins.iter().all(|x| x != &[0; 32]),
+        "Invalid all zero commitment (comm_d)"
+    );
+
+    ensure!(
+        comm_r_ins.iter().all(|x| x != &[0; 32]),
+        "Invalid all zero commitment (comm_r)"
+    );
 
     let sector_bytes = PaddedBytesAmount::from(porep_config);
 
@@ -760,13 +757,18 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
     result
 }
 
-pub fn fauxrep<R: AsRef<Path>, S: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
+pub fn fauxrep<R, S, Tree>(
     porep_config: PoRepConfig,
     cache_path: R,
     out_path: S,
-) -> Result<Commitment> {
+) -> Result<Commitment>
+where
+    R: AsRef<Path>,
+    S: AsRef<Path>,
+    Tree: 'static + MerkleTreeTrait,
+{
     let mut rng = rand::thread_rng();
-    fauxrep_aux::<_, R, S, Tree>(&mut rng, porep_config, cache_path, out_path)
+    fauxrep_aux::<_, _, _, Tree>(&mut rng, porep_config, cache_path, out_path)
 }
 
 pub fn fauxrep_aux<

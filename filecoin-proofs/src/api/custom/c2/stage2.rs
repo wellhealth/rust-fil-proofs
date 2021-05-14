@@ -1,10 +1,10 @@
 use super::cpu_compute_exp;
-use crate::custom::c2::SECTOR_ID;
+use crate::custom::c2::{fft::MultiGpuDomain, SECTOR_ID};
 use anyhow::{ensure, Context, Result};
 use bellperson::{bls::G2Projective, groth16::Proof, multiexp::multiexp};
 use bellperson::{
     bls::{Bls12, Fr, FrRepr, G1Affine, G1Projective, G2Affine},
-    domain::{EvaluationDomain, Scalar},
+    domain::Scalar,
     gpu::{LockedFFTKernel, LockedMultiexpKernel},
     groth16::{MappedParameters, ParameterSource, ProvingAssignment},
     multicore::{Waiter, Worker},
@@ -23,9 +23,12 @@ use rayon::{
     },
     ThreadPool,
 };
-use std::sync::{
-    mpsc::{channel, sync_channel, Receiver, SyncSender},
-    Arc,
+use std::{
+    convert::TryFrom,
+    sync::{
+        mpsc::{channel, sync_channel, Receiver, SyncSender},
+        Arc,
+    },
 };
 use storage_proofs::settings::SETTINGS;
 
@@ -76,7 +79,6 @@ pub fn run(
         provers,
         params,
         log_d,
-        gpu_index,
         tx_param_h_cpu,
         tx_param_h_gpu,
         tx_h_cpu,
@@ -296,7 +298,6 @@ fn fft(
     provers: &mut [ProvingAssignment<Bls12>],
     params: &MappedParameters<Bls12>,
     log_d: usize,
-    gpu_index: usize,
     h_cpu_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
     h_gpu_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
     tx_h_cpu: SyncSender<Arc<Vec<FrRepr>>>,
@@ -309,24 +310,24 @@ fn fft(
         } else {
             h_index
         };
+        let mut fft_kern = (0..bellperson::gpu::gpu_count())
+            .map(|index| LockedFFTKernel::<Bls12>::new(log_d, false, index))
+            .collect::<Vec<_>>();
 
-        let mut fft_kern = Some(LockedFFTKernel::<Bls12>::new(log_d, false, gpu_index));
-
-        let (tx1, rx1) = channel::<(EvaluationDomain<Bls12, Scalar<Bls12>>, _, _)>();
+        let (tx1, rx1) = channel::<(MultiGpuDomain<Bls12, Scalar<Bls12>>, _, _)>();
 
         let (tx2, rx2) = channel();
-        let (tx3, rx3) = sync_channel::<EvaluationDomain<Bls12, Scalar<Bls12>>>(provers.len());
+        let (tx3, rx3) = sync_channel::<MultiGpuDomain<Bls12, Scalar<Bls12>>>(provers.len());
 
         s.spawn(move |_| {
-            let worker = Worker::new();
             for (index, (mut a, b, c)) in rx1.iter().enumerate() {
                 info!("{:?}: merge a, b, c. index: {}", *SECTOR_ID, index);
                 let t = std::time::Instant::now();
-                a.mul_assign(&worker, &b);
+                a.mul_assign(&b);
                 drop(b);
-                a.sub_assign(&worker, &c);
+                a.sub_assign(&c);
                 drop(c);
-                a.divide_by_z_on_coset(&worker);
+                a.divide_by_z_on_coset();
                 let _ = tx2.send((index, a));
                 info!("{:?}: merge: {:?}", *SECTOR_ID, t.elapsed());
             }
@@ -363,22 +364,22 @@ fn fft(
                     h_gpu_start.send(param_h).unwrap();
                 });
             }
-            let mut a = EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.a, Vec::new()))
-                .unwrap();
-            let mut b = EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.b, Vec::new()))
-                .unwrap();
-            let mut c = EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.c, Vec::new()))
-                .unwrap();
-            let worker = Worker::new();
 
-            b.ifft(&worker, &mut fft_kern).unwrap();
-            b.coset_fft(&worker, &mut fft_kern).unwrap();
+            let mut a =
+                MultiGpuDomain::try_from(std::mem::replace(&mut prover.a, Vec::new())).unwrap();
+            let mut b =
+                MultiGpuDomain::try_from(std::mem::replace(&mut prover.b, Vec::new())).unwrap();
+            let mut c =
+                MultiGpuDomain::try_from(std::mem::replace(&mut prover.c, Vec::new())).unwrap();
 
-            a.ifft(&worker, &mut fft_kern).unwrap();
-            a.coset_fft(&worker, &mut fft_kern).unwrap();
+            b.ifft(&mut fft_kern).unwrap();
+            b.coset_fft(&mut fft_kern).unwrap();
 
-            c.ifft(&worker, &mut fft_kern).unwrap();
-            c.coset_fft(&worker, &mut fft_kern).unwrap();
+            a.ifft(&mut fft_kern).unwrap();
+            a.coset_fft(&mut fft_kern).unwrap();
+
+            c.ifft(&mut fft_kern).unwrap();
+            c.coset_fft(&mut fft_kern).unwrap();
 
             tx1.send((a, b, c))
                 .with_context(|| format!("{:?}: cannot send abc to tx1", *SECTOR_ID))?;
@@ -400,12 +401,12 @@ fn fft(
 
 fn fft_icoset(
     index: usize,
-    mut a: EvaluationDomain<Bls12, Scalar<Bls12>>,
-    kern: &mut Option<LockedFFTKernel<Bls12>>,
-    tx: &SyncSender<EvaluationDomain<Bls12, Scalar<Bls12>>>,
+    mut a: MultiGpuDomain<Bls12, Scalar<Bls12>>,
+    kern: &mut [LockedFFTKernel<Bls12>],
+    tx: &SyncSender<MultiGpuDomain<Bls12, Scalar<Bls12>>>,
 ) {
     info!("{:?}, doing icoset_fft for a, index: {}", *SECTOR_ID, index);
-    a.icoset_fft(&Worker::new(), kern).unwrap();
+    a.icoset_fft(kern).unwrap();
     tx.send(a).unwrap();
 }
 

@@ -53,6 +53,8 @@ const GIT_VERSION: &str =
 // mod stage1;
 mod stage2;
 
+pub mod fft;
+
 lazy_static! {
     pub static ref SECTOR_ID: SectorId = SectorId::from(
         std::env::args()
