@@ -47,6 +47,10 @@ struct InputParams {
     g1: ((Arc<Vec<G1Affine>>, usize), (Arc<Vec<G1Affine>>, usize)),
     g2: ((Arc<Vec<G2Affine>>, usize), (Arc<Vec<G2Affine>>, usize)),
 }
+enum FftKernels {
+    Single(LockedFFTKernel<Bls12>),
+    Multi(Vec<LockedFFTKernel<Bls12>>),
+}
 
 pub fn run(
     provers: &mut [ProvingAssignment<Bls12>],
@@ -84,6 +88,7 @@ pub fn run(
         tx_h_cpu,
         tx_h_gpu,
         2,
+        gpu_index,
     )?;
 
     let mut multiexp_kern: Option<LockedMultiexpKernel<Bls12>> =
@@ -303,6 +308,7 @@ fn fft(
     tx_h_cpu: SyncSender<Arc<Vec<FrRepr>>>,
     tx_h_gpu: SyncSender<Arc<Vec<FrRepr>>>,
     h_index: usize,
+    gpu_index: usize,
 ) -> Result<()> {
     crossbeam::scope(|s| {
         let h_index = if h_index >= provers.len() {
@@ -310,9 +316,21 @@ fn fft(
         } else {
             h_index
         };
-        let mut fft_kern = (0..bellperson::gpu::gpu_count())
-            .map(|index| LockedFFTKernel::<Bls12>::new(log_d, false, index))
-            .collect::<Vec<_>>();
+
+        let mut fft_kern = if SETTINGS.c2_multi_fft {
+            FftKernels::Multi(
+                (0..bellperson::gpu::gpu_count())
+                    .map(|index| LockedFFTKernel::<Bls12>::new(log_d, false, index))
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            FftKernels::Single(LockedFFTKernel::<Bls12>::new(log_d, false, gpu_index))
+        };
+
+        let fft_kern = match &mut fft_kern {
+            FftKernels::Single(ref mut single) => std::slice::from_mut(single),
+            FftKernels::Multi(ref mut multi) => &mut multi[..],
+        };
 
         let (tx1, rx1) = channel::<(MultiGpuDomain<Bls12, Scalar<Bls12>>, _, _)>();
 
@@ -372,26 +390,26 @@ fn fft(
             let mut c =
                 MultiGpuDomain::try_from(std::mem::replace(&mut prover.c, Vec::new())).unwrap();
 
-            b.ifft(&mut fft_kern).unwrap();
-            b.coset_fft(&mut fft_kern).unwrap();
+            b.ifft(fft_kern).unwrap();
+            b.coset_fft(fft_kern).unwrap();
 
-            a.ifft(&mut fft_kern).unwrap();
-            a.coset_fft(&mut fft_kern).unwrap();
+            a.ifft(fft_kern).unwrap();
+            a.coset_fft(fft_kern).unwrap();
 
-            c.ifft(&mut fft_kern).unwrap();
-            c.coset_fft(&mut fft_kern).unwrap();
+            c.ifft(fft_kern).unwrap();
+            c.coset_fft(fft_kern).unwrap();
 
             tx1.send((a, b, c))
                 .with_context(|| format!("{:?}: cannot send abc to tx1", *SECTOR_ID))?;
 
             for (index, a) in rx2.try_iter() {
-                fft_icoset(index, a, &mut fft_kern, &tx3);
+                fft_icoset(index, a, fft_kern, &tx3);
             }
         }
         drop(tx1);
 
         for (index, a) in rx2.iter() {
-            fft_icoset(index, a, &mut fft_kern, &tx3);
+            fft_icoset(index, a, fft_kern, &tx3);
         }
 
         Ok(())

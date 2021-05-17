@@ -70,13 +70,6 @@ where
     E: Engine,
     G: Group<E>,
 {
-    pub fn fft(&mut self, kern: &mut [LockedFFTKernel<E>]) -> GPUResult<()> {
-        let a = &mut self.coeffs[..];
-        let omega = &self.omega;
-        let log_n = self.exp;
-
-        multi_gpu_fft(kern, a, omega, log_n)
-    }
     pub fn into_coeffs(self) -> Vec<G> {
         self.coeffs
     }
