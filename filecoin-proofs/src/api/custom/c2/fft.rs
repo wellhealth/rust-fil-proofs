@@ -2,7 +2,6 @@ use bellperson::{
     bls::Engine,
     domain::{Group, Scalar},
     gpu::{GPUError, GPUResult, LockedFFTKernel},
-    multicore::Worker,
     SynthesisError,
 };
 use ff::SqrtField;
@@ -170,8 +169,6 @@ where
         }
     };
 
-    let worker = Worker::new();
-
     let log_new_n = log_n - log_gpus;
     let mut tmp = vec![vec![T::group_zero(); 1 << log_new_n]; num_gpus];
     let new_omega = omega.pow(&[num_gpus as u64]);
@@ -206,20 +203,18 @@ where
     })
     .expect("crossbeam scope failure for multi-gpu FFT");
 
-    worker.scope(a.len(), |scope, chunk| {
-        let tmp = &tmp;
+    let chunk_size = a.len() / *bellperson::multicore::NUM_CPUS;
+    a.par_chunks_mut(chunk_size)
+        .enumerate()
+        .for_each(|(idx, a)| {
+            let mut idx = idx * chunk_size;
+            let mask = (1 << log_gpus) - 1;
+            for a in a {
+                *a = tmp[idx & mask][idx >> log_gpus];
+                idx += 1;
+            }
+        });
 
-        for (idx, a) in a.chunks_mut(chunk).enumerate() {
-            scope.spawn(move |_scope| {
-                let mut idx = idx * chunk;
-                let mask = (1 << log_gpus) - 1;
-                for a in a {
-                    *a = tmp[idx & mask][idx >> log_gpus];
-                    idx += 1;
-                }
-            });
-        }
-    });
 
     Ok(())
 }

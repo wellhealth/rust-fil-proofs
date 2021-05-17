@@ -7,7 +7,7 @@ use bellperson::{
     domain::Scalar,
     gpu::{LockedFFTKernel, LockedMultiexpKernel},
     groth16::{MappedParameters, ParameterSource, ProvingAssignment},
-    multicore::{Waiter, Worker},
+    multicore::Waiter,
     multiexp::{multiexp_full, multiexp_inner, multiexp_precompute, FullDensity},
     SynthesisError,
 };
@@ -203,7 +203,6 @@ fn ls_cpu(
     rx
 }
 
-#[allow(dead_code)]
 fn ls_gpu(
     aux_assignments: Vec<Arc<Vec<FrRepr>>>,
     param_l: (Arc<Vec<G1Affine>>, usize),
@@ -217,13 +216,7 @@ fn ls_gpu(
         .map({
             |(index, aux_assignment)| {
                 info!("start doing l_s:{}", index + 1);
-                let x = multiexp_full(
-                    &Worker::new(),
-                    param_l.clone(),
-                    FullDensity,
-                    aux_assignment,
-                    kern,
-                );
+                let x = multiexp_full(param_l.clone(), FullDensity, aux_assignment, kern);
                 info!("{:?}: l_s:{} finished", *SECTOR_ID, index + 1);
                 x
             }
@@ -244,12 +237,7 @@ fn hs_gpu(
     rx_h.into_iter()
         .enumerate()
         .inspect(|(index, _)| info!("{:?}: h-gpu started {}", *SECTOR_ID, index + 1))
-        .map(|(index, x)| {
-            (
-                index,
-                multiexp_full(&Worker::new(), param_h.clone(), FullDensity, x, kern),
-            )
-        })
+        .map(|(index, x)| (index, multiexp_full(param_h.clone(), FullDensity, x, kern)))
         .inspect(|(index, _)| info!("{:?}: h-gpu done {}", *SECTOR_ID, index + 1))
         .map(|(_, x)| x)
         .collect()
@@ -462,7 +450,6 @@ fn get_inputs(
     input: InputParams,
     kern: &mut Option<LockedMultiexpKernel<Bls12>>,
 ) -> std::result::Result<std::vec::Vec<Input>, SynthesisError> {
-    let worker = Worker::new();
     let InputParams {
         a: param_a,
         g1: param_bg1,
@@ -504,16 +491,10 @@ fn get_inputs(
                     }
                 });
 
-                let a_inputs = multiexp_full(
-                    &worker,
-                    a_inputs_source,
-                    FullDensity,
-                    input_assignment.clone(),
-                    kern,
-                );
+                let a_inputs =
+                    multiexp_full(a_inputs_source, FullDensity, input_assignment.clone(), kern);
 
                 let a_aux = multiexp_precompute(
-                    &worker,
                     a_aux_source,
                     a_aux_density,
                     aux_assignment.clone(),
@@ -523,10 +504,9 @@ fn get_inputs(
 
                 let b_input_density_total = b_input_density.get_total_density();
                 let b_g1_inputs_source = param_bg1.0.clone();
-                let b_g1_aux_source = ((param_bg1.1).0.clone(), b_input_density_total);
+                let b_g1_aux_source = (param_bg1.1 .0.clone(), b_input_density_total);
 
                 let b_g1_inputs = multiexp(
-                    &worker,
                     b_g1_inputs_source,
                     b_input_density.clone(),
                     input_assignment.clone(),
@@ -536,7 +516,6 @@ fn get_inputs(
                 let b_exps = Arc::new(aux_rx.recv().unwrap());
 
                 let b_g1_aux = multiexp_precompute(
-                    &worker,
                     b_g1_aux_source,
                     b_aux_density.clone(),
                     aux_assignment.clone(),
@@ -545,17 +524,15 @@ fn get_inputs(
                 );
 
                 let b_g2_inputs_source = param_bg2.0.clone();
-                let b_g2_aux_source = ((param_bg2.1).0.clone(), b_input_density_total);
+                let b_g2_aux_source = (param_bg2.1 .0.clone(), b_input_density_total);
 
                 let b_g2_inputs = multiexp(
-                    &worker,
                     b_g2_inputs_source,
                     b_input_density,
                     input_assignment.clone(),
                     kern,
                 );
                 let b_g2_aux = multiexp_precompute(
-                    &worker,
                     b_g2_aux_source,
                     b_aux_density,
                     aux_assignment.clone(),
