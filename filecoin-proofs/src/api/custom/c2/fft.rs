@@ -7,18 +7,33 @@ use bellperson::{
 use ff::SqrtField;
 use ff::{Field, PrimeField, ScalarEngine};
 use rayon::{
-    iter::{IndexedParallelIterator, ParallelIterator},
+    iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator},
     slice::{ParallelSlice, ParallelSliceMut},
 };
 use std::convert::{TryFrom, TryInto};
 
-pub struct MultiGpuDomain<E: ScalarEngine, G: Group<E>> {
+pub struct MultiGpuDomain<E, G>
+where
+    E: ScalarEngine,
+    G: Group<E>,
+{
     coeffs: Vec<G>,
     exp: u32,
     omega: E::Fr,
     omegainv: E::Fr,
     geninv: E::Fr,
     minv: E::Fr,
+}
+
+struct GpuFftIn<T, E>
+where
+    E: Engine,
+    T: Group<E>,
+{
+    a: Vec<T>,
+    omega: E::Fr,
+    log_n: u32,
+    chan: std::sync::mpsc::Sender<(Vec<T>, GPUResult<()>)>,
 }
 
 impl<E, G> TryFrom<Vec<G>> for MultiGpuDomain<E, G>
@@ -93,6 +108,7 @@ where
 
         Ok(())
     }
+
     pub fn coset_fft(&mut self, kern: &mut [LockedFFTKernel<E>]) -> GPUResult<()> {
         distribute_powers(&mut self.coeffs, E::Fr::multiplicative_generator());
         multi_gpu_fft(kern, &mut self.coeffs, &self.omega, self.exp)?;
@@ -170,38 +186,46 @@ where
     };
 
     let log_new_n = log_n - log_gpus;
-    let mut tmp = vec![vec![T::group_zero(); 1 << log_new_n]; num_gpus];
+    let mut buffer2d = vec![vec![T::group_zero(); 1 << log_new_n]; num_gpus];
     let new_omega = omega.pow(&[num_gpus as u64]);
 
-    crossbeam::scope(|s| {
-        let a = &*a;
+    buffer2d
+        .par_iter_mut()
+        .zip(kern.par_iter_mut())
+        .enumerate()
+        .for_each(|(gpu_index, (single_gpu_buffer, k))| {
+            // Shuffle into a sub-FFT
+            let omega_gpu = omega.pow(&[gpu_index as u64]);
+            let omega_step = omega.pow(&[(gpu_index as u64) << log_new_n]);
 
-        for (j, (tmp, k)) in tmp.iter_mut().zip(kern.iter_mut()).enumerate() {
-            s.spawn(move |_| {
-                // Shuffle into a sub-FFT
-                let omega_j = omega.pow(&[j as u64]);
-                let omega_step = omega.pow(&[(j as u64) << log_new_n]);
+            let chunk_size = single_gpu_buffer.len() / *bellperson::multicore::NUM_CPUS;
+            single_gpu_buffer
+                .par_chunks_mut(chunk_size)
+                .enumerate()
+                .for_each(|(index, chunk)| {
+                    let elt_gpu = omega_gpu.pow(&[(index * chunk_size) as u64]);
+                    let elt_step = omega_step.pow(&[(num_gpus * index * chunk_size) as u64]);
 
-                let mut elt = E::Fr::one();
-                // elt: omega_step ^ (num_cpus * i) * omega_j ^ i
-                for (i, tmp) in tmp.iter_mut().enumerate() {
-                    for s in 0..num_gpus {
-                        let idx = (i + (s << log_new_n)) % (1 << log_n);
-                        let mut t = a[idx];
-                        t.group_mul_assign(&elt);
-                        tmp.group_add_assign(&t);
-                        elt.mul_assign(&omega_step);
+                    let mut elt = E::Fr::one();
+                    elt.mul_assign(&elt_gpu);
+                    elt.mul_assign(&elt_step);
+
+                    for (chunk_index, sub_tmp) in chunk.iter_mut().enumerate() {
+                        let i = chunk_size * index + chunk_index;
+                        for s in 0..num_gpus {
+                            let idx = (i + (s << log_new_n)) % (1 << log_n);
+                            let mut t = a[idx];
+                            t.group_mul_assign(&elt);
+                            sub_tmp.group_add_assign(&t);
+                            elt.mul_assign(&omega_step);
+                        }
+                        elt.mul_assign(&omega_gpu);
                     }
-                    elt.mul_assign(&omega_j);
-                }
+                });
 
-                // Perform sub-FFT
-                k.with(|k| bellperson::domain::gpu_fft(k, tmp, &new_omega, log_new_n))
-                    .unwrap();
-            });
-        }
-    })
-    .expect("crossbeam scope failure for multi-gpu FFT");
+            k.with(|k| bellperson::domain::gpu_fft(k, single_gpu_buffer, &new_omega, log_new_n))
+                .unwrap();
+        });
 
     let chunk_size = a.len() / *bellperson::multicore::NUM_CPUS;
     a.par_chunks_mut(chunk_size)
@@ -210,11 +234,10 @@ where
             let mut idx = idx * chunk_size;
             let mask = (1 << log_gpus) - 1;
             for a in a {
-                *a = tmp[idx & mask][idx >> log_gpus];
+                *a = buffer2d[idx & mask][idx >> log_gpus];
                 idx += 1;
             }
         });
-
 
     Ok(())
 }
@@ -245,4 +268,64 @@ where
     tmp.sub_assign(&Fr::one());
 
     tmp
+}
+
+fn gpu_service<E, T>(mut kern: LockedFFTKernel<E>, rx: crossbeam::channel::Receiver<GpuFftIn<T, E>>)
+where
+    E: Engine,
+    T: Group<E>,
+{
+    while let Ok(GpuFftIn::<T, E> {
+        mut a,
+        omega,
+        log_n,
+        chan,
+    }) = rx.recv()
+    {
+        let e = kern.with(|k| bellperson::domain::gpu_fft(k, &mut a, &omega, log_n));
+
+        chan.send((a, e)).expect("cannot send fft result back");
+    }
+}
+
+fn create_fft_handler<E, T>(gpu_count: u32) -> crossbeam::channel::Sender<GpuFftIn<T, E>>
+where
+    E: Engine,
+    T: Group<E> + 'static,
+{
+    let (tx, rx) = crossbeam::channel::unbounded();
+    for kern in (0..bellperson::gpu::gpu_count())
+        .into_iter()
+        .map(|index| LockedFFTKernel::<E>::new(0 /*unused*/, false, index))
+    {
+        let rx = rx.clone();
+        std::thread::spawn(move || gpu_service(kern, rx));
+    }
+    tx
+}
+
+fn gpu_fft_queued<E, T>(
+    tx: crossbeam::channel::Sender<GpuFftIn<T, E>>,
+    buffer: &mut Vec<T>,
+    omega: E::Fr,
+    log_n: u32,
+) -> GPUResult<()>
+where
+    E: Engine,
+    T: Group<E>,
+{
+    let (tx_res, rx_res) = std::sync::mpsc::channel();
+    let tmp_buf = std::mem::take(buffer);
+
+    tx.send(GpuFftIn {
+        a: tmp_buf,
+        omega,
+        log_n,
+        chan: tx_res,
+    })
+    .expect("cannot send fft input to gpu service");
+
+    let (mut tmp_buf, res) = rx_res.recv().expect("cannot receive fft output");
+    std::mem::swap(&mut tmp_buf, buffer);
+    res
 }

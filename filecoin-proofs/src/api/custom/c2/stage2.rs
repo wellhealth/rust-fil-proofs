@@ -307,7 +307,7 @@ fn fft(
 
         let mut fft_kern = if SETTINGS.c2_multi_fft {
             FftKernels::Multi(
-                (0..bellperson::gpu::gpu_count())
+                (0..bellperson::gpu::gpu_count()).into_par_iter()
                     .map(|index| LockedFFTKernel::<Bls12>::new(log_d, false, index))
                     .collect::<Vec<_>>(),
             )
