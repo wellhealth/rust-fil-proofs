@@ -33,7 +33,7 @@ where
     a: Vec<T>,
     omega: E::Fr,
     log_n: u32,
-    chan: std::sync::mpsc::Sender<(Vec<T>, GPUResult<()>)>,
+    tx_res: std::sync::mpsc::Sender<(Vec<T>, GPUResult<()>)>,
 }
 
 impl<E, G> TryFrom<Vec<G>> for MultiGpuDomain<E, G>
@@ -279,12 +279,12 @@ where
         mut a,
         omega,
         log_n,
-        chan,
+        tx_res,
     }) = rx.recv()
     {
         let e = kern.with(|k| bellperson::domain::gpu_fft(k, &mut a, &omega, log_n));
 
-        chan.send((a, e)).expect("cannot send fft result back");
+        tx_res.send((a, e)).expect("cannot send fft result back");
     }
 }
 
@@ -321,7 +321,7 @@ where
         a: tmp_buf,
         omega,
         log_n,
-        chan: tx_res,
+        tx_res,
     })
     .expect("cannot send fft input to gpu service");
 
