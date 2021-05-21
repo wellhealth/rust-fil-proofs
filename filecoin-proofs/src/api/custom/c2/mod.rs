@@ -14,8 +14,8 @@ use crate::SealCommitPhase1Output;
 use crate::Ticket;
 use crate::SINGLE_PARTITION_PROOF_LEN;
 use anyhow::{ensure, Context, Result};
-use bellperson::Circuit;
 use bellperson::domain::Scalar;
+use bellperson::Circuit;
 use bellperson::{
     bls::{Bls12, Fr, FrRepr},
     groth16::prover::ProvingAssignment,
@@ -111,7 +111,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
             .unzip()
     };
 
-	let fft_handler = fft::create_fft_handler::<Bls12, Scalar<Bls12>>(bellperson::gpu::gpu_count());
+    let fft_handler = fft::create_fft_handler::<Bls12, Scalar<Bls12>>(bellperson::gpu::gpu_count());
     let mut provers: Vec<ProvingAssignment<Bls12>> = c2_stage1(circuits)
         .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
 

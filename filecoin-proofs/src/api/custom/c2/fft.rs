@@ -1,7 +1,7 @@
 use bellperson::{
     bls::Engine,
-    domain::{Group, Scalar},
-    gpu::{GPUError, GPUResult, LockedFFTKernel},
+    domain::{gpu_fft, Group, Scalar},
+    gpu::{FFTKernel, GPUError, GPUResult},
     SynthesisError,
 };
 use ff::SqrtField;
@@ -272,7 +272,7 @@ where
     tmp
 }
 
-fn gpu_service<E, T>(mut kern: LockedFFTKernel<E>, rx: crossbeam::channel::Receiver<GpuFftIn<T, E>>)
+fn gpu_service<E, T>(mut kern: FFTKernel<E>, rx: crossbeam::channel::Receiver<GpuFftIn<T, E>>)
 where
     E: Engine,
     T: Group<E>,
@@ -284,7 +284,7 @@ where
         tx_res,
     }) = rx.recv()
     {
-        let e = kern.with(|k| bellperson::domain::gpu_fft(k, &mut a, &omega, log_n));
+        let e = gpu_fft(&mut kern, &mut a, &omega, log_n);
 
         tx_res.send((a, e)).expect("cannot send fft result back");
     }
@@ -299,7 +299,8 @@ where
     for index in 0..gpu_count {
         let rx = rx.clone();
         std::thread::spawn(move || {
-            let kern = LockedFFTKernel::<E>::new(0 /*unused*/, false, index);
+            let kern = FFTKernel::create(false, index).expect("cannot create FFTKernel");
+
             gpu_service(kern, rx);
             info!("fft gpu {} finished", index);
         });

@@ -231,12 +231,15 @@ fn hs_gpu(
     let param_h = rx_start
         .recv()
         .expect("rx_fails to recv param_h for gpu calculation");
-    rx_h.into_iter()
+    let mut v = rx_h
+        .into_iter()
         .inspect(|(_, index)| info!("{:?}: h-gpu started {}", *SECTOR_ID, index + 1))
         .map(|(x, index)| (index, multiexp_full(param_h.clone(), FullDensity, x, kern)))
         .inspect(|(index, _)| info!("{:?}: h-gpu done {}", *SECTOR_ID, index + 1))
-        .map(|(_, x)| x)
-        .collect()
+        .collect::<Vec<_>>();
+
+    v.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    v.into_iter().map(|x| x.1).collect()
 }
 
 fn hs_cpu(
