@@ -1,11 +1,12 @@
 use super::cpu_compute_exp;
+use super::fft::GpuFftIn;
 use crate::custom::c2::{fft::MultiGpuDomain, SECTOR_ID};
 use anyhow::{ensure, Context, Result};
 use bellperson::{bls::G2Projective, groth16::Proof, multiexp::multiexp};
 use bellperson::{
     bls::{Bls12, Fr, FrRepr, G1Affine, G1Projective, G2Affine},
     domain::Scalar,
-    gpu::{LockedFFTKernel, LockedMultiexpKernel},
+    gpu::LockedMultiexpKernel,
     groth16::{MappedParameters, ParameterSource, ProvingAssignment},
     multicore::Waiter,
     multiexp::{multiexp_full, multiexp_inner, multiexp_precompute, FullDensity},
@@ -47,19 +48,17 @@ struct InputParams {
     g1: ((Arc<Vec<G1Affine>>, usize), (Arc<Vec<G1Affine>>, usize)),
     g2: ((Arc<Vec<G2Affine>>, usize), (Arc<Vec<G2Affine>>, usize)),
 }
-enum FftKernels {
-    Single(LockedFFTKernel<Bls12>),
-    Multi(Vec<LockedFFTKernel<Bls12>>),
-}
 
 pub fn run(
     provers: &mut [ProvingAssignment<Bls12>],
     params: &MappedParameters<Bls12>,
     r_s: Vec<Fr>,
     s_s: Vec<Fr>,
+    fft_handler: crossbeam::channel::Sender<super::fft::GpuFftIn<Scalar<Bls12>, Bls12>>,
     gpu_index: usize,
 ) -> Result<Vec<Proof<Bls12>>> {
     let aux_assignments: Vec<Arc<Vec<FrRepr>>> = collect_aux_assignments(provers);
+
     let n = provers
         .first()
         .with_context(|| format!("{:?}: provers cannot be empty", *SECTOR_ID))?
@@ -79,16 +78,14 @@ pub fn run(
 
     let h_s_cpu = hs_cpu(rx_param_h_cpu, rx_h_cpu);
 
-    fft(
+    concurrent_fft(
         provers,
         params,
-        log_d,
         tx_param_h_cpu,
         tx_param_h_gpu,
         tx_h_cpu,
         tx_h_gpu,
-        2,
-        gpu_index,
+        fft_handler,
     )?;
 
     let mut multiexp_kern: Option<LockedMultiexpKernel<Bls12>> =
@@ -228,16 +225,15 @@ fn ls_gpu(
 
 fn hs_gpu(
     rx_start: Receiver<(Arc<Vec<G1Affine>>, usize)>,
-    rx_h: Receiver<Arc<Vec<FrRepr>>>,
+    rx_h: Receiver<(Arc<Vec<FrRepr>>, usize)>,
     kern: &mut Option<LockedMultiexpKernel<Bls12>>,
 ) -> Vec<Waiter<Result<G1Projective, SynthesisError>>> {
     let param_h = rx_start
         .recv()
         .expect("rx_fails to recv param_h for gpu calculation");
     rx_h.into_iter()
-        .enumerate()
-        .inspect(|(index, _)| info!("{:?}: h-gpu started {}", *SECTOR_ID, index + 1))
-        .map(|(index, x)| (index, multiexp_full(param_h.clone(), FullDensity, x, kern)))
+        .inspect(|(_, index)| info!("{:?}: h-gpu started {}", *SECTOR_ID, index + 1))
+        .map(|(x, index)| (index, multiexp_full(param_h.clone(), FullDensity, x, kern)))
         .inspect(|(index, _)| info!("{:?}: h-gpu done {}", *SECTOR_ID, index + 1))
         .map(|(_, x)| x)
         .collect()
@@ -245,7 +241,7 @@ fn hs_gpu(
 
 fn hs_cpu(
     rx_start: Receiver<(Arc<Vec<G1Affine>>, usize)>,
-    rx_h: Receiver<Arc<Vec<FrRepr>>>,
+    rx_h: Receiver<(Arc<Vec<FrRepr>>, usize)>,
 ) -> Receiver<Vec<Waiter<Result<G1Projective, SynthesisError>>>> {
     let (tx, rx) = channel();
 
@@ -255,9 +251,8 @@ fn hs_cpu(
         tx.send({
             let mut v = rx_h
                 .into_iter()
-                .enumerate()
                 .par_bridge()
-                .map(|(index, x)| {
+                .map(|(x, index)| {
                     info!("{:?} h:{} started", *SECTOR_ID, index + 1);
                     let x = h_cpu(param_h.clone(), x);
                     info!("{:?} h:{} finished", *SECTOR_ID, index + 1);
@@ -287,37 +282,107 @@ fn h_cpu(
     Waiter::done(ret)
 }
 
+fn concurrent_fft(
+    provers: &mut [ProvingAssignment<Bls12>],
+    params: &MappedParameters<Bls12>,
+    h_cpu_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
+    h_gpu_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
+    tx_h_cpu: SyncSender<(Arc<Vec<FrRepr>>, usize)>,
+    tx_h_gpu: SyncSender<(Arc<Vec<FrRepr>>, usize)>,
+    fft_handler: crossbeam::channel::Sender<super::fft::GpuFftIn<Scalar<Bls12>, Bls12>>,
+) -> Result<()> {
+    rayon::join(
+        || h_params(params, &h_gpu_start, &h_cpu_start),
+        || do_concurrent_fft(provers, tx_h_cpu, tx_h_gpu, fft_handler),
+    )
+    .1
+}
+fn h_params(
+    params: &MappedParameters<Bls12>,
+    h_gpu_start: &SyncSender<(Arc<Vec<G1Affine>>, usize)>,
+    h_cpu_start: &SyncSender<(Arc<Vec<G1Affine>>, usize)>,
+) {
+    let param_h = params.get_h(0).expect("failed to execute params.get_h(0)");
+    h_cpu_start.send(param_h.clone()).unwrap();
+    h_gpu_start.send(param_h).unwrap();
+}
+
+fn do_concurrent_fft(
+    provers: &mut [ProvingAssignment<Bls12>],
+    tx_h_cpu: SyncSender<(Arc<Vec<FrRepr>>, usize)>,
+    tx_h_gpu: SyncSender<(Arc<Vec<FrRepr>>, usize)>,
+    fft_handler: crossbeam::channel::Sender<super::fft::GpuFftIn<Scalar<Bls12>, Bls12>>,
+) -> Result<()> {
+    provers
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(index, prover)| {
+            let mut a =
+                MultiGpuDomain::try_from(std::mem::replace(&mut prover.a, Vec::new())).unwrap();
+            let mut b =
+                MultiGpuDomain::try_from(std::mem::replace(&mut prover.b, Vec::new())).unwrap();
+            let mut c =
+                MultiGpuDomain::try_from(std::mem::replace(&mut prover.c, Vec::new())).unwrap();
+            b.ifft(&fft_handler).unwrap();
+            b.coset_fft(&fft_handler).unwrap();
+
+            a.ifft(&fft_handler).unwrap();
+            a.coset_fft(&fft_handler).unwrap();
+
+            c.ifft(&fft_handler).unwrap();
+            c.coset_fft(&fft_handler).unwrap();
+
+            info!("{:?}: merge a, b, c. index: {}", *SECTOR_ID, index + 1);
+            let t = std::time::Instant::now();
+            a.mul_assign(&b);
+            drop(b);
+            a.sub_assign(&c);
+            drop(c);
+            a.divide_by_z_on_coset();
+            info!(
+                "{:?}: merge: {:?}, index: {}",
+                *SECTOR_ID,
+                t.elapsed(),
+                index + 1
+            );
+
+            a.icoset_fft(&fft_handler).unwrap();
+            info!(
+                "{:?}, done icoset_fft for a, index: {}",
+                *SECTOR_ID,
+                index + 1
+            );
+            let mut a = a.into_coeffs();
+            let a_len = a.len() - 1;
+            a.truncate(a_len);
+            let result = Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>());
+            if index < SETTINGS.c2_cpu_hs {
+                &tx_h_cpu
+            } else {
+                &tx_h_gpu
+            }
+            .send((result, index))
+            .expect("cannot send fft result");
+        });
+    Ok(())
+}
+
+#[allow(dead_code)]
 fn fft(
     provers: &mut [ProvingAssignment<Bls12>],
     params: &MappedParameters<Bls12>,
-    log_d: usize,
     h_cpu_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
     h_gpu_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
     tx_h_cpu: SyncSender<Arc<Vec<FrRepr>>>,
     tx_h_gpu: SyncSender<Arc<Vec<FrRepr>>>,
     h_index: usize,
-    gpu_index: usize,
+    fft_handler: crossbeam::channel::Sender<super::fft::GpuFftIn<Scalar<Bls12>, Bls12>>,
 ) -> Result<()> {
     crossbeam::scope(|s| {
         let h_index = if h_index >= provers.len() {
             provers.len() - 1
         } else {
             h_index
-        };
-
-        let mut fft_kern = if SETTINGS.c2_multi_fft {
-            FftKernels::Multi(
-                (0..bellperson::gpu::gpu_count()).into_par_iter()
-                    .map(|index| LockedFFTKernel::<Bls12>::new(log_d, false, index))
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            FftKernels::Single(LockedFFTKernel::<Bls12>::new(log_d, false, gpu_index))
-        };
-
-        let fft_kern = match &mut fft_kern {
-            FftKernels::Single(ref mut single) => std::slice::from_mut(single),
-            FftKernels::Multi(ref mut multi) => &mut multi[..],
         };
 
         let (tx1, rx1) = channel::<(MultiGpuDomain<Bls12, Scalar<Bls12>>, _, _)>();
@@ -378,26 +443,26 @@ fn fft(
             let mut c =
                 MultiGpuDomain::try_from(std::mem::replace(&mut prover.c, Vec::new())).unwrap();
 
-            b.ifft(fft_kern).unwrap();
-            b.coset_fft(fft_kern).unwrap();
+            b.ifft(&fft_handler).unwrap();
+            b.coset_fft(&fft_handler).unwrap();
 
-            a.ifft(fft_kern).unwrap();
-            a.coset_fft(fft_kern).unwrap();
+            a.ifft(&fft_handler).unwrap();
+            a.coset_fft(&fft_handler).unwrap();
 
-            c.ifft(fft_kern).unwrap();
-            c.coset_fft(fft_kern).unwrap();
+            c.ifft(&fft_handler).unwrap();
+            c.coset_fft(&fft_handler).unwrap();
 
             tx1.send((a, b, c))
                 .with_context(|| format!("{:?}: cannot send abc to tx1", *SECTOR_ID))?;
 
             for (index, a) in rx2.try_iter() {
-                fft_icoset(index, a, fft_kern, &tx3);
+                fft_icoset(index, a, &fft_handler, &tx3);
             }
         }
         drop(tx1);
 
         for (index, a) in rx2.iter() {
-            fft_icoset(index, a, fft_kern, &tx3);
+            fft_icoset(index, a, &fft_handler, &tx3);
         }
 
         Ok(())
@@ -408,11 +473,11 @@ fn fft(
 fn fft_icoset(
     index: usize,
     mut a: MultiGpuDomain<Bls12, Scalar<Bls12>>,
-    kern: &mut [LockedFFTKernel<Bls12>],
+    fft_handler: &crossbeam::channel::Sender<GpuFftIn<Scalar<Bls12>, Bls12>>,
     tx: &SyncSender<MultiGpuDomain<Bls12, Scalar<Bls12>>>,
 ) {
     info!("{:?}, doing icoset_fft for a, index: {}", *SECTOR_ID, index);
-    a.icoset_fft(kern).unwrap();
+    a.icoset_fft(&fft_handler).unwrap();
     tx.send(a).unwrap();
 }
 

@@ -6,6 +6,7 @@ use bellperson::{
 };
 use ff::SqrtField;
 use ff::{Field, PrimeField, ScalarEngine};
+use log::info;
 use rayon::{
     iter::{IndexedParallelIterator, IntoParallelRefMutIterator, ParallelIterator},
     slice::{ParallelSlice, ParallelSliceMut},
@@ -25,7 +26,7 @@ where
     minv: E::Fr,
 }
 
-struct GpuFftIn<T, E>
+pub struct GpuFftIn<T, E>
 where
     E: Engine,
     T: Group<E>,
@@ -88,15 +89,18 @@ where
         self.coeffs
     }
 
-    pub fn icoset_fft(&mut self, kern: &mut [LockedFFTKernel<E>]) -> GPUResult<()> {
+    pub fn icoset_fft(
+        &mut self,
+        handler: &crossbeam::channel::Sender<GpuFftIn<G, E>>,
+    ) -> GPUResult<()> {
         let geninv = self.geninv;
-        self.ifft(kern)?;
+        self.ifft(handler)?;
         distribute_powers(&mut self.coeffs, geninv);
         Ok(())
     }
 
-    pub fn ifft(&mut self, kern: &mut [LockedFFTKernel<E>]) -> GPUResult<()> {
-        multi_gpu_fft(kern, &mut self.coeffs, &self.omegainv, self.exp)?;
+    pub fn ifft(&mut self, handler: &crossbeam::channel::Sender<GpuFftIn<G, E>>) -> GPUResult<()> {
+        multi_gpu_fft(handler, &mut self.coeffs, &self.omegainv, self.exp)?;
         let minv = &self.minv;
 
         let chunk_size = self.coeffs.len() / *bellperson::multicore::NUM_CPUS;
@@ -109,9 +113,12 @@ where
         Ok(())
     }
 
-    pub fn coset_fft(&mut self, kern: &mut [LockedFFTKernel<E>]) -> GPUResult<()> {
+    pub fn coset_fft(
+        &mut self,
+        handler: &crossbeam::channel::Sender<GpuFftIn<G, E>>,
+    ) -> GPUResult<()> {
         distribute_powers(&mut self.coeffs, E::Fr::multiplicative_generator());
-        multi_gpu_fft(kern, &mut self.coeffs, &self.omega, self.exp)?;
+        multi_gpu_fft(handler, &mut self.coeffs, &self.omega, self.exp)?;
         Ok(())
     }
 
@@ -156,8 +163,8 @@ where
 }
 
 pub fn multi_gpu_fft<E, T>(
-    kern: &mut [LockedFFTKernel<E>],
-    a: &mut [T],
+    handler: &crossbeam::channel::Sender<GpuFftIn<T, E>>,
+    a: &mut Vec<T>,
     omega: &E::Fr,
     log_n: u32,
 ) -> GPUResult<()>
@@ -165,7 +172,7 @@ where
     E: Engine,
     T: Group<E>,
 {
-    let num_gpus = kern.len();
+    let num_gpus = 1;
 
     let log_gpus = match num_gpus {
         1 => None,
@@ -178,10 +185,7 @@ where
     let log_gpus = match log_gpus {
         Some(x) => x,
         None => {
-            return kern
-                .first_mut()
-                .unwrap()
-                .with(|k| bellperson::domain::gpu_fft(k, a, omega, log_n))
+            return gpu_fft_queued(handler, a, *omega, log_n);
         }
     };
 
@@ -191,9 +195,8 @@ where
 
     buffer2d
         .par_iter_mut()
-        .zip(kern.par_iter_mut())
         .enumerate()
-        .for_each(|(gpu_index, (single_gpu_buffer, k))| {
+        .for_each(|(gpu_index, single_gpu_buffer)| {
             // Shuffle into a sub-FFT
             let omega_gpu = omega.pow(&[gpu_index as u64]);
             let omega_step = omega.pow(&[(gpu_index as u64) << log_new_n]);
@@ -223,8 +226,7 @@ where
                     }
                 });
 
-            k.with(|k| bellperson::domain::gpu_fft(k, single_gpu_buffer, &new_omega, log_new_n))
-                .unwrap();
+            gpu_fft_queued(handler, single_gpu_buffer, new_omega, log_new_n).unwrap();
         });
 
     let chunk_size = a.len() / *bellperson::multicore::NUM_CPUS;
@@ -288,24 +290,25 @@ where
     }
 }
 
-fn create_fft_handler<E, T>(gpu_count: u32) -> crossbeam::channel::Sender<GpuFftIn<T, E>>
+pub fn create_fft_handler<E, T>(gpu_count: usize) -> crossbeam::channel::Sender<GpuFftIn<T, E>>
 where
     E: Engine,
     T: Group<E> + 'static,
 {
     let (tx, rx) = crossbeam::channel::unbounded();
-    for kern in (0..bellperson::gpu::gpu_count())
-        .into_iter()
-        .map(|index| LockedFFTKernel::<E>::new(0 /*unused*/, false, index))
-    {
+    for index in 0..gpu_count {
         let rx = rx.clone();
-        std::thread::spawn(move || gpu_service(kern, rx));
+        std::thread::spawn(move || {
+            let kern = LockedFFTKernel::<E>::new(0 /*unused*/, false, index);
+            gpu_service(kern, rx);
+            info!("fft gpu {} finished", index);
+        });
     }
     tx
 }
 
-fn gpu_fft_queued<E, T>(
-    tx: crossbeam::channel::Sender<GpuFftIn<T, E>>,
+pub fn gpu_fft_queued<E, T>(
+    tx: &crossbeam::channel::Sender<GpuFftIn<T, E>>,
     buffer: &mut Vec<T>,
     omega: E::Fr,
     log_n: u32,
