@@ -1,4 +1,4 @@
-use crate::types::stacked::circuit::params::enforce_inclusion;
+use storage_proofs::porep::stacked::circuit::params::enforce_inclusion;
 use crate::DefaultPieceHasher;
 use bellperson::bls::Bls12;
 use bellperson::bls::Fr;
@@ -12,7 +12,7 @@ use bellperson::Index;
 use bellperson::SynthesisError;
 use bellperson::Variable;
 use num::AllocatedNum;
-use storage_proofs::gadgets::constraint;
+use storage_proofs::{gadgets::constraint, porep::stacked::params::Proof};
 use storage_proofs::gadgets::encode::encode;
 use storage_proofs::gadgets::uint64;
 use storage_proofs::hasher::HashFunction;
@@ -20,7 +20,7 @@ use storage_proofs::hasher::Hasher;
 use storage_proofs::merkle::MerkleTreeTrait;
 use storage_proofs::porep::stacked::circuit::hash::hash_single_column;
 use storage_proofs::porep::stacked::create_label_circuit as create_label;
-use storage_proofs::porep::stacked::params::Proof;
+// use storage_proofs::porep::stacked::params::Proof;
 use storage_proofs::porep::stacked::StackedCircuit;
 use storage_proofs::util::reverse_bit_numbering;
 

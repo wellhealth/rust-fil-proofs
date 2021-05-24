@@ -15,7 +15,7 @@ use crate::Ticket;
 use crate::SINGLE_PARTITION_PROOF_LEN;
 use anyhow::{ensure, Context, Result};
 use bellperson::domain::Scalar;
-use bellperson::Circuit;
+// use bellperson::Circuit;
 use bellperson::{
     bls::{Bls12, Fr, FrRepr},
     groth16::prover::ProvingAssignment,
@@ -44,6 +44,7 @@ const GIT_VERSION: &str =
 mod stage2;
 
 pub mod fft;
+mod stage1;
 
 lazy_static! {
     pub static ref SECTOR_ID: SectorId = SectorId::from(
@@ -176,8 +177,8 @@ pub fn c2_stage1<Tree: 'static + MerkleTreeTrait>(
 
                     prover.alloc_input(|| "", || Ok(Fr::one()))?;
 
-                    circuit.synthesize(&mut prover)?;
-                    // stage1::circuit_synthesize(circuit, &mut prover)?;
+					// circuit.synthesize(&mut prover)?;
+                    stage1::circuit_synthesize(circuit, &mut prover)?;
 
                     for i in 0..prover.input_assignment.len() {
                         prover.enforce(
