@@ -1,7 +1,8 @@
 use std::io::{self, Read};
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, Criterion, ParameterizedBenchmark, Throughput};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::ParameterizedBenchmark;
 use filecoin_proofs::fr32_reader::Fr32Reader;
 use rand::{thread_rng, Rng};
 

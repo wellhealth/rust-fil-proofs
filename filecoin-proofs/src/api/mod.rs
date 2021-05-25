@@ -636,7 +636,7 @@ mod tests {
 
                 assert!(
                     haystack.contains(needle),
-                    format!("\"{}\" did not contain \"{}\"", haystack, needle)
+                    "\"{}\" did not contain \"{}\"", haystack, needle
                 );
             } else {
                 panic!("should have failed comm_r to Fr32 conversion");
@@ -671,7 +671,7 @@ mod tests {
 
                 assert!(
                     haystack.contains(needle),
-                    format!("\"{}\" did not contain \"{}\"", haystack, needle)
+                    "\"{}\" did not contain \"{}\"", haystack, needle
                 );
             } else {
                 panic!("should have failed comm_d to Fr32 conversion");
