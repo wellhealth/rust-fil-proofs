@@ -1,4 +1,5 @@
-use storage_proofs::porep::stacked::circuit::params::enforce_inclusion;
+use std::sync::atomic::Ordering::SeqCst;
+
 use crate::DefaultPieceHasher;
 use bellperson::bls::Bls12;
 use bellperson::bls::Fr;
@@ -7,19 +8,23 @@ use bellperson::gadgets::num;
 use bellperson::gadgets::uint32;
 use bellperson::gadgets::Assignment;
 use bellperson::groth16::ProvingAssignment;
+use bellperson::groth16::AUX_LEN;
+use bellperson::groth16::INPUT_LEN;
 use bellperson::ConstraintSystem;
 use bellperson::Index;
 use bellperson::SynthesisError;
 use bellperson::Variable;
+use log::info;
 use num::AllocatedNum;
-use storage_proofs::{gadgets::constraint, porep::stacked::params::Proof};
 use storage_proofs::gadgets::encode::encode;
 use storage_proofs::gadgets::uint64;
 use storage_proofs::hasher::HashFunction;
 use storage_proofs::hasher::Hasher;
 use storage_proofs::merkle::MerkleTreeTrait;
 use storage_proofs::porep::stacked::circuit::hash::hash_single_column;
+use storage_proofs::porep::stacked::circuit::params::enforce_inclusion;
 use storage_proofs::porep::stacked::create_label_circuit as create_label;
+use storage_proofs::{gadgets::constraint, porep::stacked::params::Proof};
 // use storage_proofs::porep::stacked::params::Proof;
 use storage_proofs::porep::stacked::StackedCircuit;
 use storage_proofs::util::reverse_bit_numbering;
@@ -102,8 +107,16 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
             &hash_num,
         );
     }
+    let input_len = cs.b_input_density.bv.len();
+    let aux_len = cs.a_aux_density.bv.len();
+    info!("input_len -> {}", input_len);
+    info!("aux_len -> {}", aux_len);
 
-    for proof in proofs.into_iter() {
+    INPUT_LEN.store(input_len, SeqCst);
+    AUX_LEN.store(aux_len, SeqCst);
+
+    for (index, proof) in proofs.into_iter().enumerate() {
+        info!("start synthesizing: {}", index + 1);
         proof_synthesize(
             proof,
             cs,
