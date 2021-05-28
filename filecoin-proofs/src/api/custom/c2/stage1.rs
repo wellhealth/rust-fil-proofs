@@ -1,5 +1,3 @@
-use std::sync::atomic::Ordering::SeqCst;
-
 use crate::DefaultPieceHasher;
 use bellperson::bls::Bls12;
 use bellperson::bls::Fr;
@@ -8,8 +6,6 @@ use bellperson::gadgets::num;
 use bellperson::gadgets::uint32;
 use bellperson::gadgets::Assignment;
 use bellperson::groth16::ProvingAssignment;
-use bellperson::groth16::AUX_LEN;
-use bellperson::groth16::INPUT_LEN;
 use bellperson::ConstraintSystem;
 use bellperson::Index;
 use bellperson::SynthesisError;
@@ -111,9 +107,6 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
     let aux_len = cs.a_aux_density.bv.len();
     info!("input_len -> {}", input_len);
     info!("aux_len -> {}", aux_len);
-
-    INPUT_LEN.store(input_len, SeqCst);
-    AUX_LEN.store(aux_len, SeqCst);
 
     for (index, proof) in proofs.into_iter().enumerate() {
         info!("start synthesizing: {}", index + 1);
