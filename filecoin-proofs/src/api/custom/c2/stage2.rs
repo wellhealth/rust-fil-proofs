@@ -355,6 +355,7 @@ fn do_concurrent_fft(
                 *SECTOR_ID,
                 index + 1
             );
+
             let mut a = a.into_coeffs();
             let a_len = a.len() - 1;
             a.truncate(a_len);

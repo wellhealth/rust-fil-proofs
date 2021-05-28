@@ -112,7 +112,8 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
             .unzip()
     };
 
-    let fft_handler = fft::create_fft_handler::<Bls12, Scalar<Bls12>>(bellperson::gpu::gpu_count());
+    let fft_handler =
+        fft::create_fft_handler::<Bls12, Scalar<Bls12>>(0..bellperson::gpu::gpu_count());
     let mut provers: Vec<ProvingAssignment<Bls12>> = c2_stage1(circuits)
         .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
 
@@ -177,7 +178,7 @@ pub fn c2_stage1<Tree: 'static + MerkleTreeTrait>(
 
                     prover.alloc_input(|| "", || Ok(Fr::one()))?;
 
-					// circuit.synthesize(&mut prover)?;
+                    // circuit.synthesize(&mut prover)?;
                     stage1::circuit_synthesize(circuit, &mut prover)?;
 
                     for i in 0..prover.input_assignment.len() {

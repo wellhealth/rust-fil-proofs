@@ -133,6 +133,7 @@ where
                 }
             });
     }
+
     pub fn sub_assign(&mut self, other: &Self) {
         let chunk_size = self.coeffs.len() / *bellperson::multicore::NUM_CPUS;
         self.coeffs
@@ -290,17 +291,20 @@ where
     }
 }
 
-pub fn create_fft_handler<E, T>(gpu_count: usize) -> crossbeam::channel::Sender<GpuFftIn<T, E>>
+pub fn create_fft_handler<E, T>(
+    r: std::ops::Range<usize>,
+) -> crossbeam::channel::Sender<GpuFftIn<T, E>>
 where
     E: Engine,
     T: Group<E> + 'static,
 {
     let (tx, rx) = crossbeam::channel::unbounded();
-    for index in 0..gpu_count {
+    for index in r {
         let rx = rx.clone();
         std::thread::spawn(move || {
             let kern = FFTKernel::create(false, index).expect("cannot create FFTKernel");
 
+            info!("fft gpu {} ready", index);
             gpu_service(kern, rx);
             info!("fft gpu {} finished", index);
         });
