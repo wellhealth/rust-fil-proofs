@@ -41,6 +41,7 @@ pub struct Settings {
     pub multicore_sdr_producer_stride: u64,
     pub multicore_sdr_lookahead: usize,
     pub p1_program_name: String,
+    pub p2_program_name: String,
 }
 
 impl Default for Settings {
@@ -67,6 +68,7 @@ impl Default for Settings {
             multicore_sdr_producer_stride: 128,
             multicore_sdr_lookahead: 800,
             p1_program_name: "lotus-p1".to_owned(),
+            p2_program_name: "lotus-p2".to_owned(),
         }
     }
 }
