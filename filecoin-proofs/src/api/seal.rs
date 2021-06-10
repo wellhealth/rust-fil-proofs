@@ -1,5 +1,5 @@
 use std::fs::{self, metadata, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
@@ -1292,83 +1292,13 @@ where
     S: AsRef<Path>,
     T: AsRef<Path>,
 {
-    info!("{:?}: p1 git-version: {}", sector_id, &*GIT_VERSION);
-
-    info!("seal_pre_commit_phase1_layer:start: {:?}", sector_id);
-    let compound_setup_params = compound_proof::SetupParams {
-        vanilla_params: setup_params(
-            PaddedBytesAmount::from(porep_config),
-            usize::from(PoRepProofPartitions::from(porep_config)),
-            porep_config.porep_id,
-            porep_config.api_version,
-        )?,
-        partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
-        priority: false,
-    };
-
-    let compound_public_params = <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
-        StackedDrg<'_, Tree, DefaultPieceHasher>,
-        _,
-    >>::setup(&compound_setup_params)?;
-
-    let base_tree_size = get_base_tree_size::<DefaultBinaryTree>(porep_config.sector_size)?;
-    let base_tree_leafs = get_base_tree_leafs::<DefaultBinaryTree>(base_tree_size)?;
-
-    let mut config = StoreConfig::new(
-        cache_path.as_ref(),
-        CacheKey::CommDTree.to_string(),
-        StoreConfig::default_rows_to_discard(base_tree_leafs, BINARY_ARITY),
-    );
-
-    /////////////////////////////////////////
-    //从文件中读取treed生成的数据用于layer计算
-    //config.size = Some(127);
-    //利用unsealed文件，生成unsealed.index文件
-    let new_path = in_path.as_ref().with_file_name(TREE_INDEX);
-    println!("tree-index: {:?}", new_path);
-
-    let mut comm_d: [u8; 32] = [0; 32];
-    let mut outputfile = OpenOptions::new().read(true).open(new_path).unwrap();
-    outputfile.read_exact(&mut comm_d).unwrap();
-    //读取data_tree.len 数据
-
-    let mut treelen: [u8; 8] = [0; 8];
-    outputfile.read_exact(&mut treelen).unwrap();
-    config.size = Some(u64::from_le_bytes(treelen) as usize);
-
-    println!("read seal_pre_commit_phase1_layer comm_d is {:?}", comm_d);
-    println!("{:?}", config);
-
-    info!("verifying pieces");
-
-    ensure!(
-        verify_pieces(&comm_d, piece_infos, porep_config.into())?,
-        "pieces and comm_d do not match"
-    );
-
-    let replica_id = generate_replica_id::<Tree::Hasher, _>(
-        &prover_id,
-        sector_id.into(),
-        &ticket,
-        comm_d,
-        &porep_config.porep_id,
-    );
-    println!(
-        "seal_pre_commit_phase1_layer replica_id is {:?}",
-        replica_id
-    );
-
-    let labels = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase1(
-        &compound_public_params.vanilla_params,
-        &replica_id,
-        config.clone(),
-    )?;
-
-    let out = SealPreCommitPhase1Output {
-        labels,
-        config,
-        comm_d,
-    };
-    info!("seal_pre_commit_phase1_layer:finish: {:?}", sector_id);
-    Ok(out)
+    super::process::p1::<_, _, Tree>(
+        porep_config,
+        cache_path,
+        in_path,
+        prover_id,
+        sector_id,
+        ticket,
+        piece_infos,
+    )
 }

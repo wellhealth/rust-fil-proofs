@@ -139,12 +139,7 @@ impl CacheData {
                 .with_context(|| format!("could not mmap path={}", path.display()))?
         };
 
-        Ok(Self {
-            data,
-            file,
-            len,
-            offset,
-        })
+        Ok(Self { data, offset, len, file })
     }
 }
 

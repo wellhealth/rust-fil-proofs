@@ -253,7 +253,9 @@ impl<T: FromByteSlice> CacheReader<T> {
 
         let targeted_buf = &self.get_bufs()[window % 2];
 
-        &targeted_buf.as_slice_of::<T>().unwrap()[pos..]
+        &targeted_buf
+            .as_slice_of::<T>()
+            .expect("cannot get slice from Mmap")[pos..]
     }
 
     fn advance_rear_window(&self, new_window: usize) {

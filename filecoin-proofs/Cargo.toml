@@ -10,6 +10,10 @@ readme = "README.md"
 
 [dependencies]
 git-version = "*"
+regex = "*"
+gettid = "*"
+scopeguard = "*"
+uuid = { version = "*", features = ["serde", "v4"] }
 
 storage-proofs-core = { path = "../storage-proofs-core", version = "^8.0.0", default-features = false}
 storage-proofs-porep = { path = "../storage-proofs-porep", version = "^8.0.0", default-features = false }

@@ -111,29 +111,6 @@ impl<H: Hasher> ParameterSetMetadata for BucketGraph<H> {
 impl<H: Hasher> Graph<H> for BucketGraph<H> {
     type Key = H::Domain;
 
-    fn create_key(
-        &self,
-        id: &H::Domain,
-        node: usize,
-        parents: &[u32],
-        base_parents_data: &[u8],
-        _exp_parents_data: Option<&[u8]>,
-    ) -> Result<Self::Key> {
-        let mut hasher = Sha256::new();
-        hasher.update(AsRef::<[u8]>::as_ref(id));
-
-        // The hash is about the parents, hence skip if a node doesn't have any parents
-        if node != parents[0] as usize {
-            for parent in parents.iter() {
-                let offset = data_at_node_offset(*parent as usize);
-                hasher.update(&base_parents_data[offset..offset + NODE_SIZE]);
-            }
-        }
-
-        let hash = hasher.finalize();
-        Ok(bytes_into_fr_repr_safe(hash.as_ref()).into())
-    }
-
     #[inline]
     fn parents(&self, node: usize, parents: &mut [u32]) -> Result<()> {
         let m = self.degree();
@@ -210,10 +187,6 @@ impl<H: Hasher> Graph<H> for BucketGraph<H> {
         self.base_degree
     }
 
-    fn seed(&self) -> [u8; 28] {
-        self.seed
-    }
-
     fn new(
         nodes: usize,
         base_degree: usize,
@@ -241,6 +214,33 @@ impl<H: Hasher> Graph<H> for BucketGraph<H> {
             api_version,
             _h: PhantomData,
         })
+    }
+
+    fn seed(&self) -> [u8; 28] {
+        self.seed
+    }
+
+    fn create_key(
+        &self,
+        id: &H::Domain,
+        node: usize,
+        parents: &[u32],
+        base_parents_data: &[u8],
+        _exp_parents_data: Option<&[u8]>,
+    ) -> Result<Self::Key> {
+        let mut hasher = Sha256::new();
+        hasher.update(AsRef::<[u8]>::as_ref(id));
+
+        // The hash is about the parents, hence skip if a node doesn't have any parents
+        if node != parents[0] as usize {
+            for parent in parents.iter() {
+                let offset = data_at_node_offset(*parent as usize);
+                hasher.update(&base_parents_data[offset..offset + NODE_SIZE]);
+            }
+        }
+
+        let hash = hasher.finalize();
+        Ok(bytes_into_fr_repr_safe(hash.as_ref()).into())
     }
 }
 

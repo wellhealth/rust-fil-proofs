@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use storage_proofs_core::{
     api_version::ApiVersion,
@@ -17,7 +18,7 @@ use crate::{
     types::{PaddedBytesAmount, PoRepProofPartitions, SectorSize, UnpaddedBytesAmount},
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PoRepConfig {
     pub sector_size: SectorSize,
     pub partitions: PoRepProofPartitions,

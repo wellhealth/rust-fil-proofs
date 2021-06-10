@@ -1,10 +1,19 @@
-use std::env;
+use std::{env, path::PathBuf};
 
 use config::{Config, ConfigError, Environment, File};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 
 lazy_static! {
+    pub static ref PROGRAM_PATH: String = {
+        std::env::current_exe()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .parent()
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .to_string_lossy()
+            .into()
+    };
     pub static ref SETTINGS: Settings = Settings::new().expect("invalid configuration");
 }
 
@@ -26,10 +35,12 @@ pub struct Settings {
     pub window_post_synthesis_num_cpus: u32,
     pub parameter_cache: String,
     pub parent_cache: String,
+    pub program_folder: String,
     pub use_multicore_sdr: bool,
     pub multicore_sdr_producers: usize,
     pub multicore_sdr_producer_stride: u64,
     pub multicore_sdr_lookahead: usize,
+    pub p1_program_name: String,
 }
 
 impl Default for Settings {
@@ -45,15 +56,17 @@ impl Default for Settings {
             rows_to_discard: 2,
             sdr_parents_cache_size: 2_048,
             window_post_synthesis_num_cpus: num_cpus::get() as u32,
+            parameter_cache: "/var/tmp/filecoin-proof-parameters/".to_string(),
+            parent_cache: cache("filecoin-parents"),
             // `parameter_cache` does not use the cache() mechanism because it is now used
             // for durable, canonical Groth parameters and verifying keys.
             // The name is retained for backwards compatibility.
-            parameter_cache: "/var/tmp/filecoin-proof-parameters/".to_string(),
-            parent_cache: cache("filecoin-parents"),
+            program_folder: PROGRAM_PATH.clone(),
             use_multicore_sdr: false,
             multicore_sdr_producers: 3,
             multicore_sdr_producer_stride: 128,
             multicore_sdr_lookahead: 800,
+            p1_program_name: "lotus-p1".to_owned(),
         }
     }
 }
