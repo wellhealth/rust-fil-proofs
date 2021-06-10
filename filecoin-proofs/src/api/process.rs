@@ -16,6 +16,7 @@ use crate::{
     api::cores::get_l3_index, api::cores::serialize, PieceInfo, PoRepConfig, ProverId,
     SealPreCommitOutput, SealPreCommitPhase1Output, Ticket,
 };
+use crate::{SealCommitOutput, SealCommitPhase1Output};
 use serde::{Deserialize, Serialize};
 pub const SHENSUANYUN_GPU_INDEX: &str = "SHENSUANYUN_GPU_INDEX";
 
@@ -29,6 +30,17 @@ struct P2Param<Tree: 'static + MerkleTreeTrait> {
     phase1_output: SealPreCommitPhase1Output<Tree>,
     cache_path: PathBuf,
     replica_path: PathBuf,
+}
+#[derive(Serialize, Deserialize)]
+struct C2Param<Tree: 'static + MerkleTreeTrait> {
+    porep_config: PoRepConfig,
+    #[serde(bound(
+        serialize = "SealCommitPhase1Output<Tree>: Serialize",
+        deserialize = "SealCommitPhase1Output<Tree>: Deserialize<'de>"
+    ))]
+    phase1_output: SealCommitPhase1Output<Tree>,
+    prover_id: ProverId,
+    sector_id: SectorId,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -80,7 +92,7 @@ where
     let in_path = Path::new(&param_folder).join(&uuid);
     let out_path = Path::new(&param_folder).join(&uuid);
     let program_folder = &settings::SETTINGS.program_folder;
-    let program_path = Path::new(program_folder).join(&settings::SETTINGS.p1_program_name);
+    let p1_exec = Path::new(program_folder).join(&settings::SETTINGS.p1_program_name);
 
     let infile = OpenOptions::new()
         .write(true)
@@ -97,14 +109,14 @@ where
     serde_json::to_writer(infile, &data)
         .with_context(|| format!("{:?}: cannot sealize to infile", sector_id))?;
 
-    info!("{:?}: start p1 with program: {:?}", sector_id, program_path);
-    let mut child = process::Command::new(&program_path)
+    info!("{:?}: start p1 with program: {:?}", sector_id, p1_exec);
+    let mut child = process::Command::new(&p1_exec)
         .arg(&uuid)
         .arg(u64::from(porep_config.sector_size).to_string())
         .arg(u64::from(sector_id).to_string())
         .arg(l3_params)
         .spawn()
-        .with_context(|| format!("{:?}, cannot start program {:?} ", sector_id, program_path))?;
+        .with_context(|| format!("{:?}, cannot start program {:?} ", sector_id, p1_exec))?;
 
     let status = child.wait().expect("c2 is not running");
 
@@ -175,7 +187,7 @@ where
     let uuid = get_uuid();
 
     let in_path = Path::new(&param_folder).join(&uuid);
-    let p2 = Path::new(program_folder).join(&settings::SETTINGS.p2_program_name);
+    let p2_exec = Path::new(program_folder).join(&settings::SETTINGS.p2_program_name);
     let out_path = Path::new(&param_folder).join(&uuid);
 
     let infile = OpenOptions::new()
@@ -194,13 +206,13 @@ where
     );
     serde_json::to_writer(infile, &data).with_context(|| "cannot sealize to infile".to_string())?;
 
-    info!("start p2 with program: {:?}", p2);
-    let mut p2_process = process::Command::new(&p2)
+    info!("start p2 with program: {:?}", p2_exec);
+    let mut p2_process = process::Command::new(&p2_exec)
         .arg(&uuid)
         .arg(u64::from(porep_config.sector_size).to_string())
         .arg(gpu_index.to_string())
         .spawn()
-        .with_context(|| format!("{:?}, cannot start {:?} ", replica_path, p2))?;
+        .with_context(|| format!("{:?}, cannot start {:?} ", replica_path, p2_exec))?;
 
     let status = p2_process.wait().expect("p2 is not running");
     match status.code() {
@@ -232,6 +244,79 @@ where
 
     Ok(SealPreCommitOutput { comm_r, comm_d })
 }
+pub fn c2<Tree: 'static + MerkleTreeTrait>(
+    porep_config: PoRepConfig,
+    phase1_output: SealCommitPhase1Output<Tree>,
+    prover_id: ProverId,
+    sector_id: SectorId,
+) -> Result<SealCommitOutput> {
+    let data = C2Param {
+        porep_config,
+        phase1_output,
+        prover_id,
+        sector_id,
+    };
+    let uuid = get_uuid();
+
+    let param_folder = get_param_folder();
+    std::fs::create_dir_all(&param_folder)
+        .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
+    let in_path = Path::new(&param_folder).join(&uuid);
+    let out_path = Path::new(&param_folder).join(&uuid);
+
+    let program_folder = &settings::SETTINGS.program_folder;
+    let c2_exec = Path::new(program_folder).join(&settings::SETTINGS.c2_program_name);
+
+    let infile = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(&in_path)
+        .with_context(|| format!("{:?}: cannot open file to pass in c2 parameter", sector_id))?;
+    defer!({
+        let _ = std::fs::remove_file(&out_path);
+    });
+
+    info!("{:?}: writing parameter to file: {:?}", sector_id, in_path);
+    serde_json::to_writer(infile, &data)
+        .with_context(|| format!("{:?}: cannot sealize to infile", sector_id))?;
+
+    let gpu_index = select_gpu_device()
+        .with_context(|| format!("{:?}: cannot select gpu device", sector_id))?;
+    defer! {
+        info!("release gpu index: {}", gpu_index);
+        release_gpu_device(gpu_index);
+    };
+    info!("{:?}: start c2 with program: {:?}", sector_id, c2_exec);
+    let mut c2_process = process::Command::new(&c2_exec)
+        .arg(&uuid)
+        .arg(u64::from(porep_config.sector_size).to_string())
+        .arg(gpu_index.to_string())
+        .arg(u64::from(sector_id).to_string())
+        .spawn()
+        .with_context(|| format!("{:?}, cannot start program {:?} ", sector_id, c2_exec))?;
+
+    let status = c2_process.wait().expect("c2 is not running");
+
+    match status.code() {
+        Some(0) => {
+            info!("{:?} c2 finished", sector_id);
+        }
+        Some(n) => {
+            info!("{:?} c2 failed with exit number: {}", sector_id, n);
+            bail!("{:?} c2 failed with exit number: {}", sector_id, n);
+        }
+        None => {
+            info!("{:?} c2 crashed", sector_id);
+            bail!("{:?} c2 crashed", sector_id);
+        }
+    }
+
+    let proof = std::fs::read(&out_path)
+        .with_context(|| format!("{:?}, cannot open c2 output file for reuslt", sector_id))?;
+
+    Ok(SealCommitOutput { proof })
+}
 
 fn get_uuid() -> String {
     let mut buffer = Uuid::encode_buffer();
@@ -255,6 +340,7 @@ pub fn select_gpu_device() -> Option<usize> {
         GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap().pop_front()
     }
 }
+
 pub fn release_gpu_device(gpu_index: usize) {
     if opencl::Device::all().len() > 0 {
         GPU_NVIDIA_DEVICES_QUEUE

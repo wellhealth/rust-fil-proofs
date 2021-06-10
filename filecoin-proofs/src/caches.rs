@@ -109,32 +109,6 @@ where
     cache_lookup(&*SRS_VERIFIER_KEY_MEMORY_CACHE, srs_identifier, generator)
 }
 
-pub fn get_stacked_params<Tree: 'static + MerkleTreeTrait>(
-    porep_config: PoRepConfig,
-) -> Result<Arc<Bls12GrothParams>> {
-    let public_params = public_params::<Tree>(
-        PaddedBytesAmount::from(porep_config),
-        usize::from(PoRepProofPartitions::from(porep_config)),
-        porep_config.porep_id,
-        porep_config.api_version,
-    )?;
-
-    let parameters_generator = || {
-        <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
-            StackedDrg<'_, Tree, DefaultPieceHasher>,
-            _,
-        >>::groth_params::<OsRng>(None, &public_params)
-        .map_err(Into::into)
-    };
-
-    lookup_groth_params(
-        format!(
-            "STACKED[{}]",
-            usize::from(PaddedBytesAmount::from(porep_config))
-        ),
-        parameters_generator,
-    )
-}
 
 pub fn get_post_params<Tree: 'static + MerkleTreeTrait>(
     post_config: &PoStConfig,

@@ -1,8 +1,17 @@
-use std::fs::{self, metadata, OpenOptions};
-use std::io::Write;
-use std::marker::PhantomData;
-use std::path::Path;
-
+use crate::{
+    api::{as_safe_commitment, commitment_from_fr, get_base_tree_leafs, get_base_tree_size},
+    caches::{get_stacked_srs_key, get_stacked_srs_verifier_key, get_stacked_verifying_key},
+    constants::{
+        DefaultBinaryTree, DefaultPieceDomain, DefaultPieceHasher, POREP_MINIMUM_CHALLENGES,
+    },
+    parameters::setup_params,
+    pieces::{self, verify_pieces},
+    types::{
+        AggregateSnarkProof, Commitment, PaddedBytesAmount, PieceInfo, PoRepConfig,
+        PoRepProofPartitions, ProverId, SealCommitOutput, SealCommitPhase1Output,
+        SealPreCommitOutput, SealPreCommitPhase1Output, SectorSize, Ticket, BINARY_ARITY,
+    },
+};
 use anyhow::{ensure, Context, Result};
 use bellperson::bls::{Bls12, Fr};
 use bellperson::groth16;
@@ -13,6 +22,10 @@ use memmap::MmapOptions;
 use merkletree::store::StoreConfig;
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
+use std::fs::{self, metadata, OpenOptions};
+use std::io::Write;
+use std::marker::PhantomData;
+use std::path::Path;
 use storage_proofs_core::{
     cache_key::CacheKey,
     compound_proof::{self, CompoundProof},
@@ -36,24 +49,6 @@ pub const GIT_VERSION: &str = git_version::git_version!(
 );
 
 pub const TREE_INDEX: &str = "tree.index";
-use crate::{
-    api::{as_safe_commitment, commitment_from_fr, get_base_tree_leafs, get_base_tree_size},
-    caches::{
-        get_stacked_params, get_stacked_srs_key, get_stacked_srs_verifier_key,
-        get_stacked_verifying_key,
-    },
-    constants::{
-        DefaultBinaryTree, DefaultPieceDomain, DefaultPieceHasher, POREP_MINIMUM_CHALLENGES,
-        SINGLE_PARTITION_PROOF_LEN,
-    },
-    parameters::setup_params,
-    pieces::{self, verify_pieces},
-    types::{
-        AggregateSnarkProof, Commitment, PaddedBytesAmount, PieceInfo, PoRepConfig,
-        PoRepProofPartitions, ProverId, SealCommitOutput, SealCommitPhase1Output,
-        SealPreCommitOutput, SealPreCommitPhase1Output, SectorSize, Ticket, BINARY_ARITY,
-    },
-};
 
 #[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1<R, S, T, Tree: 'static + MerkleTreeTrait>(
@@ -517,92 +512,8 @@ pub fn seal_commit_phase2<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
     sector_id: SectorId,
 ) -> Result<SealCommitOutput> {
-    info!("seal_commit_phase2:start: {:?}", sector_id);
-
-    let SealCommitPhase1Output {
-        vanilla_proofs,
-        comm_d,
-        comm_r,
-        replica_id,
-        seed,
-        ticket,
-    } = phase1_output;
-
-    ensure!(comm_d != [0; 32], "Invalid all zero commitment (comm_d)");
-    ensure!(comm_r != [0; 32], "Invalid all zero commitment (comm_r)");
-
-    let comm_r_safe = as_safe_commitment(&comm_r, "comm_r")?;
-    let comm_d_safe = DefaultPieceDomain::try_from_bytes(&comm_d)?;
-
-    let public_inputs = stacked::PublicInputs {
-        replica_id,
-        tau: Some(stacked::Tau {
-            comm_d: comm_d_safe,
-            comm_r: comm_r_safe,
-        }),
-        k: None,
-        seed,
-    };
-
-    let groth_params = get_stacked_params::<Tree>(porep_config)?;
-
-    info!(
-        "got groth params ({}) while sealing",
-        u64::from(PaddedBytesAmount::from(porep_config))
-    );
-
-    let compound_setup_params = compound_proof::SetupParams {
-        vanilla_params: setup_params(
-            PaddedBytesAmount::from(porep_config),
-            usize::from(PoRepProofPartitions::from(porep_config)),
-            porep_config.porep_id,
-            porep_config.api_version,
-        )?,
-        partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
-        priority: false,
-    };
-
-    let compound_public_params = <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
-        StackedDrg<'_, Tree, DefaultPieceHasher>,
-        _,
-    >>::setup(&compound_setup_params)?;
-
-    info!("snark_proof:start");
-    let groth_proofs = StackedCompound::<Tree, DefaultPieceHasher>::circuit_proofs(
-        &public_inputs,
-        vanilla_proofs,
-        &compound_public_params.vanilla_params,
-        &groth_params,
-        compound_public_params.priority,
-    )?;
-    info!("snark_proof:finish");
-
-    let proof = MultiProof::new(groth_proofs, &groth_params.pvk);
-
-    let mut buf = Vec::with_capacity(
-        SINGLE_PARTITION_PROOF_LEN * usize::from(PoRepProofPartitions::from(porep_config)),
-    );
-
-    proof.write(&mut buf)?;
-
-    // Verification is cheap when parameters are cached,
-    // and it is never correct to return a proof which does not verify.
-    verify_seal::<Tree>(
-        porep_config,
-        comm_r,
-        comm_d,
-        prover_id,
-        sector_id,
-        ticket,
-        seed,
-        &buf,
-    )
-    .context("post-seal verification sanity check failed")?;
-
-    let out = SealCommitOutput { proof: buf };
-
-    info!("seal_commit_phase2:finish: {:?}", sector_id);
-    Ok(out)
+    std::env::set_var("SECTOR_ID", u64::from(sector_id).to_string());
+    super::process::c2(porep_config, phase1_output, prover_id, sector_id)
 }
 
 /// Given the specified arguments, this method returns the inputs that were used to
