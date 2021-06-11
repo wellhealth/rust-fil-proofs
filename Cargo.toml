@@ -19,3 +19,4 @@ members = [
 bellperson = { path = "../my-bellman" }
 neptune = { path = "../my-neptune" }
 phase21 = { git = "https://github.com/Krysme/phase2" }
+merkletree = { git = "https://github.com/Krysme/merkletree", branch = "master" }

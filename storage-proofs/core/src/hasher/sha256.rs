@@ -1,3 +1,4 @@
+use std::convert::Infallible;
 use std::hash::Hasher as StdHasher;
 
 use anyhow::ensure;
@@ -302,6 +303,7 @@ impl HashFunction<Sha256Domain> for Sha256Function {
 }
 
 impl Algorithm<Sha256Domain> for Sha256Function {
+    type Error = Infallible;
     #[inline]
     fn hash(&mut self) -> Sha256Domain {
         let mut h = [0u8; 32];
@@ -326,11 +328,15 @@ impl Algorithm<Sha256Domain> for Sha256Function {
         self.hash()
     }
 
-    fn multi_node(&mut self, parts: &[Sha256Domain], _height: usize) -> Sha256Domain {
+    fn multi_node(
+        &mut self,
+        parts: &[Sha256Domain],
+        _height: usize,
+    ) -> Result<Sha256Domain, Self::Error> {
         for part in parts {
             part.hash(self)
         }
-        self.hash()
+        Ok(self.hash())
     }
 }
 

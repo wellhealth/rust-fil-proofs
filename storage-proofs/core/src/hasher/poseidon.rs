@@ -11,7 +11,7 @@ use anyhow::ensure;
 use bellperson::bls::{Bls12, Fr, FrRepr};
 use bellperson::gadgets::{boolean, num};
 use bellperson::{ConstraintSystem, SynthesisError};
-use ff::{Field, PrimeField, PrimeFieldRepr, ScalarEngine};
+use ff::{Field, PrimeField, PrimeFieldDecodingError, PrimeFieldRepr, ScalarEngine};
 use generic_array::typenum;
 use generic_array::typenum::marker_traits::Unsigned;
 use merkletree::hash::{Algorithm as LightAlgorithm, Hashable};
@@ -346,6 +346,7 @@ impl HashFunction<PoseidonDomain> for PoseidonFunction {
 }
 
 impl LightAlgorithm<PoseidonDomain> for PoseidonFunction {
+    type Error = PrimeFieldDecodingError;
     #[inline]
     fn hash(&mut self) -> PoseidonDomain {
         self.0.into()
@@ -373,19 +374,21 @@ impl LightAlgorithm<PoseidonDomain> for PoseidonFunction {
         .into()
     }
 
-    fn multi_node(&mut self, parts: &[PoseidonDomain], _height: usize) -> PoseidonDomain {
-        match parts.len() {
+    fn multi_node(
+        &mut self,
+        parts: &[PoseidonDomain],
+        _height: usize,
+    ) -> std::result::Result<PoseidonDomain, PrimeFieldDecodingError> {
+        Ok(match parts.len() {
             1 | 2 | 4 | 8 | 16 => shared_hash_frs(
                 &parts
                     .iter()
-                    .map(|x| {
-                        <Bls12 as ff::ScalarEngine>::Fr::from_repr(x.0).expect("from_repr failure")
-                    })
-                    .collect::<Vec<_>>(),
+                    .map(|x| <Bls12 as ff::ScalarEngine>::Fr::from_repr(x.0))
+                    .collect::<std::result::Result<Vec<_>, PrimeFieldDecodingError>>()?,
             )
             .into(),
             arity => panic!("unsupported arity {}", arity),
-        }
+        })
     }
 }
 

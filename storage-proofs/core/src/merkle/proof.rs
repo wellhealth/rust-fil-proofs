@@ -186,9 +186,10 @@ impl<H: Hasher, Arity: PoseidonArity> From<Vec<PathElement<H, Arity>>> for Inclu
 
 impl<H: Hasher, Arity: PoseidonArity> InclusionPath<H, Arity> {
     /// Calculate the root of this path, given the leaf as input.
-    pub fn root(&self, leaf: H::Domain) -> H::Domain {
+    pub fn root(&self, leaf: H::Domain) -> Result<H::Domain> {
         let mut a = H::Function::default();
-        (0..self.path.len()).fold(leaf, |h, height| {
+        (0..self.path.len()).fold(Ok(leaf), |h: Result<_, anyhow::Error>, height| {
+            let h = h?;
             a.reset();
 
             let index = self.path[height].index;
@@ -196,6 +197,7 @@ impl<H: Hasher, Arity: PoseidonArity> InclusionPath<H, Arity> {
             nodes.insert(index, h);
 
             a.multi_node(&nodes, height)
+                .map_err(|_| anyhow::anyhow!("cannot get root from multi_node"))
         })
     }
 
@@ -538,7 +540,10 @@ impl<H: Hasher, Arity: 'static + PoseidonArity> SingleProof<H, Arity> {
     }
 
     fn verify(&self) -> bool {
-        let calculated_root = self.path.root(self.leaf);
+        let calculated_root = match self.path.root(self.leaf) {
+            Ok(o) => o,
+            Err(_) => return false,
+        };
         self.root == calculated_root
     }
 
@@ -590,8 +595,14 @@ impl<H: Hasher, Arity: 'static + PoseidonArity, SubTreeArity: 'static + Poseidon
     }
 
     fn verify(&self) -> bool {
-        let sub_leaf = self.base_proof.root(self.leaf);
-        let calculated_root = self.sub_proof.root(sub_leaf);
+        let sub_leaf = match self.base_proof.root(self.leaf) {
+            Ok(o) => o,
+            Err(_) => return false,
+        };
+        let calculated_root = match self.sub_proof.root(sub_leaf) {
+            Ok(o) => o,
+            Err(_) => return false,
+        };
 
         self.root == calculated_root
     }
@@ -671,9 +682,18 @@ impl<
     }
 
     fn verify(&self) -> bool {
-        let sub_leaf = self.base_proof.root(self.leaf);
-        let top_leaf = self.sub_proof.root(sub_leaf);
-        let calculated_root = self.top_proof.root(top_leaf);
+        let sub_leaf = match self.base_proof.root(self.leaf) {
+            Ok(o) => o,
+            Err(_) => return false,
+        };
+        let top_leaf = match self.sub_proof.root(sub_leaf) {
+            Ok(o) => o,
+            Err(_) => return false,
+        };
+        let calculated_root = match self.top_proof.root(top_leaf) {
+            Ok(o) => o,
+            Err(_) => return false,
+        };
 
         self.root == calculated_root
     }

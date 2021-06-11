@@ -1,3 +1,4 @@
+use std::convert::Infallible;
 use std::fmt;
 use std::hash::Hasher as StdHasher;
 
@@ -289,6 +290,7 @@ impl HashFunction<Blake2sDomain> for Blake2sFunction {
 }
 
 impl Algorithm<Blake2sDomain> for Blake2sFunction {
+    type Error = Infallible;
     #[inline]
     fn hash(&mut self) -> Blake2sDomain {
         self.0.clone().finalize().into()
@@ -309,11 +311,15 @@ impl Algorithm<Blake2sDomain> for Blake2sFunction {
         self.hash()
     }
 
-    fn multi_node(&mut self, parts: &[Blake2sDomain], _height: usize) -> Blake2sDomain {
+    fn multi_node(
+        &mut self,
+        parts: &[Blake2sDomain],
+        _height: usize,
+    ) -> Result<Blake2sDomain, Self::Error> {
         for part in parts {
             part.hash(self)
         }
-        self.hash()
+        Ok(self.hash())
     }
 }
 
