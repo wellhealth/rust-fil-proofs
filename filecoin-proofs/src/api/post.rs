@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher as StdHasher};
 use std::marker::PhantomData;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, ensure, Context, Result};
@@ -1008,19 +1009,38 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
 
     let trees: Vec<_> = replicas
         .par_iter()
-        .filter_map(
-            |(sector_id, replica)| match replica.merkle_tree(post_config.sector_size) {
-                Ok(o) => Some(o),
-                Err(_) => {
+        .filter_map(|(sector_id, replica)| {
+            match catch_unwind(AssertUnwindSafe(|| {
+                replica.merkle_tree(post_config.sector_size)
+            })) {
+                Ok(Ok(o)) => Some(o),
+                Ok(Err(_)) => {
+                    info!("error sector: {:?}", sector_id);
                     faulty_sectors
                         .lock()
                         .expect("cannot obtain lock for faulty_sectors")
                         .push(*sector_id);
                     None
                 }
-            },
-        )
+                Err(_) => {
+                    info!("error sector: {:?}", sector_id);
+                    faulty_sectors
+                        .lock()
+                        .expect("cannot obtain lock for faulty_sectors")
+                        .push(*sector_id);
+                    None
+                }
+            }
+        })
         .collect();
+
+    let num: i32 = std::env::var("WDPOST_RUST_DEBUG")
+        .unwrap_or_default()
+        .parse()
+        .unwrap_or_default();
+    if num != 0 {
+        panic!("this is only for testing purpose")
+    }
 
     let faulty_sectors = faulty_sectors
         .into_inner()
