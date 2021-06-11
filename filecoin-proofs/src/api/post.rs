@@ -1007,29 +1007,29 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
 
     let faulty_sectors = Mutex::new(Vec::new());
 
-    let mut err_set = Mutex::new(HashSet::default());
+    let err_set = Mutex::new(HashSet::<u64>::default());
 
     let trees: Vec<_> = replicas
         .par_iter()
-        .filter_map(|(sector_id, replica)| {
+        .filter_map(|(&sector_id, replica)| {
             match catch_unwind(AssertUnwindSafe(|| {
                 replica.merkle_tree(post_config.sector_size)
             })) {
                 Ok(Ok(o)) => Some(o),
                 Ok(Err(_)) => {
-                    err_set.lock().unwrap().insert(u64::from(*sector_id));
+                    err_set.lock().unwrap().insert(u64::from(sector_id));
                     faulty_sectors
                         .lock()
                         .expect("cannot obtain lock for faulty_sectors")
-                        .push(*sector_id);
+                        .push(sector_id);
                     None
                 }
                 Err(_) => {
-                    err_set.lock().unwrap().insert(u64::from(*sector_id));
+                    err_set.lock().unwrap().insert(u64::from(sector_id));
                     faulty_sectors
                         .lock()
                         .expect("cannot obtain lock for faulty_sectors")
-                        .push(*sector_id);
+                        .push(sector_id);
                     None
                 }
             }
@@ -1041,7 +1041,11 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         .parse()
         .unwrap_or_default();
     if num != 0 {
-        let err_sectors: Vec<_> = err_set.into_inner().into_iter().collect();
+        let err_sectors: Vec<_> = err_set
+            .into_inner()
+            .expect("failed to call into_inner")
+            .into_iter()
+            .collect();
         if err_sectors.is_empty() {
             bail!("no failed sectors");
         } else {
