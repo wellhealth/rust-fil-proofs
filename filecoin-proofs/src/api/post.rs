@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::hash::{Hash, Hasher as StdHasher};
 use std::marker::PhantomData;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use bincode::deserialize;
 use generic_array::typenum::Unsigned;
 use log::{info, trace};
@@ -1007,6 +1007,8 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
 
     let faulty_sectors = Mutex::new(Vec::new());
 
+    let mut err_set = Mutex::new(HashSet::default());
+
     let trees: Vec<_> = replicas
         .par_iter()
         .filter_map(|(sector_id, replica)| {
@@ -1015,7 +1017,7 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
             })) {
                 Ok(Ok(o)) => Some(o),
                 Ok(Err(_)) => {
-                    info!("error sector: {:?}", sector_id);
+                    err_set.lock().unwrap().insert(u64::from(*sector_id));
                     faulty_sectors
                         .lock()
                         .expect("cannot obtain lock for faulty_sectors")
@@ -1023,7 +1025,7 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
                     None
                 }
                 Err(_) => {
-                    info!("error sector: {:?}", sector_id);
+                    err_set.lock().unwrap().insert(u64::from(*sector_id));
                     faulty_sectors
                         .lock()
                         .expect("cannot obtain lock for faulty_sectors")
@@ -1039,7 +1041,12 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         .parse()
         .unwrap_or_default();
     if num != 0 {
-        panic!("this is only for testing purpose")
+        let err_sectors: Vec<_> = err_set.into_inner().into_iter().collect();
+        if err_sectors.is_empty() {
+            bail!("no failed sectors");
+        } else {
+            bail!("failed sectors: {:?}", err_sectors);
+        }
     }
 
     let faulty_sectors = faulty_sectors
