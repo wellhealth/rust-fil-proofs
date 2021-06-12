@@ -131,7 +131,7 @@ fn core_groups(cores_per_unit: usize) -> Option<Vec<Mutex<Vec<CoreIndex>>>> {
     };
     let all_cores = topo
         .objects_with_type(&ObjectType::Core)
-        .expect("cannot to get cores");
+        .expect("objects_with_type failed");
     let core_count = all_cores.len();
 
     let mut cache_depth = core_depth;

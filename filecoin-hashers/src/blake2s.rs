@@ -172,10 +172,11 @@ impl Domain for Blake2sDomain {
     }
 }
 
-impl From<Blake2sHash> for Blake2sDomain {
-    fn from(val: Blake2sHash) -> Self {
+#[allow(clippy::from_over_into)]
+impl Into<Blake2sDomain> for Blake2sHash {
+    fn into(self) -> Blake2sDomain {
         let mut res = Blake2sDomain::default();
-        res.0[..].copy_from_slice(val.as_ref());
+        res.0[..].copy_from_slice(self.as_ref());
         res.trim_to_fr32();
 
         res
