@@ -350,7 +350,6 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     Ok(out)
 }
 
-
 #[allow(clippy::too_many_arguments)]
 pub fn official_c2<Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
@@ -900,11 +899,13 @@ where
         let mut outputfile = OpenOptions::new()
             .create(true)
             .write(true)
-            .open(tree_index)
-            .unwrap();
+            .open(&tree_index)
+            .with_context(|| format!("cannot create open {:?}", tree_index))?;
+
         outputfile
             .write_all(&comm_d)
             .context("cannot write comm_d to tree-index")?;
+
         outputfile
             .write_all(&(data_tree.len() as u64).to_le_bytes())
             .context("cannot write tree length to tree-index")?;
@@ -1006,12 +1007,21 @@ where
     println!("tree-index: {:?}", new_path);
 
     let mut comm_d: [u8; 32] = [0; 32];
-    let mut outputfile = OpenOptions::new().read(true).open(new_path).unwrap();
-    outputfile.read_exact(&mut comm_d).unwrap();
+    let mut outputfile = OpenOptions::new()
+        .read(true)
+        .open(&new_path)
+        .with_context(|| format!("cannot open file: {:?}", new_path))?;
+
+    outputfile
+        .read_exact(&mut comm_d)
+        .with_context(|| format!("cannot read commd from {:?}", new_path))?;
     //读取data_tree.len 数据
 
     let mut treelen: [u8; 8] = [0; 8];
-    outputfile.read_exact(&mut treelen).unwrap();
+    outputfile
+        .read_exact(&mut treelen)
+        .with_context(|| format!("cannot read commd from {:?}", new_path))?;
+
     config.size = Some(u64::from_le_bytes(treelen) as usize);
 
     println!("read seal_pre_commit_phase1_layer comm_d is {:?}", comm_d);
