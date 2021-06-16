@@ -845,7 +845,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         };
 
         let last_layer = last_layer_path;
-		let unsealed = replica_path.clone();
+        let unsealed = replica_path.clone();
 
         super::p2::tree_r::run::<TreeArity>(
             &config,
