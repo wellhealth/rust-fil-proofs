@@ -297,13 +297,6 @@ where
     sealed_path.set_extension("sealed");
     let sealed_path = sealed_path;
 
-    std::fs::rename(&sealed_path, &replica_path).with_context(|| {
-        format!(
-            "cannot rename {:?} to {:?}",
-            sealed_path,
-            replica_path.as_ref()
-        )
-    })?;
 
     Ok(out)
 }

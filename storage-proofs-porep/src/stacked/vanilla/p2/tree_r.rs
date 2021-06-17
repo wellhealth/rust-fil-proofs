@@ -5,6 +5,7 @@ use ff::Field;
 use ff::PrimeField;
 use ff::PrimeFieldRepr;
 use filecoin_hashers::PoseidonArity;
+use log::error;
 use log::info;
 use neptune::{batch_hasher::Batcher, BatchHasher};
 use neptune::{
@@ -12,6 +13,7 @@ use neptune::{
     proteus::gpu::CLBatchHasher,
 };
 use rayon::prelude::*;
+use scopeguard::defer;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::io::Write;
@@ -24,6 +26,19 @@ pub struct TreeRConfig {
     pub node_count: usize,
     pub rows_to_discard: usize,
     pub paths: Vec<PathBuf>,
+}
+
+pub fn is_garbage_data(replica_path: &Path) -> Result<bool> {
+    let file_name = replica_path
+        .file_name()
+        .with_context(|| format!("cannot find file name for {:?}", replica_path))?;
+    let lotus_data = std::env::var("WORKER_PATH").context("cannot find WORKER_PATH")?;
+
+    let unsealed = Path::new(&lotus_data).join("unsealed").join(file_name);
+    let meta_data = std::fs::symlink_metadata(&unsealed)
+        .with_context(|| format!("cannot get metadata from {:?}", unsealed))?;
+
+    Ok(meta_data.file_type().is_symlink())
 }
 
 pub fn run<TreeArity>(
@@ -53,7 +68,9 @@ where
 
     let batch_size = SETTINGS.max_gpu_column_batch_size as usize;
 
-    let unsealed_file = File::open(replica_path)
+    let unsealed_0 = Path::new(&SETTINGS.origin_file_dir).join("s-unsealed-0");
+    let garbage = is_garbage_data(&replica_path)?;
+    let unsealed_file = File::open(if garbage { &unsealed_0 } else { replica_path })
         .with_context(|| format!("cannot open unsealed file: {:?}", replica_path))?;
 
     let last_layer_file = File::open(last_layer)
@@ -61,9 +78,26 @@ where
 
     let mut disk_data = [unsealed_file, last_layer_file];
 
-    let mut sealed_path = replica_path.to_owned();
-    sealed_path.set_extension("sealed");
-    let sealed_path = sealed_path;
+    let sealed_path = if garbage {
+        replica_path.to_owned()
+    } else {
+        let mut sealed_path = replica_path.to_owned();
+        sealed_path.set_extension("sealed");
+        sealed_path
+    };
+
+    defer!({
+        if garbage {
+            if let Err(e) = std::fs::rename(&sealed_path, &replica_path)
+                .with_context(|| format!("cannot rename {:?} to {:?}", sealed_path, replica_path))
+            {
+                error!(
+                    "cannot rename {:?} to {:?}, error:{:?}",
+                    sealed_path, replica_path, e
+                );
+            }
+        }
+    });
 
     let mut sealed_file = OpenOptions::new()
         .truncate(true)
