@@ -206,7 +206,17 @@ where
     R: AsRef<Path>,
     S: AsRef<Path>,
 {
-    info!("{:?}: p2 git-version: {}", replica_path.as_ref(), GIT_VERSION);
+    info!(
+        "replica len -> {}",
+        std::fs::metadata(&replica_path)
+            .expect("cannot get metadata")
+            .len(),
+    );
+    info!(
+        "{:?}: p2 git-version: {}",
+        replica_path.as_ref(),
+        GIT_VERSION
+    );
 
     // Sanity check all input path types.
     ensure!(
@@ -260,6 +270,12 @@ where
         StackedDrg<'_, Tree, DefaultPieceHasher>,
         _,
     >>::setup(&compound_setup_params)?;
+    info!(
+        "replica len -> {}",
+        std::fs::metadata(&replica_path)
+            .expect("cannot get metadata")
+            .len(),
+    );
 
     let (tau, (p_aux, t_aux)) = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase2(
         &compound_public_params.vanilla_params,
