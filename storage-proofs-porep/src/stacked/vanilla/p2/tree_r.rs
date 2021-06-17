@@ -55,15 +55,21 @@ where
 
     let unsealed_file = File::open(replica_path)
         .with_context(|| format!("cannot open unsealed file: {:?}", replica_path))?;
+
     let last_layer_file = File::open(last_layer)
         .with_context(|| format!("cannot open last layer file for tree-r {:?}", last_layer))?;
 
     let mut disk_data = [unsealed_file, last_layer_file];
+
+    let mut sealed_path = replica_path.to_owned();
+    sealed_path.set_extension("sealed");
+    let sealed_path = sealed_path;
+
     let mut sealed_file = OpenOptions::new()
         .truncate(true)
         .write(true)
         .create(true)
-        .open(replica_path)
+        .open(&sealed_path)
         .with_context(|| format!("cannot open sealed file: {:?}", replica_path))?;
 
     for (index, path) in config.paths.iter().enumerate() {

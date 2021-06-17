@@ -308,6 +308,19 @@ where
     let out = SealPreCommitOutput { comm_r, comm_d };
 
     info!("seal_pre_commit_phase2:finish");
+
+    let mut sealed_path = replica_path.as_ref().to_owned();
+    sealed_path.set_extension("sealed");
+    let sealed_path = sealed_path;
+
+    std::fs::rename(&sealed_path, &replica_path).with_context(|| {
+        format!(
+            "cannot rename {:?} to {:?}",
+            sealed_path,
+            replica_path.as_ref()
+        )
+    })?;
+
     Ok(out)
 }
 
