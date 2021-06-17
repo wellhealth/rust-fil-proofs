@@ -845,12 +845,10 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         };
 
         let last_layer = last_layer_path;
-        let unsealed = replica_path.clone();
 
         super::p2::tree_r::run::<TreeArity>(
             &config,
             last_layer,
-            &unsealed,
             &replica_path,
             *super::p2::GPU_INDEX,
         )?;
@@ -1217,7 +1215,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         let layer_last_path = StoreConfig::data_path(&x.0, &x.1);
 
         let tree_d_start = std::time::Instant::now();
-        let tree_d = data_tree.expect("cannot find tree-d");
+        let tree_d = data_tree.context("cannot find tree-d")?;
         tree_d_config.size = Some(tree_d.len());
         assert_eq!(
             tree_d_config.size.expect("config size failure"),
