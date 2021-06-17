@@ -13,7 +13,7 @@ use crate::SealCommitOutput;
 use crate::SealCommitPhase1Output;
 use crate::Ticket;
 use crate::SINGLE_PARTITION_PROOF_LEN;
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use bellperson::domain::Scalar;
 // use bellperson::Circuit;
 use bellperson::{
@@ -114,6 +114,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     let fft_cores = match gpu_index {
         0 | 1 => (0..2),
         2 | 3 => (2..4),
+        _ => bail!("gpu_index cannot be {}", gpu_index),
     };
 
     let fft_handler = fft::create_fft_handler::<Bls12, Scalar<Bls12>>(fft_cores);
