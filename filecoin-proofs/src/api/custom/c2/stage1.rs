@@ -20,10 +20,9 @@ use storage_proofs::merkle::MerkleTreeTrait;
 use storage_proofs::porep::stacked::circuit::hash::hash_single_column;
 use storage_proofs::porep::stacked::circuit::params::enforce_inclusion;
 use storage_proofs::porep::stacked::create_label_circuit as create_label;
-use storage_proofs::{gadgets::constraint, porep::stacked::params::Proof};
-// use storage_proofs::porep::stacked::params::Proof;
 use storage_proofs::porep::stacked::StackedCircuit;
 use storage_proofs::util::reverse_bit_numbering;
+use storage_proofs::{gadgets::constraint, porep::stacked::params::Proof};
 
 pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
     circuit: StackedCircuit<'static, Tree, DefaultPieceHasher>,

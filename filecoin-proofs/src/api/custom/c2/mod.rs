@@ -111,9 +111,12 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
             .map(|_| (Fr::random(&mut rng), Fr::random(&mut rng)))
             .unzip()
     };
+    let fft_cores = match gpu_index {
+        0 | 1 => (0..2),
+        2 | 3 => (2..4),
+    };
 
-    let fft_handler =
-        fft::create_fft_handler::<Bls12, Scalar<Bls12>>(0..bellperson::gpu::gpu_count());
+    let fft_handler = fft::create_fft_handler::<Bls12, Scalar<Bls12>>(fft_cores);
     let mut provers: Vec<ProvingAssignment<Bls12>> = c2_stage1(circuits)
         .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
 
