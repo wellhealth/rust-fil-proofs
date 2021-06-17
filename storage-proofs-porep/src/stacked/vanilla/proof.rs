@@ -846,13 +846,6 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
 
         let last_layer = last_layer_path;
 
-        info!(
-            "replica len -> {}",
-            std::fs::metadata(&replica_path)
-                .expect("cannot get metadata")
-                .len(),
-        );
-
         super::p2::tree_r::run::<TreeArity>(
             &config,
             last_layer,
