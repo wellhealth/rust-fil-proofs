@@ -29,7 +29,6 @@ pub struct TreeRConfig {
 pub fn run<TreeArity>(
     config: &TreeRConfig,
     last_layer: &Path,
-    unsealed: &Path,
     replica_path: &Path,
     gpu_index: usize,
 ) -> Result<()>
@@ -54,8 +53,8 @@ where
 
     let batch_size = SETTINGS.max_gpu_column_batch_size as usize;
 
-    let unsealed_file = File::open(unsealed)
-        .with_context(|| format!("cannot open unsealed file: {:?}", unsealed))?;
+    let unsealed_file = File::open(replica_path)
+        .with_context(|| format!("cannot open unsealed file: {:?}", replica_path))?;
     let last_layer_file = File::open(last_layer)
         .with_context(|| format!("cannot open last layer file for tree-r {:?}", last_layer))?;
 
