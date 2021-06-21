@@ -40,9 +40,11 @@ pub struct Settings {
     pub multicore_sdr_producers: usize,
     pub multicore_sdr_producer_stride: u64,
     pub multicore_sdr_lookahead: usize,
+    pub window_post_subprocess: bool,
     pub p1_program_name: String,
     pub p2_program_name: String,
     pub c2_program_name: String,
+    pub window_post_program_name: String,
 }
 
 impl Default for Settings {
@@ -71,6 +73,8 @@ impl Default for Settings {
             p1_program_name: "lotus-p1".to_owned(),
             p2_program_name: "lotus-p2".to_owned(),
             c2_program_name: "lotus-c2".to_owned(),
+            window_post_program_name: "lotus-window-post".to_owned(),
+            window_post_subprocess: false,
         }
     }
 }

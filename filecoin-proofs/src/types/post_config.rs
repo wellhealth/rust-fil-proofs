@@ -1,3 +1,5 @@
+use serde::Deserialize;
+use serde::Serialize;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -16,7 +18,7 @@ use crate::{
     types::{PaddedBytesAmount, SectorSize, UnpaddedBytesAmount},
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PoStConfig {
     pub sector_size: SectorSize,
     pub challenge_count: usize,
@@ -27,7 +29,7 @@ pub struct PoStConfig {
     pub api_version: ApiVersion,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PoStType {
     Winning,
     Window,

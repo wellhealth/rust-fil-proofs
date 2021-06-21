@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use log::info;
 use scopeguard::defer;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::Read;
 use std::{
     fs::{File, OpenOptions},
@@ -16,7 +16,7 @@ use crate::{
     api::cores::get_l3_index, api::cores::serialize, PieceInfo, PoRepConfig, ProverId,
     SealPreCommitOutput, SealPreCommitPhase1Output, Ticket,
 };
-use crate::{SealCommitOutput, SealCommitPhase1Output};
+use crate::{ChallengeSeed, PoStConfig, PrivateReplicaInfo, SealCommitOutput, SealCommitPhase1Output, SnarkProof};
 use serde::{Deserialize, Serialize};
 pub const SHENSUANYUN_GPU_INDEX: &str = "SHENSUANYUN_GPU_INDEX";
 
@@ -52,6 +52,18 @@ struct P1Param {
     sector_id: SectorId,
     ticket: Ticket,
     piece_infos: Vec<PieceInfo>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct WindowPost<Tree: 'static + MerkleTreeTrait> {
+    post_config: PoStConfig,
+    randomness: ChallengeSeed,
+    #[serde(bound(
+        serialize = "PrivateReplicaInfo<Tree>: Serialize",
+        deserialize = "PrivateReplicaInfo<Tree>: Deserialize<'de>"
+    ))]
+    replicas: BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
+    prover_id: ProverId,
 }
 
 pub fn p1<R, S, Tree: 'static + MerkleTreeTrait>(
@@ -316,6 +328,77 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         .with_context(|| format!("{:?}, cannot open c2 output file for reuslt", sector_id))?;
 
     Ok(SealCommitOutput { proof })
+}
+
+pub fn window_post<Tree: 'static + MerkleTreeTrait>(
+    post_config: &PoStConfig,
+    randomness: &ChallengeSeed,
+    replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
+    prover_id: ProverId,
+    gpu_index: usize,
+) -> Result<SnarkProof> {
+    let data = WindowPost {
+        post_config: post_config.clone(),
+        randomness: *randomness,
+        replicas: replicas.clone(),
+        prover_id,
+    };
+
+    let uuid = get_uuid();
+
+    let param_folder = get_param_folder();
+    std::fs::create_dir_all(&param_folder)
+        .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
+    let param_folder = get_param_folder();
+    std::fs::create_dir_all(&param_folder)
+        .with_context(|| format!("cannot create dir: {:?}", param_folder))?;
+    let in_path = Path::new(&param_folder).join(&uuid);
+    let out_path = Path::new(&param_folder).join(&uuid);
+
+    let program_folder = &settings::SETTINGS.program_folder;
+    let program_path = Path::new(program_folder).join(&settings::SETTINGS.window_post_program_name);
+
+    let infile = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(&in_path)
+        .context("cannot open file to pass in window post parameter")?;
+    defer!({
+        let _ = std::fs::remove_file(&out_path);
+    });
+
+    info!("writing parameter to file: {:?}", in_path);
+    serde_json::to_writer(infile, &data).context("cannot sealize to infile")?;
+
+    info!("start window post with program: {:?}", program_path);
+    let mut process = process::Command::new(&program_path)
+        .arg(&uuid)
+        .arg(u64::from(post_config.sector_size).to_string())
+        .arg(gpu_index.to_string())
+        .spawn()
+        .with_context(|| format!("cannot start program {:?} ", program_path))?;
+
+    let status = process.wait().expect("window post is not running");
+
+    match status.code() {
+        Some(0) => {
+            info!(" window post finished");
+        }
+        Some(n) => {
+            info!("window post failed with exit number: {}", n);
+            bail!("window post failed with exit number: {}", n);
+        }
+        None => {
+            info!("window post crashed");
+            bail!("window post crashed");
+        }
+    }
+
+    let proof =
+        std::fs::read(&out_path).context("cannot open window post output file for reuslt")?;
+
+    Ok(proof)
 }
 
 fn get_uuid() -> String {

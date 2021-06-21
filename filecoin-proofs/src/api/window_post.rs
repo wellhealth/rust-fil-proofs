@@ -3,11 +3,13 @@ use std::collections::BTreeMap;
 use anyhow::{ensure, Context, Result};
 use filecoin_hashers::Hasher;
 use log::info;
+use scopeguard::defer;
 use storage_proofs_core::{
     compound_proof::{self, CompoundProof},
     merkle::MerkleTreeTrait,
     multi_proof::MultiProof,
     sector::SectorId,
+    settings,
 };
 use storage_proofs_post::fallback::{
     self, FallbackPoSt, FallbackPoStCompound, PrivateSector, PublicSector,
@@ -17,6 +19,7 @@ use crate::{
     api::{as_safe_commitment, get_partitions_for_window_post, partition_vanilla_proofs},
     caches::{get_post_params, get_post_verifying_key},
     parameters::window_post_setup_params,
+    process::select_gpu_device,
     types::{
         ChallengeSeed, FallbackPoStSectorProof, PoStConfig, PrivateReplicaInfo, ProverId,
         PublicReplicaInfo, SnarkProof,
@@ -92,8 +95,28 @@ pub fn generate_window_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
     proof.to_vec()
 }
 
-/// Generates a Window proof-of-spacetime.
 pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
+    post_config: &PoStConfig,
+    randomness: &ChallengeSeed,
+    replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
+    prover_id: ProverId,
+) -> Result<SnarkProof> {
+    let gpu_index = select_gpu_device().unwrap_or_default();
+    defer! {
+        info!("release gpu index: {}", gpu_index);
+        super::process::release_gpu_device(gpu_index);
+    };
+    info!("generate_window_post: selected gpu index: {}", gpu_index);
+
+    if settings::SETTINGS.window_post_subprocess {
+        super::process::window_post(post_config, randomness, replicas, prover_id, gpu_index)
+    } else {
+        generate_window_post_inner(post_config, randomness, replicas, prover_id)
+    }
+}
+
+/// Generates a Window proof-of-spacetime.
+pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     post_config: &PoStConfig,
     randomness: &ChallengeSeed,
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,

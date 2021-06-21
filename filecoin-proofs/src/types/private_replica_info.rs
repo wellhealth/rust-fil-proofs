@@ -23,10 +23,12 @@ use crate::{
     api::{as_safe_commitment, get_base_tree_leafs, get_base_tree_size},
     types::{Commitment, PersistentAux, SectorSize},
 };
+use serde::Deserialize;
+use serde::Serialize;
 
 /// The minimal information required about a replica, in order to be able to generate
 /// a PoSt over it.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PrivateReplicaInfo<Tree: MerkleTreeTrait> {
     /// Path to the replica.
     replica: PathBuf,
