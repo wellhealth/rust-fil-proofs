@@ -15,7 +15,7 @@ use crate::{
 use anyhow::{ensure, Context, Result};
 use bellperson::bls::{Bls12, Fr};
 use bellperson::groth16;
-use bincode::{deserialize, serialize};
+use bincode::deserialize;
 use filecoin_hashers::{Domain, Hasher};
 use log::{info, trace};
 use memmap::MmapOptions;
@@ -325,6 +325,7 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
         &public_inputs,
         &vanilla_proofs,
     )?;
+
     ensure!(sanity_check, "Invalid vanilla proof generated");
 
     let out = SealCommitPhase1Output {
