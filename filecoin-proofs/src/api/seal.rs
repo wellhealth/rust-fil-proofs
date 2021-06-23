@@ -938,9 +938,9 @@ where
         &porep_config.porep_id,
     );
 
-    println!("seal_pre_commit_phase1_tree replica_id is {:?}", replica_id);
+    info!("seal_pre_commit_phase1_tree replica_id is {:?}", replica_id);
 
-    println!("{:?}", config);
+    info!("{:?}", config);
 
     //replica_id config
     let label_configs: Vec<StoreConfig> = Vec::with_capacity(0);
@@ -1006,7 +1006,7 @@ where
     //config.size = Some(127);
     //利用unsealed文件，生成unsealed.index文件
     let new_path = in_path.as_ref().with_file_name(TREE_INDEX);
-    println!("tree-index: {:?}", new_path);
+    info!("tree-index: {:?}", new_path);
 
     let mut comm_d: [u8; 32] = [0; 32];
     let mut outputfile = OpenOptions::new()
@@ -1026,8 +1026,8 @@ where
 
     config.size = Some(u64::from_le_bytes(treelen) as usize);
 
-    println!("read seal_pre_commit_phase1_layer comm_d is {:?}", comm_d);
-    println!("{:?}", config);
+    info!("read seal_pre_commit_phase1_layer comm_d is {:?}", comm_d);
+    info!("{:?}", config);
 
     info!("verifying pieces");
 
@@ -1043,7 +1043,7 @@ where
         comm_d,
         &porep_config.porep_id,
     );
-    println!(
+    info!(
         "seal_pre_commit_phase1_layer replica_id is {:?}",
         replica_id
     );
