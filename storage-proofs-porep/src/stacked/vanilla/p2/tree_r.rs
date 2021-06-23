@@ -28,17 +28,25 @@ pub struct TreeRConfig {
     pub paths: Vec<PathBuf>,
 }
 
-pub fn is_garbage_data(replica_path: &Path) -> Result<bool> {
-    let file_name = replica_path
-        .file_name()
-        .with_context(|| format!("cannot find file name for {:?}", replica_path))?;
-    let lotus_data = std::env::var("WORKER_PATH").context("cannot find WORKER_PATH")?;
+pub fn is_garbage_data(replica_path: &Path) -> bool {
+    let file_name = match replica_path.file_name() {
+        Some(o) => o,
+        None => return false,
+    };
+
+    let lotus_data = match std::env::var("WORKER_PATH").context("cannot find WORKER_PATH") {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
 
     let unsealed = Path::new(&lotus_data).join("unsealed").join(file_name);
-    let meta_data = std::fs::symlink_metadata(&unsealed)
-        .with_context(|| format!("cannot get metadata from {:?}", unsealed))?;
 
-    Ok(meta_data.file_type().is_symlink())
+    let meta_data = match std::fs::symlink_metadata(&unsealed) {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
+
+    meta_data.file_type().is_symlink()
 }
 
 pub fn run<TreeArity>(
@@ -68,8 +76,21 @@ where
 
     let batch_size = SETTINGS.max_gpu_column_batch_size as usize;
 
-    let unsealed_0 = Path::new(&SETTINGS.origin_file_dir).join("s-unsealed-0");
-    let garbage = is_garbage_data(&replica_path)?;
+    let unsealed_0 = if SETTINGS.is_bench {
+        replica_path
+            .parent()
+            .with_context(|| {
+                format!(
+                    "cannot calculate replica parent for path:{:?}",
+                    replica_path
+                )
+            })?
+            .join("staged-sector")
+    } else {
+        Path::new(&SETTINGS.origin_file_dir).join("s-unsealed-0")
+    };
+
+    let garbage = is_garbage_data(&replica_path) || SETTINGS.is_bench;
     let unsealed_file = File::open(if garbage { &unsealed_0 } else { replica_path })
         .with_context(|| format!("cannot open unsealed file: {:?}", replica_path))?;
 
@@ -87,7 +108,7 @@ where
     };
 
     defer!({
-        if garbage {
+        if !garbage {
             if let Err(e) = std::fs::rename(&sealed_path, &replica_path)
                 .with_context(|| format!("cannot rename {:?} to {:?}", sealed_path, replica_path))
             {

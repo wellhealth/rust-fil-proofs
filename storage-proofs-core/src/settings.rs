@@ -32,6 +32,7 @@ pub struct Settings {
     pub multicore_sdr_lookahead: usize,
     pub cores_for_p2: u32,
     pub origin_file_dir: String,
+	pub is_bench: bool,
 }
 
 impl Default for Settings {
@@ -58,6 +59,7 @@ impl Default for Settings {
             multicore_sdr_lookahead: 800,
             cores_for_p2: num_cpus::get() as u32,
             origin_file_dir: std::env::var("WORKER_UNSEALED_CACHE_PATH").unwrap_or_default(),
+            is_bench: false,
         }
     }
 }

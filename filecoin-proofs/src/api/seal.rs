@@ -293,11 +293,6 @@ where
 
     info!("seal_pre_commit_phase2:finish");
 
-    let mut sealed_path = replica_path.as_ref().to_owned();
-    sealed_path.set_extension("sealed");
-    let sealed_path = sealed_path;
-
-
     Ok(out)
 }
 
