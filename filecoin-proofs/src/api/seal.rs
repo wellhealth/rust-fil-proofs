@@ -83,6 +83,7 @@ where
     );
 
     let sector_bytes = usize::from(PaddedBytesAmount::from(porep_config));
+
     fs::metadata(&in_path)
         .with_context(|| format!("could not read in_path={:?})", in_path.as_ref().display()))?;
 
@@ -109,7 +110,7 @@ where
 
     let data = unsafe {
         MmapOptions::new()
-            .map_mut(&f_data)
+            .map(&f_data)
             .with_context(|| format!("could not mmap out_path={:?}", out_path.as_ref().display()))?
     };
 
@@ -823,6 +824,7 @@ where
     );
 
     let sector_bytes = usize::from(PaddedBytesAmount::from(porep_config));
+
     fs::metadata(&in_path)
         .with_context(|| format!("could not read in_path={:?})", in_path.as_ref().display()))?;
 
