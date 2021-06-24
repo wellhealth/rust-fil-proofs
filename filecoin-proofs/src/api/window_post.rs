@@ -33,8 +33,13 @@ pub fn generate_window_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
     randomness: &ChallengeSeed,
     prover_id: ProverId,
     vanilla_proofs: Vec<FallbackPoStSectorProof<Tree>>,
-    gpu_index: usize,
 ) -> Result<SnarkProof> {
+    let gpu_index = select_gpu_device().unwrap_or_default();
+    defer! {
+        info!("release gpu index: {}", gpu_index);
+        super::process::release_gpu_device(gpu_index);
+    };
+
     info!("generate_window_post_with_vanilla:start");
     ensure!(
         post_config.typ == PoStType::Window,
