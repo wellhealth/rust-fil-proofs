@@ -1,17 +1,18 @@
 use std::time::Instant;
 
 use log::info;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::error::Result;
 
 /// The ProofScheme trait provides the methods that any proof scheme needs to implement.
 pub trait ProofScheme<'a> {
-    type PublicParams: Clone;
+    type PublicParams: Clone + Send + Sync;
     type SetupParams: Clone;
-    type PublicInputs: Clone + Serialize + DeserializeOwned;
-    type PrivateInputs;
-    type Proof: Clone + Serialize + DeserializeOwned;
+    type PublicInputs: Clone + Serialize + DeserializeOwned + Send + Sync;
+    type PrivateInputs: Send + Sync;
+    type Proof: Clone + Serialize + DeserializeOwned + Send + Sync;
     type Requirements: Default;
 
     /// setup is used to generate public parameters from setup parameters in order to specialize
@@ -37,6 +38,7 @@ pub trait ProofScheme<'a> {
         let start = Instant::now();
 
         let result = (0..partition_count)
+            .into_par_iter()
             .map(|k| {
                 info!("generating groth proof {}.", k);
                 let start = Instant::now();
