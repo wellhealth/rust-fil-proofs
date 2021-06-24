@@ -2,7 +2,7 @@ use anyhow::{ensure, Context, Result};
 use filecoin_hashers::Hasher;
 use itertools::Itertools;
 use log::info;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use scopeguard::defer;
 use storage_proofs_core::{
     compound_proof::{self, CompoundProof},
@@ -138,7 +138,7 @@ pub fn generate_winning_post<Tree: 'static + MerkleTreeTrait>(
     let groth_params = get_post_params::<Tree>(&post_config)?;
 
     let trees = replicas
-        .iter()
+        .par_iter()
         .map(|(sector_id, replica)| {
             replica
                 .merkle_tree(post_config.sector_size)
