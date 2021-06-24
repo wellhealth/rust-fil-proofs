@@ -146,22 +146,24 @@ where
 
         let (seal_tx, seal_rx) = std::sync::mpsc::channel();
         let (build_tree_tx, build_tree_rx) = std::sync::mpsc::channel();
-        crossbeam::scope(|s| {
+        let thread_res = crossbeam::scope(|s| {
             s.spawn({
                 let tree_r_base = &tree_r_base;
                 let sealed_file = &mut sealed_file;
                 move |_| {
-                    seal_tx
-                        .send(persist_sealed(tree_r_base, sealed_file).with_context(|| {
+                    if let Err(e) =
+                        seal_tx.send(persist_sealed(tree_r_base, sealed_file).with_context(|| {
                             format!("cannot save to sealed file: {:?}", sealed_file)
                         }))
-                        .expect("cannot send persist_sealed");
-
-                    info!(
-                        "{:?} sealed file done for tree-r-{}",
-                        replica_path,
-                        index + 1
-                    );
+                    {
+                        info!("cannot send result to seal_tx: {:?}", e);
+                    } else {
+                        info!(
+                            "{:?} sealed file done for tree-r-{}",
+                            replica_path,
+                            index + 1
+                        );
+                    }
                 }
             });
 
@@ -175,9 +177,13 @@ where
             );
 
             info!("{:?} persist done for tree-r-{}", replica_path, index + 1);
-            build_tree_tx.send(res).expect("cannot send build_tree_tx");
-        })
-        .expect("tree-r thread panic");
+            if let Err(e) = build_tree_tx.send(res) {
+                info!("cannot send result to build_tree_tx: {:?}", e);
+            }
+        });
+        if let Err(e) = thread_res {
+            info!("tree-r thread panic: {:?}", e);
+        }
 
         seal_rx.recv().expect("cannot recv seal_rx")?;
         build_tree_rx.recv().expect("cannot recv build_tree_rx")?;
