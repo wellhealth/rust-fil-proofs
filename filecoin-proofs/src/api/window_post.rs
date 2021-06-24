@@ -33,6 +33,7 @@ pub fn generate_window_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
     randomness: &ChallengeSeed,
     prover_id: ProverId,
     vanilla_proofs: Vec<FallbackPoStSectorProof<Tree>>,
+    gpu_index: usize,
 ) -> Result<SnarkProof> {
     info!("generate_window_post_with_vanilla:start");
     ensure!(
@@ -88,6 +89,7 @@ pub fn generate_window_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
         &pub_inputs,
         partitioned_proofs,
         &groth_params,
+        gpu_index,
     )?;
 
     info!("generate_window_post_with_vanilla:finish");
@@ -111,7 +113,7 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     if settings::SETTINGS.window_post_subprocess {
         super::process::window_post(post_config, randomness, replicas, prover_id, gpu_index)
     } else {
-        generate_window_post_inner(post_config, randomness, replicas, prover_id)
+        generate_window_post_inner(post_config, randomness, replicas, prover_id, gpu_index)
     }
 }
 
@@ -121,6 +123,7 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     randomness: &ChallengeSeed,
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
+    gpu_index: usize,
 ) -> Result<SnarkProof> {
     info!("generate_window_post:start");
     ensure!(
@@ -188,7 +191,13 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         sectors: &priv_sectors,
     };
 
-    let proof = FallbackPoStCompound::prove(&pub_params, &pub_inputs, &priv_inputs, &groth_params)?;
+    let proof = FallbackPoStCompound::prove(
+        &pub_params,
+        &pub_inputs,
+        &priv_inputs,
+        &groth_params,
+        gpu_index,
+    )?;
 
     info!("generate_window_post:finish");
 

@@ -83,6 +83,7 @@ where
         pub_in: &S::PublicInputs,
         priv_in: &S::PrivateInputs,
         groth_params: &'b groth16::MappedParameters<Bls12>,
+        gpu_index: usize,
     ) -> Result<MultiProof<'b>> {
         let partition_count = Self::partition_count(pub_params);
 
@@ -110,6 +111,7 @@ where
             &pub_params.vanilla_params,
             groth_params,
             pub_params.priority,
+            gpu_index,
         )?;
         info!("snark_proof:finish");
 
@@ -121,6 +123,7 @@ where
         pub_in: &S::PublicInputs,
         vanilla_proofs: Vec<S::Proof>,
         groth_params: &'b groth16::MappedParameters<Bls12>,
+        gpu_index: usize,
     ) -> Result<MultiProof<'b>> {
         let partition_count = Self::partition_count(pub_params);
 
@@ -134,6 +137,7 @@ where
             &pub_params.vanilla_params,
             groth_params,
             pub_params.priority,
+            gpu_index,
         )?;
         info!("snark_proof:finish");
 
@@ -239,6 +243,7 @@ where
         pub_params: &S::PublicParams,
         groth_params: &groth16::MappedParameters<Bls12>,
         priority: bool,
+        gpu_index: usize,
     ) -> Result<Vec<groth16::Proof<Bls12>>> {
         let mut rng = OsRng;
         ensure!(
@@ -261,9 +266,9 @@ where
             .collect::<Result<Vec<_>>>()?;
 
         let groth_proofs = if priority {
-            create_random_proof_batch_in_priority(circuits, groth_params, &mut rng)?
+            create_random_proof_batch_in_priority(circuits, groth_params, &mut rng, gpu_index)?
         } else {
-            create_random_proof_batch(circuits, groth_params, &mut rng)?
+            create_random_proof_batch(circuits, groth_params, &mut rng, gpu_index)?
         };
 
         groth_proofs

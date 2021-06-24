@@ -29,6 +29,7 @@ pub fn generate_winning_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
     randomness: &ChallengeSeed,
     prover_id: ProverId,
     vanilla_proofs: Vec<FallbackPoStSectorProof<Tree>>,
+    gpu_index: usize,
 ) -> Result<SnarkProof> {
     info!("generate_winning_post_with_vanilla:start");
     ensure!(
@@ -86,6 +87,7 @@ pub fn generate_winning_post_with_vanilla<Tree: 'static + MerkleTreeTrait>(
         &pub_inputs,
         partitioned_proofs,
         &groth_params,
+        gpu_index,
     )?;
     let proof = proof.to_vec()?;
 
@@ -174,8 +176,13 @@ pub fn generate_winning_post<Tree: 'static + MerkleTreeTrait>(
         sectors: &priv_sectors,
     };
 
-    let proof =
-        FallbackPoStCompound::<Tree>::prove(&pub_params, &pub_inputs, &priv_inputs, &groth_params)?;
+    let proof = FallbackPoStCompound::<Tree>::prove(
+        &pub_params,
+        &pub_inputs,
+        &priv_inputs,
+        &groth_params,
+        0,
+    )?;
     let proof = proof.to_vec()?;
 
     info!("generate_winning_post:finish");
