@@ -1,6 +1,8 @@
 use anyhow::{ensure, Context, Result};
 use filecoin_hashers::Hasher;
+use itertools::Itertools;
 use log::info;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use scopeguard::defer;
 use storage_proofs_core::{
     compound_proof::{self, CompoundProof},
@@ -105,7 +107,7 @@ pub fn generate_winning_post<Tree: 'static + MerkleTreeTrait>(
     prover_id: ProverId,
 ) -> Result<SnarkProof> {
     let gpu_index = crate::process::select_gpu_device().unwrap_or_default();
-    defer!({ crate::process::release_gpu_device(gpu_index) });
+    defer!(crate::process::release_gpu_device(gpu_index));
 
     info!("generate_winning_post:start");
     ensure!(
@@ -146,28 +148,37 @@ pub fn generate_winning_post<Tree: 'static + MerkleTreeTrait>(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let mut pub_sectors = Vec::with_capacity(param_sector_count);
-    let mut priv_sectors = Vec::with_capacity(param_sector_count);
+    let (sub_pub, sub_priv) = (0..param_sector_count)
+        .into_par_iter()
+        .map(|_| {
+            let mut pub_sectors = Vec::with_capacity(param_sector_count);
+            let mut priv_sectors = Vec::with_capacity(param_sector_count);
 
-    for _ in 0..param_sector_count {
-        for ((sector_id, replica), tree) in replicas.iter().zip(trees.iter()) {
-            let comm_r = replica.safe_comm_r().with_context(|| {
-                format!("generate_winning_post: safe_comm_r failed: {:?}", sector_id)
-            })?;
-            let comm_c = replica.safe_comm_c();
-            let comm_r_last = replica.safe_comm_r_last();
+            for ((sector_id, replica), tree) in replicas.iter().zip(trees.iter()) {
+                let comm_r = replica.safe_comm_r().with_context(|| {
+                    format!("generate_winning_post: safe_comm_r failed: {:?}", sector_id)
+                })?;
+                let comm_c = replica.safe_comm_c();
+                let comm_r_last = replica.safe_comm_r_last();
 
-            pub_sectors.push(PublicSector::<<Tree::Hasher as Hasher>::Domain> {
-                id: *sector_id,
-                comm_r,
-            });
-            priv_sectors.push(PrivateSector {
-                tree,
-                comm_c,
-                comm_r_last,
-            });
-        }
-    }
+                pub_sectors.push(PublicSector::<<Tree::Hasher as Hasher>::Domain> {
+                    id: *sector_id,
+                    comm_r,
+                });
+                priv_sectors.push(PrivateSector {
+                    tree,
+                    comm_c,
+                    comm_r_last,
+                });
+            }
+            Ok((pub_sectors, priv_sectors))
+        })
+        .collect::<Result<Vec<(_, _)>>>()?
+        .into_iter()
+        .unzip::<_, _, Vec<_>, Vec<_>>();
+
+    let pub_sectors = sub_pub.into_iter().flatten().collect_vec();
+    let priv_sectors = sub_priv.into_iter().flatten().collect_vec();
 
     let pub_inputs = fallback::PublicInputs::<<Tree::Hasher as Hasher>::Domain> {
         randomness: randomness_safe,
