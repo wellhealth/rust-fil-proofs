@@ -102,13 +102,8 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
             &hash_num,
         );
     }
-    let input_len = cs.b_input_density.bv.len();
-    let aux_len = cs.a_aux_density.bv.len();
-    info!("input_len -> {}", input_len);
-    info!("aux_len -> {}", aux_len);
 
     for (index, proof) in proofs.into_iter().enumerate() {
-        info!("start synthesizing: {}", index + 1);
         proof_synthesize(
             proof,
             cs,
