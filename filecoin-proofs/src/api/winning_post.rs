@@ -1,6 +1,7 @@
 use anyhow::{ensure, Context, Result};
 use filecoin_hashers::Hasher;
 use log::info;
+use scopeguard::defer;
 use storage_proofs_core::{
     compound_proof::{self, CompoundProof},
     merkle::MerkleTreeTrait,
@@ -103,6 +104,9 @@ pub fn generate_winning_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &[(SectorId, PrivateReplicaInfo<Tree>)],
     prover_id: ProverId,
 ) -> Result<SnarkProof> {
+    let gpu_index = crate::process::select_gpu_device().unwrap_or_default();
+    defer!({ crate::process::release_gpu_device(gpu_index) });
+
     info!("generate_winning_post:start");
     ensure!(
         post_config.typ == PoStType::Winning,
@@ -181,7 +185,7 @@ pub fn generate_winning_post<Tree: 'static + MerkleTreeTrait>(
         &pub_inputs,
         &priv_inputs,
         &groth_params,
-        0,
+        gpu_index,
     )?;
     let proof = proof.to_vec()?;
 
