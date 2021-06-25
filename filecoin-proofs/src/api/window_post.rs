@@ -1,8 +1,13 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Mutex,
+};
 
 use anyhow::{ensure, Context, Result};
 use filecoin_hashers::Hasher;
+use itertools::Itertools;
 use log::info;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use scopeguard::defer;
 use storage_proofs_core::{
     compound_proof::{self, CompoundProof},
@@ -153,10 +158,33 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         FallbackPoStCompound::setup(&setup_params)?;
     let groth_params = get_post_params::<Tree>(&post_config)?;
 
+    let faulty = Mutex::new(BTreeSet::new());
+
     let trees: Vec<_> = replicas
-        .iter()
-        .filter_map(|(_sector_id, replica)| replica.merkle_tree(post_config.sector_size).ok())
+        .par_iter()
+        .filter_map(
+            |(&sector_id, replica)| match replica.merkle_tree(post_config.sector_size) {
+                Ok(o) => Some(o),
+                Err(_) => {
+                    faulty
+                        .lock()
+                        .expect("failed to lock faulty")
+                        .insert(sector_id);
+                    None
+                }
+            },
+        )
         .collect();
+
+    let faulty = faulty
+        .into_inner()
+        .expect("cannot take inner set from faulty");
+
+    if !faulty.is_empty() {
+        return Err(anyhow::Error::from(
+            storage_proofs_core::error::Error::FaultySectors(faulty.into_iter().collect_vec()),
+        ));
+    }
 
     let mut pub_sectors = Vec::with_capacity(sector_count);
     let mut priv_sectors = Vec::with_capacity(sector_count);
