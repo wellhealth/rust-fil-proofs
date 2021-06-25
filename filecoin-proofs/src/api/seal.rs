@@ -356,8 +356,10 @@ where
     S: AsRef<Path>,
     T: AsRef<Path>,
 {
-    use crate::api::Operation::CommD;
-    info!("seal_pre_commit_phase1_tree:start: {:?}", sector_id);
+    info!(
+        "debuglog-seal_pre_commit_phase1_tree:start: {:?}",
+        sector_id
+    );
     // Sanity check all input path types.
     ensure!(
         metadata(in_path.as_ref())?.is_file(),
@@ -409,8 +411,8 @@ where
         _,
     >>::setup(&compound_setup_params)?;
 
-    info!("building merkle tree for the original data");
-    let (config, comm_d) = measure_op(CommD, || -> Result<_> {
+    info!("debuglog-building merkle tree for the original data");
+    let (config, comm_d) = {
         let base_tree_size = get_base_tree_size::<DefaultBinaryTree>(porep_config.sector_size)?;
         let base_tree_leafs = get_base_tree_leafs::<DefaultBinaryTree>(base_tree_size)?;
         ensure!(
@@ -445,13 +447,15 @@ where
 
         let tree_index = in_path.as_ref().with_file_name(TREE_INDEX);
 
-        info!("tree-index path:{:?}", tree_index);
+        info!("debuglog-tree-index path:{:?}", tree_index);
 
         let mut outputfile = OpenOptions::new()
             .create(true)
             .write(true)
-            .open(tree_index)
+            .truncate(true)
+            .open(&tree_index)
             .unwrap();
+        info!("tree-index: {:?} has been created", &tree_index);
         outputfile
             .write_all(&comm_d)
             .context("cannot write comm_d to tree-index")?;
@@ -459,6 +463,10 @@ where
             .write_all(&(data_tree.len() as u64).to_le_bytes())
             .context("cannot write tree length to tree-index")?;
 
+        info!(
+            "debuglog data has been written into tree-index: {:?}",
+            tree_index
+        );
         config.size = Some(data_tree.len());
 
         info!("write seal_pre_commit_phase1_tree comm_d is {:?}", comm_d);
@@ -467,8 +475,8 @@ where
 
         drop(data_tree);
 
-        Ok((config, comm_d))
-    })?;
+        (config, comm_d)
+    };
 
     info!("verifying pieces");
 
