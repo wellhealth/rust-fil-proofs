@@ -4,7 +4,7 @@ use std::mem::size_of;
 use std::panic::panic_any;
 use std::slice;
 
-use anyhow::ensure;
+use anyhow::{ensure, Context};
 use bellperson::{
     bls::{Bls12, Fr, FrRepr},
     gadgets::{boolean::Boolean, num::AllocatedNum},
@@ -333,6 +333,7 @@ impl HashFunction<PoseidonDomain> for PoseidonFunction {
 }
 
 impl LightAlgorithm<PoseidonDomain> for PoseidonFunction {
+    type Error = anyhow::Error;
     #[inline]
     fn hash(&mut self) -> PoseidonDomain {
         self.0.into()
@@ -360,21 +361,25 @@ impl LightAlgorithm<PoseidonDomain> for PoseidonFunction {
         .into()
     }
 
-    fn multi_node(&mut self, parts: &[PoseidonDomain], _height: usize) -> PoseidonDomain {
-        match parts.len() {
+    fn multi_node(
+        &mut self,
+        parts: &[PoseidonDomain],
+        _height: usize,
+    ) -> anyhow::Result<PoseidonDomain> {
+        Ok(match parts.len() {
             1 | 2 | 4 | 8 | 16 => shared_hash_frs(
                 &parts
                     .iter()
                     .enumerate()
                     .map(|(i, x)| {
                         <Bls12 as ScalarEngine>::Fr::from_repr(x.0)
-                            .unwrap_or_else(|_| panic_any(format!("from_repr failure at {}", i)))
+                            .with_context(|| format!("from_repr failure at {}", i))
                     })
-                    .collect::<Vec<_>>(),
+                    .collect::<anyhow::Result<Vec<_>>>()?,
             )
             .into(),
-            arity => panic_any(format!("unsupported arity {}", arity)),
-        }
+            arity => anyhow::bail!("unsupported arity {}", arity),
+        })
     }
 }
 

@@ -14,3 +14,4 @@ members = [
 
 [patch.crates-io]
 bellperson = { git = "https://github.com/15012700225/my-bellman", branch = "version-0.14.2" }
+merkletree = { path = "../merkletree" }

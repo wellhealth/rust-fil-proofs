@@ -181,9 +181,13 @@ impl<H: Hasher, Arity: PoseidonArity> From<Vec<PathElement<H, Arity>>> for Inclu
 
 impl<H: Hasher, Arity: PoseidonArity> InclusionPath<H, Arity> {
     /// Calculate the root of this path, given the leaf as input.
-    pub fn root(&self, leaf: H::Domain) -> H::Domain {
+    pub fn root(
+        &self,
+        leaf: H::Domain,
+    ) -> std::result::Result<H::Domain, <H::Function as Algorithm<H::Domain>>::Error> {
         let mut a = H::Function::default();
-        (0..self.path.len()).fold(leaf, |h, height| {
+        (0..self.path.len()).fold(Ok(leaf), |h, height| {
+            let h = h?;
             a.reset();
 
             let index = self.path[height].index;
@@ -517,8 +521,10 @@ impl<H: Hasher, Arity: 'static + PoseidonArity> SingleProof<H, Arity> {
     }
 
     fn verify(&self) -> bool {
-        let calculated_root = self.path.root(self.leaf);
-        self.root == calculated_root
+        self.path
+            .root(self.leaf)
+            .map(|x| x == self.root)
+            .unwrap_or(false)
     }
 
     fn leaf(&self) -> H::Domain {
@@ -569,10 +575,11 @@ impl<H: Hasher, Arity: 'static + PoseidonArity, SubTreeArity: 'static + Poseidon
     }
 
     fn verify(&self) -> bool {
-        let sub_leaf = self.base_proof.root(self.leaf);
-        let calculated_root = self.sub_proof.root(sub_leaf);
-
-        self.root == calculated_root
+        self.base_proof
+            .root(self.leaf)
+            .and_then(|sub_leaf| self.sub_proof.root(sub_leaf))
+            .map(|x| self.root == x)
+            .unwrap_or(false)
     }
 
     fn leaf(&self) -> H::Domain {
@@ -650,11 +657,12 @@ impl<
     }
 
     fn verify(&self) -> bool {
-        let sub_leaf = self.base_proof.root(self.leaf);
-        let top_leaf = self.sub_proof.root(sub_leaf);
-        let calculated_root = self.top_proof.root(top_leaf);
-
-        self.root == calculated_root
+        self.base_proof
+            .root(self.leaf)
+            .and_then(|sub_leaf| self.sub_proof.root(sub_leaf))
+            .and_then(|top_leaf| self.top_proof.root(top_leaf))
+            .map(|x| x == self.root)
+            .unwrap_or(false)
     }
 
     fn leaf(&self) -> H::Domain {
