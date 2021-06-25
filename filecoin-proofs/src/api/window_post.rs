@@ -155,14 +155,8 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
 
     let trees: Vec<_> = replicas
         .iter()
-        .map(|(sector_id, replica)| {
-            replica
-                .merkle_tree(post_config.sector_size)
-                .with_context(|| {
-                    format!("generate_window_post: merkle_tree failed: {:?}", sector_id)
-                })
-        })
-        .collect::<Result<_>>()?;
+        .filter_map(|(_sector_id, replica)| replica.merkle_tree(post_config.sector_size).ok())
+        .collect();
 
     let mut pub_sectors = Vec::with_capacity(sector_count);
     let mut priv_sectors = Vec::with_capacity(sector_count);
