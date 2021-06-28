@@ -123,6 +123,10 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     if settings::SETTINGS.window_post_subprocess {
         super::process::window_post(post_config, randomness, replicas, prover_id, gpu_index)
     } else {
+        std::panic::set_hook(Box::new(move |_| {
+            let bt = backtrace::Backtrace::new();
+            info!("window-post panic occured, backtrace: {:?}", bt);
+        }));
         generate_window_post_inner(post_config, randomness, replicas, prover_id, gpu_index)
     }
 }

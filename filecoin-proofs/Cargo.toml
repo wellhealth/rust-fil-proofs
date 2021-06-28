@@ -15,6 +15,7 @@ gettid = "*"
 scopeguard = "*"
 uuid = { version = "*", features = ["serde", "v4"] }
 rust-gpu-tools = "0.3.0"
+backtrace = "*"
 
 storage-proofs-core = { path = "../storage-proofs-core", version = "^8.0.0", default-features = false}
 storage-proofs-porep = { path = "../storage-proofs-porep", version = "^8.0.0", default-features = false }
