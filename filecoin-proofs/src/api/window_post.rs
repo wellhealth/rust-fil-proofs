@@ -113,7 +113,9 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
 ) -> Result<SnarkProof> {
+    info!("worker git version = {}", crate::GIT_VERSION);
     let gpu_index = select_gpu_device().unwrap_or_default();
+
     defer! {
         info!("release gpu index: {}", gpu_index);
         super::process::release_gpu_device(gpu_index);

@@ -17,3 +17,8 @@ pub use api::*;
 pub use commitment_reader::*;
 pub use constants::*;
 pub use types::*;
+
+pub const GIT_VERSION: &str = git_version::git_version!(
+    args = ["--abbrev=40", "--always", "--dirty=-modified"],
+    prefix = "git:"
+);
