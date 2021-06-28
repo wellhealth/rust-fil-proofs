@@ -6,7 +6,7 @@ use std::{
 use anyhow::{ensure, Context, Result};
 use filecoin_hashers::Hasher;
 use itertools::Itertools;
-use log::info;
+use log::{error, info};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use scopeguard::defer;
 use storage_proofs_core::{
@@ -171,7 +171,13 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         .filter_map(
             |(&sector_id, replica)| match replica.merkle_tree(post_config.sector_size) {
                 Ok(o) => Some(o),
-                Err(_) => {
+                Err(e) => {
+                    error!(
+                        "{:?}: build merkle tree error: {:?}\nBacktrace:\n{}",
+                        sector_id,
+                        e,
+                        e.backtrace()
+                    );
                     faulty
                         .lock()
                         .expect("failed to lock faulty")
