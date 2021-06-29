@@ -254,7 +254,7 @@ pub fn init<Tree: 'static + MerkleTreeTrait>(
         .map(|(k, vanilla_proof)| {
             StackedCompound::<Tree, DefaultPieceHasher>::circuit(
                 &pub_in,
-                Default::default(),
+                (),
                 &vanilla_proof,
                 &pub_params,
                 Some(k),
@@ -356,15 +356,9 @@ fn c2_stage2(
                     let tx_hl = tx_hl.clone();
                     s.spawn(move |_| tx_hl.send(params.get_h(0)).unwrap());
                 }
-                let mut a =
-                    EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.a, Vec::new()))
-                        .unwrap();
-                let mut b =
-                    EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.b, Vec::new()))
-                        .unwrap();
-                let mut c =
-                    EvaluationDomain::from_coeffs(std::mem::replace(&mut prover.c, Vec::new()))
-                        .unwrap();
+                let mut a = EvaluationDomain::from_coeffs(std::mem::take(&mut prover.a)).unwrap();
+                let mut b = EvaluationDomain::from_coeffs(std::mem::take(&mut prover.b)).unwrap();
+                let mut c = EvaluationDomain::from_coeffs(std::mem::take(&mut prover.c)).unwrap();
 
                 b.ifft(&worker, fft_kern).unwrap();
                 b.coset_fft(&worker, fft_kern).unwrap();
@@ -417,7 +411,7 @@ fn c2_stage2(
     let input_assignments = provers
         .par_iter_mut()
         .map(|prover| {
-            let input_assignment = std::mem::replace(&mut prover.input_assignment, Vec::new());
+            let input_assignment = std::mem::take(&mut prover.input_assignment);
             Arc::new(
                 input_assignment
                     .into_iter()
@@ -431,7 +425,7 @@ fn c2_stage2(
     let aux_assignments = provers
         .par_iter_mut()
         .map(|prover| {
-            let aux_assignment = std::mem::replace(&mut prover.aux_assignment, Vec::new());
+            let aux_assignment = std::mem::take(&mut prover.aux_assignment);
             Arc::new(
                 aux_assignment
                     .into_iter()

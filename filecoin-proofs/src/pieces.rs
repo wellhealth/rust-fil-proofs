@@ -105,10 +105,9 @@ pub fn compute_comm_d(sector_size: SectorSize, piece_infos: &[PieceInfo]) -> Res
 
     let mut stack = Stack::new();
 
-    let first = piece_infos
+    let first = *piece_infos
         .first()
-        .expect("unreachable: !is_empty()")
-        .clone();
+        .expect("unreachable: !is_empty()");
     ensure!(
         u64::from(PaddedBytesAmount::from(first.size)).is_power_of_two(),
         "Piece size ({:?}) must be a power of 2.",
@@ -127,7 +126,7 @@ pub fn compute_comm_d(sector_size: SectorSize, piece_infos: &[PieceInfo]) -> Res
             stack.shift_reduce(zero_padding(stack.peek().size)?)?
         }
 
-        stack.shift_reduce(piece_info.clone())?;
+        stack.shift_reduce(*piece_info)?;
     }
 
     while stack.len() > 1 {

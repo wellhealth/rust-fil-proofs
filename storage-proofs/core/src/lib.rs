@@ -1,9 +1,10 @@
-#![deny(clippy::all, clippy::perf, clippy::correctness)]
+#![deny(clippy::all, clippy::perf)]
 #![allow(clippy::many_single_char_names)]
 #![allow(clippy::unreadable_literal)]
 #![allow(clippy::type_repetition_in_bounds)]
 //requires nightly, or later stable version
 //#![warn(clippy::unwrap_used)]
+#![allow(clippy::wrong_self_convention)]
 
 #[macro_use]
 pub mod test_helper;

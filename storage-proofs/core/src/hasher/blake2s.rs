@@ -182,10 +182,10 @@ impl Domain for Blake2sDomain {
     }
 }
 
-impl Into<Blake2sDomain> for Blake2sHash {
-    fn into(self) -> Blake2sDomain {
+impl From<Blake2sHash> for Blake2sDomain {
+    fn from(val: Blake2sHash) -> Self {
         let mut res = Blake2sDomain::default();
-        res.0[..].copy_from_slice(self.as_ref());
+        res.0[..].copy_from_slice(val.as_ref());
         res.trim_to_fr32();
 
         res
@@ -256,7 +256,7 @@ impl HashFunction<Blake2sDomain> for Blake2sFunction {
     ) -> std::result::Result<num::AllocatedNum<Bls12>, SynthesisError> {
         let personalization = vec![0u8; 8];
         let alloc_bits =
-            blake2s_circuit::blake2s(cs.namespace(|| "hash"), &bits[..], &personalization)?;
+            blake2s_circuit::blake2s(cs.namespace(|| "hash"), bits, &personalization)?;
 
         multipack::pack_bits(cs.namespace(|| "pack"), &alloc_bits)
     }

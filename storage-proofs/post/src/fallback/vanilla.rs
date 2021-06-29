@@ -325,10 +325,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
         info!("vanilla.rs prove");
 
         let proofs = Self::prove_all_partitions(pub_params, pub_inputs, priv_inputs, 1)?;
-        let k = match pub_inputs.k {
-            None => 0,
-            Some(k) => k,
-        };
+        let k = pub_inputs.k.unwrap_or(0);
         // Because partition proofs require a common setup, the general ProofScheme implementation,
         // which makes use of `ProofScheme::prove` cannot be used here. Instead, we need to prove all
         // partitions in one pass, as implemented by `prove_all_partitions` below.
@@ -387,7 +384,7 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                     let rows_to_discard =
                         default_rows_to_discard(tree_leafs, Tree::Arity::to_usize());
 
-                    let now =  Instant::now();
+                    let now = Instant::now();
                     trace!(
                         "Generating proof for tree leafs {} and arity {}",
                         tree_leafs,
@@ -451,7 +448,11 @@ impl<'a, Tree: 'a + MerkleTreeTrait> ProofScheme<'a> for FallbackPoSt<'a, Tree> 
                                 (inclusion_proofs, faults)
                             },
                         );
-                    info!("single window post {:?} cost : {:?} ", sector_id, now.elapsed().as_micros());
+                    info!(
+                        "single window post {:?} cost : {:?} ",
+                        sector_id,
+                        now.elapsed().as_micros()
+                    );
                     (
                         SectorProof {
                             inclusion_proofs,

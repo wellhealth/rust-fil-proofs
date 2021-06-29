@@ -88,7 +88,6 @@ impl PoseidonArity for U36 {
         &*POSEIDON_CONSTANTS_36
     }
 }
-
 pub trait Domain:
     Ord
     + Copy

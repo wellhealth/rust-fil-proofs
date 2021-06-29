@@ -109,6 +109,7 @@ where
             Tree::Arity::to_usize(),
             configs[i].clone(),
         )?;
+
         if let Some(lc_store) = <dyn Any>::downcast_mut::<
             merkletree::store::LevelCacheStore<<Tree::Hasher as Hasher>::Domain, std::fs::File>,
         >(&mut store)

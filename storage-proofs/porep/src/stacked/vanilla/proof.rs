@@ -905,7 +905,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
             &replica_config,
         )
     }
-
+	#[allow(clippy::too_many_arguments)]
     pub(crate) fn transform_and_replicate_layers(
         graph: &StackedBucketGraph<Tree::Hasher>,
         layer_challenges: &LayerChallenges,
@@ -942,6 +942,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         .context("failed to transform")
     }
 
+	#[allow(clippy::too_many_arguments)]
     pub(crate) fn transform_and_replicate_layers_inner(
         graph: &StackedBucketGraph<Tree::Hasher>,
         layer_challenges: &LayerChallenges,

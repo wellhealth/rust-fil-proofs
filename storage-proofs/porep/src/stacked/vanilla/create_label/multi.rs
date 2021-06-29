@@ -41,7 +41,7 @@ const SHA_BLOCK_SIZE: usize = 64;
 const SHA256_INITIAL_DIGEST: [u32; 8] = [
     0x6a09_e667,
     0xbb67_ae85,
-    0x3c6_ef372,
+    0x3c6e_f372,
     0xa54f_f53a,
     0x510e_527f,
     0x9b05_688c,
@@ -198,7 +198,7 @@ fn create_label_runner(
     info!("{:?}: created label runner", sector_id);
     Ok(())
 }
-
+#[allow(clippy::too_many_arguments)]
 fn create_layer_labels(
     parents_cache: &CacheReader<u32>,
     replica_id: &[u8],
@@ -439,7 +439,6 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
 
     let default_cache_size = DEGREE * 4 * cache_window_nodes;
 
-
     let l3_index = get_l3_index();
     info!("{:?}: L3 index: {:?}", sector_id, l3_index);
 
@@ -552,8 +551,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
         }
     });
 
-    let errs = rx.iter().collect::<Vec<_>>();
-    if let Some(e) = errs.into_iter().next() {
+    if let Some(e) = rx.iter().next() {
         error!("p1 cannot save layers, error: {:?}", e);
         return Err(e);
     }

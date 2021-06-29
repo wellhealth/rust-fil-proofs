@@ -137,7 +137,7 @@ impl<'a, H: 'static + Hasher> Circuit<Bls12> for DrgPoRepCircuit<'a, H> {
         assert_eq!(self.data_nodes_paths.len(), nodes);
 
         let replica_node_num = num::AllocatedNum::alloc(cs.namespace(|| "replica_id_num"), || {
-            replica_id.ok_or_else(|| SynthesisError::AssignmentMissing)
+            replica_id.ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         replica_node_num.inputize(cs.namespace(|| "replica_id"))?;
@@ -206,10 +206,7 @@ impl<'a, H: 'static + Hasher> Circuit<Bls12> for DrgPoRepCircuit<'a, H> {
                     .map(|(i, val)| {
                         let num = num::AllocatedNum::alloc(
                             cs.namespace(|| format!("parents_{}_num", i)),
-                            || {
-                                val.map(Into::into)
-                                    .ok_or_else(|| SynthesisError::AssignmentMissing)
-                            },
+                            || val.map(Into::into).ok_or(SynthesisError::AssignmentMissing),
                         )?;
                         Ok(reverse_bit_numbering(num.to_bits_le(
                             cs.namespace(|| format!("parents_{}_bits", i)),
@@ -228,7 +225,7 @@ impl<'a, H: 'static + Hasher> Circuit<Bls12> for DrgPoRepCircuit<'a, H> {
 
                 let replica_node_num =
                     num::AllocatedNum::alloc(cs.namespace(|| "replica_node"), || {
-                        (*replica_node).ok_or_else(|| SynthesisError::AssignmentMissing)
+                        (*replica_node).ok_or(SynthesisError::AssignmentMissing)
                     })?;
 
                 let decoded = encode::decode(cs.namespace(|| "decode"), &key, &replica_node_num)?;
@@ -382,7 +379,7 @@ mod tests {
             None,
             config,
             replica_path,
-            0
+            0,
         )
         .expect("failed to replicate");
 

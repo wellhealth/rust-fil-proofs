@@ -722,7 +722,7 @@ pub fn verify_seal_inner<Tree: 'static + MerkleTreeTrait>(
     let public_inputs =
         stacked::PublicInputs::<<Tree::Hasher as Hasher>::Domain, DefaultPieceDomain> {
             replica_id,
-            tau: Some(Tau { comm_r, comm_d }),
+            tau: Some(Tau { comm_d, comm_r }),
             seed,
             k: None,
         };
@@ -890,7 +890,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
             DefaultPieceDomain,
         > {
             replica_id,
-            tau: Some(Tau { comm_r, comm_d }),
+            tau: Some(Tau { comm_d, comm_r }),
             seed: seeds[i],
             k: None,
         });
@@ -996,6 +996,7 @@ pub fn fauxrep2<R: AsRef<Path>, S: AsRef<Path>, Tree: 'static + MerkleTreeTrait>
     Ok(commitment)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
@@ -1161,6 +1162,7 @@ where
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
@@ -1193,7 +1195,6 @@ lazy_static::lazy_static! {
 }
 
 pub fn select_gpu_device() -> Option<usize> {
-
     if bellperson::gpu::gpu_count() == 0 {
         Some(0)
     } else {

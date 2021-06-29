@@ -46,7 +46,7 @@ impl Column {
             .enumerate()
             .map(|(i, val)| {
                 num::AllocatedNum::alloc(cs.namespace(|| format!("column_num_row_{}", i)), || {
-                    val.ok_or_else(|| SynthesisError::AssignmentMissing)
+                    val.ok_or(SynthesisError::AssignmentMissing)
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;

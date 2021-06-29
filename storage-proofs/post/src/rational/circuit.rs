@@ -56,21 +56,21 @@ impl<'a, Tree: 'static + MerkleTreeTrait> Circuit<Bls12> for RationalPoStCircuit
                 num::AllocatedNum::alloc(cs.namespace(|| format!("comm_r_last_{}", i)), || {
                     comm_r_last
                         .map(Into::into)
-                        .ok_or_else(|| SynthesisError::AssignmentMissing)
+                        .ok_or(SynthesisError::AssignmentMissing)
                 })?;
 
             let comm_c_num =
                 num::AllocatedNum::alloc(cs.namespace(|| format!("comm_c_{}", i)), || {
                     comm_c
                         .map(Into::into)
-                        .ok_or_else(|| SynthesisError::AssignmentMissing)
+                        .ok_or(SynthesisError::AssignmentMissing)
                 })?;
 
             let comm_r_num =
                 num::AllocatedNum::alloc(cs.namespace(|| format!("comm_r_{}", i)), || {
                     comm_r
                         .map(Into::into)
-                        .ok_or_else(|| SynthesisError::AssignmentMissing)
+                        .ok_or(SynthesisError::AssignmentMissing)
                 })?;
 
             comm_r_num.inputize(cs.namespace(|| format!("comm_r_{}_input", i)))?;

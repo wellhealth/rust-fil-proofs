@@ -116,7 +116,7 @@ impl CacheData {
         self.shift(0)
     }
 
-    fn open(offset: u32, len: u32, path: &PathBuf) -> Result<Self> {
+    fn open(offset: u32, len: u32, path: &Path) -> Result<Self> {
         let min_cache_size = (offset + len) as usize * DEGREE * NODE_BYTES;
 
         let file = LockedFile::open_shared_read(path)
@@ -140,12 +140,7 @@ impl CacheData {
                 .with_context(|| format!("could not mmap path={}", path.display()))?
         };
 
-        Ok(Self {
-            data,
-            file,
-            len,
-            offset,
-        })
+        Ok(Self { data, offset, len, file })
     }
 }
 
@@ -383,7 +378,7 @@ fn parent_cache_dir_name() -> String {
     settings::SETTINGS.parent_cache.clone()
 }
 
-fn parent_cache_id(path: &PathBuf) -> String {
+fn parent_cache_id(path: &Path) -> String {
     Path::new(&path)
         .file_stem()
         .expect("parent_cache_id file_stem failure")
@@ -393,7 +388,7 @@ fn parent_cache_id(path: &PathBuf) -> String {
 }
 
 /// Get the correct parent cache data for a given cache id.
-fn get_parent_cache_data(path: &PathBuf) -> Option<&ParentCacheData> {
+fn get_parent_cache_data(path: &Path) -> Option<&ParentCacheData> {
     PARENT_CACHE.get(&parent_cache_id(path))
 }
 

@@ -142,7 +142,7 @@ where
             batch_size,
             &mut builder_tx,
             &mut files,
-            replica_path.as_ref(),
+            replica_path,
         )?;
     }
     Ok(())

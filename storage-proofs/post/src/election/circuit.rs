@@ -57,19 +57,19 @@ impl<'a, Tree: 'static + MerkleTreeTrait> Circuit<Bls12> for ElectionPoStCircuit
         let comm_r_last_num = num::AllocatedNum::alloc(cs.namespace(|| "comm_r_last"), || {
             comm_r_last
                 .map(Into::into)
-                .ok_or_else(|| SynthesisError::AssignmentMissing)
+                .ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         let comm_c_num = num::AllocatedNum::alloc(cs.namespace(|| "comm_c"), || {
             comm_c
                 .map(Into::into)
-                .ok_or_else(|| SynthesisError::AssignmentMissing)
+                .ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         let comm_r_num = num::AllocatedNum::alloc(cs.namespace(|| "comm_r"), || {
             comm_r
                 .map(Into::into)
-                .ok_or_else(|| SynthesisError::AssignmentMissing)
+                .ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         comm_r_num.inputize(cs.namespace(|| "comm_r_input"))?;
@@ -108,21 +108,21 @@ impl<'a, Tree: 'static + MerkleTreeTrait> Circuit<Bls12> for ElectionPoStCircuit
         let randomness_num = num::AllocatedNum::alloc(cs.namespace(|| "randomness"), || {
             randomness
                 .map(Into::into)
-                .ok_or_else(|| SynthesisError::AssignmentMissing)
+                .ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         // prover_id
         let prover_id_num = num::AllocatedNum::alloc(cs.namespace(|| "prover_id"), || {
             prover_id
                 .map(Into::into)
-                .ok_or_else(|| SynthesisError::AssignmentMissing)
+                .ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         // sector_id
         let sector_id_num = num::AllocatedNum::alloc(cs.namespace(|| "sector_id"), || {
             sector_id
                 .map(Into::into)
-                .ok_or_else(|| SynthesisError::AssignmentMissing)
+                .ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         let mut partial_ticket_nums = vec![randomness_num, prover_id_num, sector_id_num];
@@ -130,7 +130,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait> Circuit<Bls12> for ElectionPoStCircuit
             let leaf_num =
                 num::AllocatedNum::alloc(cs.namespace(|| format!("leaf_{}", i)), || {
                     leaf.map(Into::into)
-                        .ok_or_else(|| SynthesisError::AssignmentMissing)
+                        .ok_or(SynthesisError::AssignmentMissing)
                 })?;
             partial_ticket_nums.push(leaf_num);
         }
@@ -155,7 +155,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait> Circuit<Bls12> for ElectionPoStCircuit
             num::AllocatedNum::alloc(cs.namespace(|| "partial_ticket"), || {
                 partial_ticket
                     .map(Into::into)
-                    .ok_or_else(|| SynthesisError::AssignmentMissing)
+                    .ok_or(SynthesisError::AssignmentMissing)
             })?;
 
         expected_partial_ticket_num.inputize(cs.namespace(|| "partial_ticket_input"))?;

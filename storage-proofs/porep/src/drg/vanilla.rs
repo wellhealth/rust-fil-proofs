@@ -33,7 +33,7 @@ pub struct Tau<T> {
 
 impl<T: Domain> Tau<T> {
     pub fn new(comm_d: T, comm_r: T) -> Self {
-        Tau { comm_d, comm_r }
+        Tau { comm_r, comm_d }
     }
 }
 
@@ -438,7 +438,7 @@ where
         data_tree: Option<BinaryMerkleTree<H>>,
         config: StoreConfig,
         replica_path: PathBuf,
-        _gpu_index:usize,
+        _gpu_index: usize,
     ) -> Result<(Self::Tau, Self::ProverAux)> {
         use storage_proofs_core::cache_key::CacheKey;
 
@@ -742,7 +742,7 @@ mod tests {
             None,
             config.clone(),
             replica_path,
-            0
+            0,
         )
         .expect("replication failed");
 
