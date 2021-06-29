@@ -1013,6 +1013,7 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
         .par_iter()
         .filter_map(|(&sector_id, replica)| {
             match catch_unwind(AssertUnwindSafe(|| {
+				info!("replica-cache: {:?}", replica.cache_dir_path());
                 replica.merkle_tree(post_config.sector_size)
             })) {
                 Ok(Ok(o)) => Some(o),
