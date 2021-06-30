@@ -6,7 +6,7 @@ use std::{
 use anyhow::{ensure, Context, Result};
 use filecoin_hashers::Hasher;
 use itertools::Itertools;
-use log::info;
+use log::{error, info};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use scopeguard::defer;
 use storage_proofs_core::{
@@ -113,7 +113,9 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     replicas: &BTreeMap<SectorId, PrivateReplicaInfo<Tree>>,
     prover_id: ProverId,
 ) -> Result<SnarkProof> {
+    info!("worker git version = {}", crate::GIT_VERSION);
     let gpu_index = select_gpu_device().unwrap_or_default();
+
     defer! {
         info!("release gpu index: {}", gpu_index);
         super::process::release_gpu_device(gpu_index);
@@ -123,6 +125,10 @@ pub fn generate_window_post<Tree: 'static + MerkleTreeTrait>(
     if settings::SETTINGS.window_post_subprocess {
         super::process::window_post(post_config, randomness, replicas, prover_id, gpu_index)
     } else {
+        std::panic::set_hook(Box::new(move |_| {
+            let bt = backtrace::Backtrace::new();
+            info!("window-post panic occured, backtrace: {:?}", bt);
+        }));
         generate_window_post_inner(post_config, randomness, replicas, prover_id, gpu_index)
     }
 }
@@ -162,18 +168,25 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
 
     let trees: Vec<_> = replicas
         .par_iter()
-        .filter_map(
-            |(&sector_id, replica)| match replica.merkle_tree(post_config.sector_size) {
+        .filter_map(|(&sector_id, replica)| {
+            info!("{:?}: path: {:?}", sector_id, replica.cache_dir_path());
+            match replica.merkle_tree(post_config.sector_size) {
                 Ok(o) => Some(o),
-                Err(_) => {
+                Err(e) => {
+                    error!(
+                        "{:?}: build merkle tree error: {:?}\nBacktrace:\n{}",
+                        sector_id,
+                        e,
+                        e.backtrace()
+                    );
                     faulty
                         .lock()
                         .expect("failed to lock faulty")
                         .insert(sector_id);
                     None
                 }
-            },
-        )
+            }
+        })
         .collect();
 
     let faulty = faulty

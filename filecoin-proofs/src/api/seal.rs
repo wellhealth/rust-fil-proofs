@@ -43,11 +43,6 @@ use storage_proofs_porep::stacked::{
     TemporaryAux, TemporaryAuxCache,
 };
 
-pub const GIT_VERSION: &str = git_version::git_version!(
-    args = ["--abbrev=40", "--always", "--dirty=-modified"],
-    prefix = "git:"
-);
-
 pub const TREE_INDEX: &str = "tree.index";
 
 #[allow(clippy::too_many_arguments)]
@@ -66,6 +61,7 @@ where
     S: AsRef<Path>,
     T: AsRef<Path>,
 {
+    info!("worker git version = {}", crate::GIT_VERSION);
     info!("seal_pre_commit_phase1:start: {:?}", sector_id);
 
     // Sanity check all input path types.
@@ -357,6 +353,7 @@ where
     S: AsRef<Path>,
     T: AsRef<Path>,
 {
+    info!("worker git version = {}", crate::GIT_VERSION);
     info!(
         "debuglog-seal_pre_commit_phase1_tree:start: {:?}",
         sector_id
