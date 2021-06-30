@@ -464,6 +464,7 @@ pub fn with_open_file<'a, T>(
     open_file: impl FnOnce(&'a PathBuf) -> io::Result<LockedFile>,
     f: impl FnOnce(&mut LockedFile) -> Result<T>,
 ) -> Result<T> {
+    info!("attempting to ensure path: {:?}", file_path);
     ensure_parent(&file_path)?;
     f(&mut open_file(&file_path)?)
 }
