@@ -35,7 +35,7 @@ pub struct Tau<T> {
 
 impl<T: Domain> Tau<T> {
     pub fn new(comm_d: T, comm_r: T) -> Self {
-        Tau { comm_d, comm_r }
+        Tau { comm_r, comm_d }
     }
 }
 

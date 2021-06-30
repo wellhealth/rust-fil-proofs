@@ -237,10 +237,10 @@ fn generate_candidate<Tree: MerkleTreeTrait>(
     let ticket = finalize_ticket(&partial_ticket);
 
     Ok(Candidate {
-        sector_challenge_index,
         sector_id,
         partial_ticket,
         ticket,
+        sector_challenge_index,
     })
 }
 

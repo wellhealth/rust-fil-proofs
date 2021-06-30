@@ -341,6 +341,7 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
@@ -454,7 +455,7 @@ where
             .write(true)
             .truncate(true)
             .open(&tree_index)
-            .unwrap();
+            .with_context(|| format!("cannot open file: {:?}", tree_index))?;
         info!("tree-index: {:?} has been created", &tree_index);
         outputfile
             .write_all(&comm_d)
@@ -939,7 +940,7 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     let public_inputs =
         stacked::PublicInputs::<<Tree::Hasher as Hasher>::Domain, DefaultPieceDomain> {
             replica_id,
-            tau: Some(Tau { comm_r, comm_d }),
+            tau: Some(Tau { comm_d, comm_r }),
             seed,
             k: None,
         };
@@ -1068,7 +1069,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
             DefaultPieceDomain,
         > {
             replica_id,
-            tau: Some(Tau { comm_r, comm_d }),
+            tau: Some(Tau { comm_d, comm_r }),
             seed: seeds[i],
             k: None,
         });
@@ -1096,7 +1097,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
     info!("verify_batch_seal:finish");
     result
 }
-
+#[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,

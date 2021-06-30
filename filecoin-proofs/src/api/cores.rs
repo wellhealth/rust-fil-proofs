@@ -31,8 +31,10 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
             std::process::exit(255)
         });
 
-    let l3_cache_regex = regex::Regex::new(r#"([[:digit:]]*)[[:space:]]+L3Cache"#).unwrap();
-    let pu_regex = regex::Regex::new(r#"([[:digit:]]*)[[:space:]]+PU"#).unwrap();
+    let l3_cache_regex =
+        regex::Regex::new(r#"([[:digit:]]*)[[:space:]]+L3Cache"#).expect("cannot initialize regex");
+    let pu_regex =
+        regex::Regex::new(r#"([[:digit:]]*)[[:space:]]+PU"#).expect("cannot initialize regex");
 
     let l3_cache_match = l3_cache_regex
         .captures_iter(&hwloc_info)
