@@ -217,6 +217,7 @@ impl<Tree: MerkleTreeTrait, G: 'static + Hasher> Proof<Tree, G> {
 
             // Duplicate parents, according to the hashing algorithm.
             let mut expanded_parents = parents.clone();
+            #[allow(clippy::branches_sharing_code)]
             if layer > 1 {
                 expanded_parents.extend_from_slice(&parents); // 28
                 expanded_parents.extend_from_slice(&parents[..9]); // 37
