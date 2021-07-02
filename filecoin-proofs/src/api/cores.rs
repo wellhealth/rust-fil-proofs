@@ -6,6 +6,15 @@ use storage_proofs_core::settings::SETTINGS;
 use lazy_static::lazy_static;
 pub struct L3Index(pub Vec<u32>);
 
+impl Drop for L3Index {
+    fn drop(&mut self) {
+        L3_TOPOLOGY
+            .lock()
+            .expect("cannot get L3_TOPOLOGY")
+            .push(std::mem::take(&mut self.0))
+    }
+}
+
 lazy_static! {
     static ref L3_TOPOLOGY: Mutex<Vec<Vec<u32>>> = Mutex::new(get_l3_topo());
 }
