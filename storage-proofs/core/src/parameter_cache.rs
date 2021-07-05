@@ -250,7 +250,6 @@ where
     ) -> Result<groth16::MappedParameters<Bls12>> {
         let id = Self::cache_identifier(pub_params);
         let cache_path = ensure_ancestor_dirs_exist(parameter_cache_params_path(&id))?;
-        info!("cache_path: {:?}", cache_path);
 
         let generate = || -> Result<_> {
             if let Some(rng) = rng {
