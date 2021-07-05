@@ -168,9 +168,8 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
 
     let trees: Vec<_> = replicas
         .par_iter()
-        .filter_map(|(&sector_id, replica)| {
-            info!("{:?}: path: {:?}", sector_id, replica.cache_dir_path());
-            match replica.merkle_tree(post_config.sector_size) {
+        .filter_map(
+            |(&sector_id, replica)| match replica.merkle_tree(post_config.sector_size) {
                 Ok(o) => Some(o),
                 Err(e) => {
                     error!(
@@ -185,8 +184,8 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
                         .insert(sector_id);
                     None
                 }
-            }
-        })
+            },
+        )
         .collect();
 
     let faulty = faulty
