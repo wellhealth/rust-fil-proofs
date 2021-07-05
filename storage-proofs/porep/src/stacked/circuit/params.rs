@@ -101,7 +101,7 @@ impl<Tree: MerkleTreeTrait, G: 'static + Hasher> Proof<Tree, G> {
 
         // PrivateInput: data_leaf
         let data_leaf_num = num::AllocatedNum::alloc(cs.namespace(|| "data_leaf"), || {
-            data_leaf.ok_or_else(|| SynthesisError::AssignmentMissing)
+            data_leaf.ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         // enforce inclusion of the data leaf in the tree D
@@ -196,6 +196,7 @@ impl<Tree: MerkleTreeTrait, G: 'static + Hasher> Proof<Tree, G> {
 
             // Duplicate parents, according to the hashing algorithm.
             let mut expanded_parents = parents.clone();
+            #[allow(clippy::branches_sharing_code)]
             if layer > 1 {
                 expanded_parents.extend_from_slice(&parents); // 28
                 expanded_parents.extend_from_slice(&parents[..9]); // 37

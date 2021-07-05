@@ -100,19 +100,19 @@ impl<Tree: 'static + MerkleTreeTrait> Circuit<Bls12> for &Sector<Tree> {
         let comm_r_last_num = num::AllocatedNum::alloc(cs.namespace(|| "comm_r_last"), || {
             comm_r_last
                 .map(Into::into)
-                .ok_or_else(|| SynthesisError::AssignmentMissing)
+                .ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         let comm_c_num = num::AllocatedNum::alloc(cs.namespace(|| "comm_c"), || {
             comm_c
                 .map(Into::into)
-                .ok_or_else(|| SynthesisError::AssignmentMissing)
+                .ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         let comm_r_num = num::AllocatedNum::alloc(cs.namespace(|| "comm_r"), || {
             comm_r
                 .map(Into::into)
-                .ok_or_else(|| SynthesisError::AssignmentMissing)
+                .ok_or(SynthesisError::AssignmentMissing)
         })?;
 
         comm_r_num.inputize(cs.namespace(|| "comm_r_input"))?;
@@ -268,7 +268,7 @@ mod tests {
     fn metric_fallback_post_circuit_poseidon() {
         use bellperson::util_cs::bench_cs::BenchCS;
         let params = fallback::SetupParams {
-            sector_size: 1024 * 1024 * 1024 * 32 as u64,
+            sector_size: 1024 * 1024 * 1024 * 32_u64,
             challenge_count: 10,
             sector_count: 5,
         };

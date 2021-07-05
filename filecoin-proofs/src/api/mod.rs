@@ -361,7 +361,7 @@ fn verify_store(config: &StoreConfig, arity: usize, required_configs: usize) -> 
                 let path_str = cur_path.as_str();
                 let tree_names = vec!["tree-d", "tree-c", "tree-r-last"];
                 for name in tree_names {
-                    if path_str.find(name).is_some() {
+                    if path_str.contains(name) {
                         configs.push(StoreConfig::from_config(
                             config,
                             format!("{}-{}", name, i),
@@ -425,7 +425,7 @@ fn verify_level_cache_store<Tree: MerkleTreeTrait>(config: &StoreConfig) -> Resu
                 let path_str = cur_path.as_str();
                 let tree_names = vec!["tree-d", "tree-c", "tree-r-last"];
                 for name in tree_names {
-                    if path_str.find(name).is_some() {
+                    if path_str.contains(name) {
                         configs.push(StoreConfig::from_config(
                             config,
                             format!("{}-{}", name, i),
@@ -636,7 +636,9 @@ mod tests {
 
                 assert!(
                     haystack.contains(needle),
-                    "\"{}\" did not contain \"{}\"", haystack, needle
+                    "\"{}\" did not contain \"{}\"",
+                    haystack,
+                    needle
                 );
             } else {
                 panic!("should have failed comm_r to Fr32 conversion");
@@ -671,7 +673,9 @@ mod tests {
 
                 assert!(
                     haystack.contains(needle),
-                    "\"{}\" did not contain \"{}\"", haystack, needle
+                    "\"{}\" did not contain \"{}\"",
+                    haystack,
+                    needle
                 );
             } else {
                 panic!("should have failed comm_d to Fr32 conversion");

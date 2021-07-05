@@ -603,7 +603,7 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     let public_inputs =
         stacked::PublicInputs::<<Tree::Hasher as Hasher>::Domain, DefaultPieceDomain> {
             replica_id,
-            tau: Some(Tau { comm_r, comm_d }),
+            tau: Some(Tau { comm_d, comm_r }),
             seed,
             k: None,
         };
@@ -728,7 +728,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
             DefaultPieceDomain,
         > {
             replica_id,
-            tau: Some(Tau { comm_r, comm_d }),
+            tau: Some(Tau { comm_d, comm_r }),
             seed: seeds[i],
             k: None,
         });

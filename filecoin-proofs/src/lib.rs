@@ -1,4 +1,4 @@
-#![deny(clippy::all, clippy::perf, clippy::correctness)]
+#![deny(clippy::all)]
 
 //requires nightly, or later stable version
 //#![warn(clippy::unwrap_used)]

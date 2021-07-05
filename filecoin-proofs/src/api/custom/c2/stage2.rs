@@ -320,12 +320,9 @@ fn do_concurrent_fft(
         .par_iter_mut()
         .enumerate()
         .for_each(|(index, prover)| {
-            let mut a =
-                MultiGpuDomain::try_from(std::mem::replace(&mut prover.a, Vec::new())).unwrap();
-            let mut b =
-                MultiGpuDomain::try_from(std::mem::replace(&mut prover.b, Vec::new())).unwrap();
-            let mut c =
-                MultiGpuDomain::try_from(std::mem::replace(&mut prover.c, Vec::new())).unwrap();
+            let mut a = MultiGpuDomain::try_from(std::mem::take(&mut prover.a)).unwrap();
+            let mut b = MultiGpuDomain::try_from(std::mem::take(&mut prover.b)).unwrap();
+            let mut c = MultiGpuDomain::try_from(std::mem::take(&mut prover.c)).unwrap();
             b.ifft(&fft_handler).unwrap();
             b.coset_fft(&fft_handler).unwrap();
 
@@ -372,6 +369,7 @@ fn do_concurrent_fft(
 }
 
 #[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
 fn fft(
     provers: &mut [ProvingAssignment<Bls12>],
     params: &MappedParameters<Bls12>,
@@ -440,12 +438,9 @@ fn fft(
                 });
             }
 
-            let mut a =
-                MultiGpuDomain::try_from(std::mem::replace(&mut prover.a, Vec::new())).unwrap();
-            let mut b =
-                MultiGpuDomain::try_from(std::mem::replace(&mut prover.b, Vec::new())).unwrap();
-            let mut c =
-                MultiGpuDomain::try_from(std::mem::replace(&mut prover.c, Vec::new())).unwrap();
+            let mut a = MultiGpuDomain::try_from(std::mem::take(&mut prover.a)).unwrap();
+            let mut b = MultiGpuDomain::try_from(std::mem::take(&mut prover.b)).unwrap();
+            let mut c = MultiGpuDomain::try_from(std::mem::take(&mut prover.c)).unwrap();
 
             b.ifft(&fft_handler).unwrap();
             b.coset_fft(&fft_handler).unwrap();
@@ -497,7 +492,7 @@ fn collect_input_assignments(provers: &mut [ProvingAssignment<Bls12>]) -> Vec<Ar
     provers
         .par_iter_mut()
         .map(|prover| {
-            let assignments = std::mem::replace(&mut prover.input_assignment, Vec::new());
+            let assignments = std::mem::take(&mut prover.input_assignment);
             Arc::new(assignments.into_iter().map(|s| s.into_repr()).collect())
         })
         .collect()
@@ -506,7 +501,7 @@ fn collect_aux_assignments(provers: &mut [ProvingAssignment<Bls12>]) -> Vec<Arc<
     provers
         .par_iter_mut()
         .map(|prover| {
-            let assignments = std::mem::replace(&mut prover.aux_assignment, Vec::new());
+            let assignments = std::mem::take(&mut prover.aux_assignment);
             Arc::new(assignments.into_iter().map(|s| s.into_repr()).collect())
         })
         .collect()

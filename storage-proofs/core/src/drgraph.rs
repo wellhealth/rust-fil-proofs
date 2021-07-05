@@ -158,7 +158,7 @@ impl<H: Hasher> Graph<H> for BucketGraph<H> {
                 let n_buckets = (metagraph_node as f64).log2().ceil() as u64;
 
                 let (predecessor_index, other_drg_parents) = if self.is_legacy {
-                    (m_prime, &mut parents[..])
+                    (m_prime, &mut *parents)
                 } else {
                     (0, &mut parents[1..])
                 };

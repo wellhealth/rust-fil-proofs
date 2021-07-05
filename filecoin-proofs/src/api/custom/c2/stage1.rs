@@ -10,7 +10,6 @@ use bellperson::ConstraintSystem;
 use bellperson::Index;
 use bellperson::SynthesisError;
 use bellperson::Variable;
-use log::info;
 use num::AllocatedNum;
 use storage_proofs::gadgets::encode::encode;
 use storage_proofs::gadgets::uint64;
@@ -43,7 +42,7 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
     let replica_id_num = num_alloc(cs, || {
         replica_id
             .map(Into::into)
-            .ok_or_else(|| SynthesisError::AssignmentMissing)
+            .ok_or(SynthesisError::AssignmentMissing)
     })?;
 
     // make replica_id a public input
@@ -56,7 +55,7 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
     let comm_d_num = num_alloc(cs, || {
         comm_d
             .map(Into::into)
-            .ok_or_else(|| SynthesisError::AssignmentMissing)
+            .ok_or(SynthesisError::AssignmentMissing)
     })?;
 
     // make comm_d a public input
@@ -66,7 +65,7 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
     let comm_r_num = num_alloc(cs, || {
         comm_r
             .map(Into::into)
-            .ok_or_else(|| SynthesisError::AssignmentMissing)
+            .ok_or(SynthesisError::AssignmentMissing)
     })?;
 
     // make comm_r a public input
@@ -76,14 +75,14 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
     let comm_r_last_num = num_alloc(cs, || {
         comm_r_last
             .map(Into::into)
-            .ok_or_else(|| SynthesisError::AssignmentMissing)
+            .ok_or(SynthesisError::AssignmentMissing)
     })?;
 
     // Allocate comm_c as Fr
     let comm_c_num = num_alloc(cs, || {
         comm_c
             .map(Into::into)
-            .ok_or_else(|| SynthesisError::AssignmentMissing)
+            .ok_or(SynthesisError::AssignmentMissing)
     })?;
 
     // Verify comm_r = H(comm_c || comm_r_last)
@@ -103,7 +102,7 @@ pub fn circuit_synthesize<Tree: 'static + MerkleTreeTrait>(
         );
     }
 
-    for (index, proof) in proofs.into_iter().enumerate() {
+    for proof in proofs.into_iter() {
         proof_synthesize(
             proof,
             cs,
@@ -205,9 +204,7 @@ pub fn proof_synthesize<Tree: 'static + MerkleTreeTrait>(
     // -- verify initial data layer
 
     // PrivateInput: data_leaf
-    let data_leaf_num = num_alloc(cs, || {
-        data_leaf.ok_or_else(|| SynthesisError::AssignmentMissing)
-    })?;
+    let data_leaf_num = num_alloc(cs, || data_leaf.ok_or(SynthesisError::AssignmentMissing))?;
 
     // enforce inclusion of the data leaf in the tree D
     enforce_inclusion(
@@ -302,6 +299,7 @@ pub fn proof_synthesize<Tree: 'static + MerkleTreeTrait>(
 
         // Duplicate parents, according to the hashing algorithm.
         let mut expanded_parents = parents.clone();
+        #[allow(clippy::branches_sharing_code)]
         if layer > 1 {
             expanded_parents.extend_from_slice(&parents); // 28
             expanded_parents.extend_from_slice(&parents[..9]); // 37

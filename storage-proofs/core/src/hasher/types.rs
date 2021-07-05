@@ -107,6 +107,7 @@ pub trait Domain:
     + Element
     + std::hash::Hash
 {
+    #[allow(clippy::wrong_self_convention)]
     fn into_bytes(&self) -> Vec<u8>;
     fn try_from_bytes(raw: &[u8]) -> Result<Self>;
     /// Write itself into the given slice, LittleEndian bytes.

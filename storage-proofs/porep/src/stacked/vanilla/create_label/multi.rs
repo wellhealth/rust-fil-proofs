@@ -39,7 +39,7 @@ const SHA_BLOCK_SIZE: usize = 64;
 const SHA256_INITIAL_DIGEST: [u32; 8] = [
     0x6a09_e667,
     0xbb67_ae85,
-    0x3c6_ef372,
+    0x3c6e_f372,
     0xa54f_f53a,
     0x510e_527f,
     0x9b05_688c,
