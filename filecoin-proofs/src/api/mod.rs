@@ -608,12 +608,6 @@ where
 {
     info!("validate_cache_for_precommit_phase2:start");
 
-    ensure!(
-        replica_path.as_ref().exists(),
-        "Missing replica: {}",
-        replica_path.as_ref().to_path_buf().display()
-    );
-
     // Verify all stores/labels within the Labels object, but
     // respecting the current cache_path.
     let cache = cache_path.as_ref().to_path_buf();
