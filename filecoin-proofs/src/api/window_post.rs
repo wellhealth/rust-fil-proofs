@@ -169,9 +169,12 @@ pub fn generate_window_post_inner<Tree: 'static + MerkleTreeTrait>(
     let trees: Vec<_> = replicas
         .par_iter()
         .filter_map(|(&sector_id, replica)| {
-            info!("{:?}: path: {:?}", sector_id, replica.cache_dir_path());
+            let t = std::time::Instant::now();
             match replica.merkle_tree(post_config.sector_size) {
-                Ok(o) => Some(o),
+                Ok(o) => {
+                    info!("build merkletree for {:?}: {:?}", sector_id, t.elapsed());
+                    Some(o)
+                }
                 Err(e) => {
                     error!(
                         "{:?}: build merkle tree error: {:?}\nBacktrace:\n{}",
