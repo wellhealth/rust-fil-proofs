@@ -125,6 +125,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     info!("{:?}: c2 stage1 finished", sector_id);
     let proofs = stage2::run(&mut provers, &params, r_s, s_s, gpu_index)?;
     info!("{:?}: c2 stage2 finished", sector_id);
+
     let mut groth_proofs = vec![];
     for groth_proof in proofs {
         let mut proof_vec = vec![];
@@ -142,6 +143,7 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
     //         Ok(gp)
     //     })
     //     .collect::<Result<Vec<_>>>()?;
+
     info!("{:?}: c2 groth proof generated", sector_id);
 
     let proof = MultiProof::new(groth_proofs, &params.pvk);
