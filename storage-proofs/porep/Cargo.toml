@@ -27,7 +27,7 @@ bellperson = { version = "0.13", default-features = false }
 log = "0.4.7"
 pretty_assertions = "0.6.1"
 generic-array = "0.14.4"
-anyhow = "1.0.23"
+anyhow = { version = "*", features = ["backtrace"] }
 neptune = { version = "2.7.0", default-features = false, features = ["gpu"] }
 num_cpus = "1.10.1"
 hex = "0.4.2"

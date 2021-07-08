@@ -37,7 +37,7 @@ blake2s_simd = "0.5.8"
 hex = "0.4.0"
 merkletree = "0.21.0"
 bincode = "1.1.2"
-anyhow = { version = "1.0.23", features = ["backtrace"] }
+anyhow = { version = "*", features = ["backtrace"] }
 rand_xorshift = "0.2.0"
 sha2 = "0.9.1"
 typenum = "1.11.2"
