@@ -14,7 +14,6 @@ use crate::SealCommitPhase1Output;
 use crate::Ticket;
 use crate::SINGLE_PARTITION_PROOF_LEN;
 use anyhow::{bail, ensure, Context, Result};
-use bellperson::domain::Scalar;
 // use bellperson::Circuit;
 use bellperson::{
     bls::{Bls12, Fr, FrRepr},
@@ -43,7 +42,6 @@ const GIT_VERSION: &str =
 // mod stage1;
 mod stage2;
 
-pub mod fft;
 mod stage1;
 
 lazy_static! {
@@ -111,18 +109,25 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
             .map(|_| (Fr::random(&mut rng), Fr::random(&mut rng)))
             .unzip()
     };
-    let fft_cores = match gpu_index {
+    let _cores = match gpu_index {
         0 | 1 => (0..2),
         2 | 3 => (2..4),
         _ => bail!("gpu_index cannot be {}", gpu_index),
     };
 
-    let fft_handler = fft::create_fft_handler::<Bls12, Scalar<Bls12>>(fft_cores);
-    let mut provers: Vec<ProvingAssignment<Bls12>> = c2_stage1(circuits)
-        .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
+    let (provers, fft_handler) = crossbeam::scope(|s| {
+        let provers = s.spawn(|_| {
+            c2_stage1(circuits)
+                .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))
+        });
+        let fft_handler = fft::gpu::create_fft_program(gpu_index);
+        (provers.join().expect("spawn thread error"), fft_handler)
+    })
+    .expect("crossbeam::scope error");
+    let (mut provers, fft_handler) = (provers?, fft_handler?);
 
     info!("{:?}: c2 stage1 finished", sector_id);
-    let proofs = stage2::run(&mut provers, &params, r_s, s_s, fft_handler, gpu_index)?;
+    let proofs = stage2::run(&mut provers, &params, r_s, s_s, &fft_handler, gpu_index)?;
     info!("{:?}: c2 stage2 finished", sector_id);
 
     let groth_proofs = proofs

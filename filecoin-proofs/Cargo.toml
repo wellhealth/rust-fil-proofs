@@ -9,6 +9,7 @@ repository = "https://github.com/filecoin-project/rust-fil-proofs"
 readme = "README.md"
 
 [dependencies]
+fft = { path = "../fft" }
 git-version = "*"
 crossbeam = "*"
 storage-proofs = { version = "^5.0.0", path = "../storage-proofs", default-features = false }
