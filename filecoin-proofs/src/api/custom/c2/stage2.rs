@@ -328,8 +328,11 @@ fn do_concurrent_fft(
         .clone();
 
         std::thread::spawn(move || {
-            let result = Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>());
-            tx.send((result, index)).expect("cannot send fft result");
+            tx.send((
+                Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>()),
+                index,
+            ))
+            .expect("cannot send fft result");
         });
     }
     Ok(())
