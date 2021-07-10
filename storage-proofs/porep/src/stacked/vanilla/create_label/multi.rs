@@ -148,6 +148,8 @@ fn create_label_runner(
     sector_id: SectorId,
 ) -> Result<()> {
     // Label data bytes per node
+    let mut t_count = 0;
+    let mut t = std::time::Duration::new(0, 0);
     loop {
         // Get next work items
         let work = cur_awaiting.fetch_add(stride, SeqCst);
@@ -175,6 +177,7 @@ fn create_label_runner(
             let bpm = unsafe { base_parent_missing.get_mut(cur_slot as usize) };
 
             let pc = unsafe { parents_cache.slice_at(cur_node as usize * DEGREE as usize) };
+            let x = std::time::Instant::now();
             fill_buffer(
                 cur_node,
                 parents_cache,
@@ -184,6 +187,9 @@ fn create_label_runner(
                 buf,
                 bpm,
             );
+
+            t += x.elapsed();
+            t_count += 1;
         }
 
         // Wait for the previous node to finish
@@ -195,7 +201,7 @@ fn create_label_runner(
         cur_producer.fetch_add(count, SeqCst);
     }
 
-    info!("{:?}: created label runner", sector_id);
+    info!("{:?}: created label runner, with full buffer: {:?}", sector_id, t / t_count);
     Ok(())
 }
 
