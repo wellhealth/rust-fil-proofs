@@ -102,6 +102,7 @@ where
     let sealed_path = if garbage {
         replica_path.to_owned()
     } else {
+        info!("{:?}: sealing customer data", replica_path);
         let mut sealed_path = replica_path.to_owned();
         sealed_path.set_extension("sealed");
         sealed_path

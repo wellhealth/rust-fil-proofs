@@ -206,7 +206,11 @@ where
     R: AsRef<Path>,
     S: AsRef<Path>,
 {
-    info!("{:?}: p2 git-version: {}", replica_path.as_ref(), GIT_VERSION);
+    info!(
+        "{:?}: p2 git-version: {}",
+        replica_path.as_ref(),
+        GIT_VERSION
+    );
 
     // Sanity check all input path types.
     ensure!(
