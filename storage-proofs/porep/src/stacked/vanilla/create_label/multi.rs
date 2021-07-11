@@ -19,10 +19,10 @@ use log::*;
 use mapr::MmapMut;
 use merkletree::store::{DiskStore, StoreConfig};
 use scopeguard::defer;
-use std::marker::PhantomData;
 use std::mem::size_of;
 use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
 use std::{convert::TryInto, sync::RwLock};
+use std::{io::Write, marker::PhantomData};
 use storage_proofs_core::{
     cache_key::CacheKey,
     drgraph::{Graph, BASE_DEGREE},
@@ -201,7 +201,11 @@ fn create_label_runner(
         cur_producer.fetch_add(count, SeqCst);
     }
 
-    info!("{:?}: created label runner, with full buffer: {:?}", sector_id, t / t_count);
+    info!(
+        "{:?}: created label runner, with full buffer: {:?}",
+        sector_id,
+        t / t_count
+    );
     Ok(())
 }
 
@@ -592,12 +596,18 @@ fn write_layer(sector_id: SectorId, data: &[u8], config: &StoreConfig) -> Result
         })?;
     }
 
-    std::fs::write(&tmp_data_path, data)
-        .with_context(|| format!("{:?}: cannot write file: {:?}", sector_id, tmp_data_path))?;
+    let mut file = std::fs::File::create(&tmp_data_path)
+        .with_context(|| format!("cannot create file: {:?}", tmp_data_path))?;
+
+    file.write_all(&data)
+        .with_context(|| format!("cannot write data to file: {:?}", tmp_data_path))?;
+
+    file.sync_all()
+        .with_context(|| format!("cannot sync to file: {:?}", tmp_data_path))?;
 
     std::fs::rename(&tmp_data_path, &data_path).with_context(|| {
         format!(
-            "{:?}: failed to rename {:?} -> {:?}",
+            "{:?}: cannot to rename {:?} -> {:?}",
             sector_id, tmp_data_path, data_path
         )
     })?;
