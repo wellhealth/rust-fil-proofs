@@ -1,0 +1,27 @@
+[package]
+name = "fft"
+version = "0.1.0"
+authors = ["Krys <blackshop.s.bossss@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bellperson = { version = "0.13", features = ["gpu"], default-features = false }
+ff = { version = "0.2.3", package = "fff" }
+rayon = "1.3.0"
+anyhow = "1.0.23"
+env_logger = "*"
+log = "*"
+crossbeam = "*"
+arrayvec = "0.7.1"
+libc = "*"
+rust-gpu-tools = { git = "https://github.com/Krysme/rust-gpu-tools", branch = "master" }
+num_cpus = "*"
+sha256 = "*"
+
+[dev-dependencies]
+pretty_assertions = "0.4.0"
+rand = { version = "0.7.0" }
+
+
