@@ -1161,7 +1161,7 @@ where
         sector_id,
         crate::GIT_VERSION
     );
-    info!("start p1 without sub-process");
+    info!("{:?}: start p1 without sub-process", sector_id);
 
     info!("seal_pre_commit_phase1_layer:start: {:?}", sector_id);
     let compound_setup_params = compound_proof::SetupParams {
@@ -1194,7 +1194,7 @@ where
     //config.size = Some(127);
     //利用unsealed文件，生成unsealed.index文件
     let new_path = in_path.as_ref().with_file_name(TREE_INDEX);
-    info!("tree-index: {:?}", new_path);
+    info!("{:?}: tree-index: {:?}", sector_id, new_path);
 
     let mut comm_d: [u8; 32] = [0; 32];
     let mut outputfile = OpenOptions::new()
@@ -1214,10 +1214,13 @@ where
 
     config.size = Some(u64::from_le_bytes(treelen) as usize);
 
-    info!("read seal_pre_commit_phase1_layer comm_d is {:?}", comm_d);
+    info!(
+        "{:?}: read seal_pre_commit_phase1_layer comm_d is {:?}",
+        sector_id, comm_d
+    );
     info!("{:?}", config);
 
-    info!("verifying pieces");
+    info!("{:?}: verifying pieces", sector_id);
 
     ensure!(
         verify_pieces(&comm_d, piece_infos, porep_config.into())?,
@@ -1232,8 +1235,8 @@ where
         &porep_config.porep_id,
     );
     info!(
-        "seal_pre_commit_phase1_layer replica_id is {:?}",
-        replica_id
+        "{:?}: seal_pre_commit_phase1_layer replica_id is {:?}",
+        sector_id, replica_id
     );
 
     let labels = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase1(
@@ -1248,6 +1251,6 @@ where
         config,
         comm_d,
     };
-    info!("seal_pre_commit_phase1_layer:finish: {:?}", sector_id);
+    info!("{:?}: seal_pre_commit_phase1_layer:finished", sector_id);
     Ok(out)
 }
