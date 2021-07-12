@@ -9,6 +9,7 @@ repository = "https://github.com/filecoin-project/rust-fil-proofs"
 readme = "README.md"
 
 [dependencies]
+backtrace = "*"
 fft = { path = "../fft" }
 git-version = "*"
 crossbeam = "*"
