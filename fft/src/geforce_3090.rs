@@ -20,11 +20,15 @@ pub fn fft(
     omega: Fr,
     sector_id: SectorId,
 ) -> Result<()> {
+    info!("{:?}: enter fft", sector_id);
     let (mut a, mut b, mut c) = move_buffers_to_gpu_memory(fft, buffer_a, buffer_b, buffer_c)?;
+    info!("{:?}: buffer moved", sector_id);
 
     let mut tmp = fft
         .create_buffer::<Scalar<Bls12>>(buffer_a.len())
         .context("cannot create tmp GPU buffer")?;
+    info!("{:?}: created tmp buffer", sector_id);
+
     crate::gpu::ifft(fft, &mut a, &mut tmp, &params, omega)?;
     crate::gpu::coset_fft(fft, &mut a, &mut tmp, &params, omega)?;
     info!("{:?}: finished fft for a", sector_id);

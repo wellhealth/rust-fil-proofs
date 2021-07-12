@@ -82,13 +82,16 @@ pub fn fft_3090(
         "a, b, c length mismatch for gpu_fft"
     );
     let len = a.len();
-    info!("data retrieved from file");
+    info!("{:?}: data retrieved from file", sector_id);
     let params = gpu::generate_params(len)?;
     let fft_n = 2usize.pow(params.log_n);
+
+    info!("{:?}: params generated", sector_id);
     a.resize_with(fft_n, || Scalar(Fr::zero()));
     b.resize_with(fft_n, || Scalar(Fr::zero()));
     c.resize_with(fft_n, || Scalar(Fr::zero()));
 
+    info!("{:?}: resized", sector_id);
     let omega = (params.log_n..Fr::S).fold(Fr::root_of_unity(), |mut x, _| {
         x.square();
         x
