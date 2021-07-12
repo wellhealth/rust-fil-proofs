@@ -316,7 +316,7 @@ fn do_concurrent_fft(
         let b = std::mem::take(&mut prover.b);
         let c = std::mem::take(&mut prover.c);
 
-        let mut a = fft::fft_3090(fft, a, b, c)?;
+        let mut a = fft::fft_3090(fft, a, b, c, u64::from(*SECTOR_ID).into())?;
         let a_len = a.len() - 1;
         a.truncate(a_len);
 

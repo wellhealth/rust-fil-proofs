@@ -18,6 +18,13 @@ pub mod geforce_3080;
 pub mod geforce_3090;
 pub mod gpu;
 pub type Program = rust_gpu_tools::opencl::Program;
+#[derive(Default, Debug)]
+pub struct SectorId(u64);
+impl From<u64> for SectorId {
+    fn from(n: u64) -> Self {
+        Self(n)
+    }
+}
 
 fn bytes_from_fr(src: &Fr) -> [u8; 32] {
     let node = src.into_repr();
@@ -67,6 +74,7 @@ pub fn fft_3090(
     mut a: Vec<Scalar<Bls12>>,
     mut b: Vec<Scalar<Bls12>>,
     mut c: Vec<Scalar<Bls12>>,
+    sector_id: SectorId,
 ) -> Result<Vec<Scalar<Bls12>>> {
     let len = a.len();
     ensure!(
@@ -86,6 +94,6 @@ pub fn fft_3090(
         x
     });
 
-    geforce_3090::fft(&fft, params, &mut a, b, c, omega)?;
+    geforce_3090::fft(&fft, params, &mut a, b, c, omega, sector_id)?;
     Ok(a)
 }
