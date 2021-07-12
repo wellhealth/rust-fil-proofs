@@ -7,7 +7,9 @@ use std::path::PathBuf;
 
 use filecoin_hashers::Hasher;
 use merkletree::store::StoreConfig;
-use storage_proofs_core::{error::Result, merkle::BinaryMerkleTree, proof::ProofScheme, Data};
+use storage_proofs_core::{
+    error::Result, merkle::BinaryMerkleTree, proof::ProofScheme, sector::SectorId, Data,
+};
 
 pub mod drg;
 pub mod stacked;
@@ -27,6 +29,7 @@ pub trait PoRep<'a, H: Hasher, G: Hasher>: ProofScheme<'a> {
         data_tree: Option<BinaryMerkleTree<G>>,
         config: StoreConfig,
         replica_path: PathBuf,
+        sector_id: SectorId,
     ) -> Result<(Self::Tau, Self::ProverAux)>;
 
     fn extract_all(

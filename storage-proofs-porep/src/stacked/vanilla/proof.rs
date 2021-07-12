@@ -18,6 +18,7 @@ use merkletree::{
 use rayon::prelude::{
     IndexedParallelIterator, IntoParallelIterator, ParallelIterator, ParallelSliceMut,
 };
+use storage_proofs_core::sector::SectorId;
 use storage_proofs_core::{
     cache_key::CacheKey,
     data::Data,
@@ -310,34 +311,21 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         layer_challenges: &LayerChallenges,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
+        sector_id: SectorId,
     ) -> Result<(Labels<Tree>, Vec<LayerState>)> {
         let mut parent_cache = graph.parent_cache()?;
 
-        #[cfg(feature = "multicore-sdr")]
-        {
-            if SETTINGS.use_multicore_sdr {
-                info!("multi core replication");
-                create_label::multi::create_labels_for_encoding(
-                    graph,
-                    &parent_cache,
-                    layer_challenges.layers(),
-                    replica_id,
-                    config,
-                )
-            } else {
-                info!("single core replication");
-                create_label::single::create_labels_for_encoding(
-                    graph,
-                    &mut parent_cache,
-                    layer_challenges.layers(),
-                    replica_id,
-                    config,
-                )
-            }
-        }
-
-        #[cfg(not(feature = "multicore-sdr"))]
-        {
+        if SETTINGS.use_multicore_sdr {
+            info!("multi core replication");
+            create_label::multi::create_labels_for_encoding(
+                graph,
+                &parent_cache,
+                layer_challenges.layers(),
+                replica_id,
+                config,
+                sector_id,
+            )
+        } else {
             info!("single core replication");
             create_label::single::create_labels_for_encoding(
                 graph,
@@ -358,31 +346,16 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
     ) -> Result<LabelsCache<Tree>> {
         let mut parent_cache = graph.parent_cache()?;
 
-        #[cfg(feature = "multicore-sdr")]
-        {
-            if SETTINGS.use_multicore_sdr {
-                info!("multi core replication");
-                create_label::multi::create_labels_for_decoding(
-                    graph,
-                    &parent_cache,
-                    layer_challenges.layers(),
-                    replica_id,
-                    config,
-                )
-            } else {
-                info!("single core replication");
-                create_label::single::create_labels_for_decoding(
-                    graph,
-                    &mut parent_cache,
-                    layer_challenges.layers(),
-                    replica_id,
-                    config,
-                )
-            }
-        }
-
-        #[cfg(not(feature = "multicore-sdr"))]
-        {
+        if SETTINGS.use_multicore_sdr {
+            info!("multi core replication");
+            create_label::multi::create_labels_for_decoding(
+                graph,
+                &parent_cache,
+                layer_challenges.layers(),
+                replica_id,
+                config,
+            )
+        } else {
             info!("single core replication");
             create_label::single::create_labels_for_decoding(
                 graph,
@@ -1135,11 +1108,18 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         data_tree: Option<BinaryMerkleTree<G>>,
         config: StoreConfig,
         replica_path: PathBuf,
+        sector_id: SectorId,
     ) -> Result<TransformedLayers<Tree, G>> {
         // Generate key layers.
         let labels = measure_op(Operation::EncodeWindowTimeAll, || {
-            Self::generate_labels_for_encoding(graph, layer_challenges, replica_id, config.clone())
-                .context("failed to generate labels")
+            Self::generate_labels_for_encoding(
+                graph,
+                layer_challenges,
+                replica_id,
+                config.clone(),
+                sector_id,
+            )
+            .context("failed to generate labels")
         })?
         .0;
 
@@ -1346,11 +1326,18 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         pp: &'a PublicParams<Tree>,
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
+        sector_id: SectorId,
     ) -> Result<Labels<Tree>> {
         info!("replicate_phase1");
 
         let labels = measure_op(Operation::EncodeWindowTimeAll, || {
-            Self::generate_labels_for_encoding(&pp.graph, &pp.layer_challenges, replica_id, config)
+            Self::generate_labels_for_encoding(
+                &pp.graph,
+                &pp.layer_challenges,
+                replica_id,
+                config,
+                sector_id,
+            )
         })?
         .0;
 

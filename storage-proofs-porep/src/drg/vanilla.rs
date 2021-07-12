@@ -9,21 +9,10 @@ use merkletree::store::{ReplicaConfig, StoreConfig};
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use storage_proofs_core::{
-    api_version::ApiVersion,
-    cache_key::CacheKey,
-    crypto::sloth,
-    drgraph::Graph,
-    error::Result,
-    merkle::{
+use storage_proofs_core::{Data, api_version::ApiVersion, cache_key::CacheKey, crypto::sloth, drgraph::Graph, error::Result, merkle::{
         create_base_lcmerkle_tree, create_base_merkle_tree, BinaryLCMerkleTree, BinaryMerkleTree,
         LCMerkleTree, MerkleProof, MerkleProofTrait, MerkleTreeTrait,
-    },
-    parameter_cache::ParameterSetMetadata,
-    proof::{NoRequirements, ProofScheme},
-    util::{data_at_node, data_at_node_offset, NODE_SIZE},
-    Data,
-};
+    }, parameter_cache::ParameterSetMetadata, proof::{NoRequirements, ProofScheme}, sector::SectorId, util::{data_at_node, data_at_node_offset, NODE_SIZE}};
 
 use crate::{encode, PoRep};
 
@@ -444,6 +433,7 @@ where
         data_tree: Option<BinaryMerkleTree<H>>,
         config: StoreConfig,
         replica_path: PathBuf,
+        _: SectorId,
     ) -> Result<(Self::Tau, Self::ProverAux)> {
         let tree_d = match data_tree {
             Some(tree) => tree,

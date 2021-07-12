@@ -18,6 +18,7 @@ use generic_array::{
 use log::{debug, info};
 use mapr::MmapMut;
 use merkletree::store::{DiskStore, Store, StoreConfig};
+use storage_proofs_core::sector::SectorId;
 use storage_proofs_core::{
     cache_key::CacheKey,
     drgraph::{Graph, BASE_DEGREE},
@@ -440,8 +441,9 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     layers: usize,
     replica_id: T,
     config: StoreConfig,
+    sector_id: SectorId,
 ) -> Result<(Labels<Tree>, Vec<LayerState>)> {
-    info!("create labels");
+    info!("{:?}: create labels", sector_id);
 
     let layer_states = prepare_layers::<Tree>(graph, &config, layers);
 
@@ -470,7 +472,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     )?;
 
     for (layer, layer_state) in (1..=layers).zip(layer_states.iter()) {
-        info!("Layer {}", layer);
+        info!("{:?}: Layer {}", sector_id, layer);
 
         if layer_state.generated {
             info!("skipping layer {}, already generated", layer);
@@ -510,12 +512,12 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
         {
             let layer_config = &layer_state.config;
 
-            info!("  storing labels on disk");
+            info!("{:?}: storing labels {} on disk", sector_id, layer);
             write_layer(&exp_labels, layer_config).context("failed to store labels")?;
 
             info!(
-                "  generated layer {} store with id {}",
-                layer, layer_config.id
+                "{:?}: generated layer {} store with id {}",
+                sector_id, layer, layer_config.id
             );
         }
     }

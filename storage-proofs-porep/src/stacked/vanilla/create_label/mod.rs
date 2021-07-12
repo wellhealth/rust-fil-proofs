@@ -11,7 +11,6 @@ use storage_proofs_core::{
 
 use crate::stacked::vanilla::{proof::LayerState, StackedBucketGraph};
 
-#[cfg(feature = "multicore-sdr")]
 pub mod multi;
 pub mod single;
 
