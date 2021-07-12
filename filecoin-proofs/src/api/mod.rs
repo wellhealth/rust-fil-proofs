@@ -599,7 +599,7 @@ fn verify_level_cache_store<Tree: MerkleTreeTrait>(config: &StoreConfig) -> Resu
 // Checks for the existence of the tree d store, the replica, and all generated labels.
 pub fn validate_cache_for_precommit_phase2<R, T, Tree: MerkleTreeTrait>(
     cache_path: R,
-    replica_path: T,
+    _replica_path: T,
     seal_precommit_phase1_output: &SealPreCommitPhase1Output<Tree>,
 ) -> Result<()>
 where
