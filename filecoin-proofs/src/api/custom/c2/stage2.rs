@@ -1,5 +1,6 @@
 use super::cpu_compute_exp;
 use crate::custom::c2::SECTOR_ID;
+use crate::custom::get_gpu_index;
 use anyhow::{ensure, Context, Result};
 use bellperson::{bls::G2Projective, groth16::Proof, multiexp::multiexp};
 use bellperson::{
@@ -49,7 +50,6 @@ pub fn run(
     params: &MappedParameters<Bls12>,
     r_s: Vec<Fr>,
     s_s: Vec<Fr>,
-    fft_program: &fft::Program,
     gpu_index: usize,
 ) -> Result<Vec<Proof<Bls12>>> {
     let aux_assignments: Vec<Arc<Vec<FrRepr>>> = collect_aux_assignments(provers);
@@ -74,7 +74,6 @@ pub fn run(
     let h_s_cpu = hs_cpu(rx_param_h_cpu, rx_h_cpu);
 
     concurrent_fft(
-        &fft_program,
         provers,
         params,
         tx_param_h_cpu,
@@ -281,7 +280,6 @@ fn h_cpu(
 }
 
 fn concurrent_fft(
-    fft_program: &fft::Program,
     provers: &mut [ProvingAssignment<Bls12>],
     params: &MappedParameters<Bls12>,
     h_cpu_start: SyncSender<(Arc<Vec<G1Affine>>, usize)>,
@@ -291,7 +289,7 @@ fn concurrent_fft(
 ) -> Result<()> {
     rayon::join(
         || h_params(params, &h_gpu_start, &h_cpu_start),
-        || do_concurrent_fft(fft_program, provers, tx_h_cpu, tx_h_gpu),
+        || do_concurrent_fft(provers, tx_h_cpu, tx_h_gpu),
     )
     .1
 }
@@ -306,17 +304,17 @@ fn h_params(
 }
 
 fn do_concurrent_fft(
-    fft: &fft::Program,
     provers: &mut [ProvingAssignment<Bls12>],
     tx_h_cpu: SyncSender<(Arc<Vec<FrRepr>>, usize)>,
     tx_h_gpu: SyncSender<(Arc<Vec<FrRepr>>, usize)>,
 ) -> Result<()> {
+    let fft = fft::gpu::create_fft_program(get_gpu_index().unwrap_or(0))?;
     for (index, prover) in provers.iter_mut().enumerate() {
         let a = std::mem::take(&mut prover.a);
         let b = std::mem::take(&mut prover.b);
         let c = std::mem::take(&mut prover.c);
 
-        let mut a = fft::fft_3080(fft, a, b, c, u64::from(*SECTOR_ID).into())?;
+        let mut a = fft::fft_3080(&fft, a, b, c, u64::from(*SECTOR_ID).into())?;
         let a_len = a.len() - 1;
         a.truncate(a_len);
 

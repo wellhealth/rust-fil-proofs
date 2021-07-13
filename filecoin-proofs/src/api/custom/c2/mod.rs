@@ -115,19 +115,11 @@ pub fn whole<Tree: 'static + MerkleTreeTrait>(
         _ => bail!("gpu_index cannot be {}", gpu_index),
     };
 
-    let (provers, fft_handler) = crossbeam::scope(|s| {
-        let provers = s.spawn(|_| {
-            c2_stage1(circuits)
-                .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))
-        });
-        let fft_handler = fft::gpu::create_fft_program(gpu_index);
-        (provers.join().expect("spawn thread error"), fft_handler)
-    })
-    .expect("crossbeam::scope error");
-    let (mut provers, fft_handler) = (provers?, fft_handler?);
+    let mut provers = c2_stage1(circuits)
+        .with_context(|| format!("{:?}: c2 cpu computation failed", sector_id))?;
 
     info!("{:?}: c2 stage1 finished", sector_id);
-    let proofs = stage2::run(&mut provers, &params, r_s, s_s, &fft_handler, gpu_index)?;
+    let proofs = stage2::run(&mut provers, &params, r_s, s_s, gpu_index)?;
     info!("{:?}: c2 stage2 finished", sector_id);
 
     let groth_proofs = proofs
