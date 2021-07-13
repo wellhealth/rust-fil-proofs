@@ -6,7 +6,10 @@ use bellperson::{
 use log::info;
 use rust_gpu_tools::opencl::Program;
 
-use crate::gpu::{FftParams, GpuBuffer};
+use crate::{
+    gpu::{FftParams, GpuBuffer},
+    SectorId,
+};
 
 /// Allocate 2 buffers used for FFT computation for GPUs with lower memory
 ///
@@ -31,15 +34,18 @@ pub fn fft(
     mut buffer_b: Vec<Scalar<Bls12>>,
     mut buffer_c: Vec<Scalar<Bls12>>,
     omega: Fr,
+    sector_id: SectorId,
 ) -> Result<()> {
+    info!("{:?}: enter fft", sector_id);
     let (mut buf_src, mut buf_tmp) = allocate_gpu_buffer(fft, buffer_a.len())?;
+    info!("{:?}: buffer allocated", sector_id);
 
     buf_src
         .write_from(0, &buffer_b)
         .context("cannot write buf_src from buffer_a")?;
     let t = std::time::Instant::now();
     crate::gpu::ifft(fft, &mut buf_src, &mut buf_tmp, &params, omega)?;
-    info!("ifft: {:?}", t.elapsed());
+    info!("{:?}: ifft: {:?}", sector_id, t.elapsed());
     crate::gpu::coset_fft(fft, &mut buf_src, &mut buf_tmp, &params, omega)?;
     info!("coset_fft: {:?}", t.elapsed());
 

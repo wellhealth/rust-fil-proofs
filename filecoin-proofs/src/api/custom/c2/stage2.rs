@@ -315,14 +315,11 @@ fn do_concurrent_fft(
         let a = std::mem::take(&mut prover.a);
         let b = std::mem::take(&mut prover.b);
         let c = std::mem::take(&mut prover.c);
-        info!("{:?}: done a,b,c take for {}", *SECTOR_ID, index + 1);
 
-        let mut a = fft::fft_3090(fft, a, b, c, u64::from(*SECTOR_ID).into())?;
-        info!("{:?}: GPU done for {}", *SECTOR_ID, index + 1);
+        let mut a = fft::fft_3080(fft, a, b, c, u64::from(*SECTOR_ID).into())?;
         let a_len = a.len() - 1;
         a.truncate(a_len);
 
-        info!("{:?}: FFT truncated {}", *SECTOR_ID, index + 1);
         let tx = if index < SETTINGS.c2_cpu_hs {
             &tx_h_cpu
         } else {
@@ -330,12 +327,10 @@ fn do_concurrent_fft(
         }
         .clone();
 
-        info!("{:?}: tx cloned {}", *SECTOR_ID, index + 1);
         std::thread::spawn(move || {
             let result = Arc::new(a.into_iter().map(|s| s.0.into()).collect::<Vec<FrRepr>>());
             tx.send((result, index)).expect("cannot send fft result");
         });
-        info!("{:?}: thread launched {}", *SECTOR_ID, index + 1);
     }
     Ok(())
 }

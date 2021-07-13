@@ -100,3 +100,35 @@ pub fn fft_3090(
     geforce_3090::fft(&fft, params, &mut a, b, c, omega, sector_id)?;
     Ok(a)
 }
+
+pub fn fft_3080(
+    fft: &Program,
+    mut a: Vec<Scalar<Bls12>>,
+    mut b: Vec<Scalar<Bls12>>,
+    mut c: Vec<Scalar<Bls12>>,
+    sector_id: SectorId,
+) -> Result<Vec<Scalar<Bls12>>> {
+    let len = a.len();
+    ensure!(
+        [a.len(), b.len(), c.len()].iter().all(|&x| x == len),
+        "a, b, c length mismatch for gpu_fft"
+    );
+    let len = a.len();
+    info!("{:?}: data retrieved from file", sector_id);
+    let params = gpu::generate_params(len)?;
+    let fft_n = 2usize.pow(params.log_n);
+
+    info!("{:?}: params generated", sector_id);
+    a.resize_with(fft_n, || Scalar(Fr::zero()));
+    b.resize_with(fft_n, || Scalar(Fr::zero()));
+    c.resize_with(fft_n, || Scalar(Fr::zero()));
+
+    info!("{:?}: resized", sector_id);
+    let omega = (params.log_n..Fr::S).fold(Fr::root_of_unity(), |mut x, _| {
+        x.square();
+        x
+    });
+
+    geforce_3080::fft(&fft, params, &mut a, b, c, omega, sector_id)?;
+    Ok(a)
+}
