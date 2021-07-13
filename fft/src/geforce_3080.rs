@@ -36,53 +36,60 @@ pub fn fft(
     omega: Fr,
     sector_id: SectorId,
 ) -> Result<()> {
-    info!("{:?}: enter fft", sector_id);
     let (mut buf_src, mut buf_tmp) = allocate_gpu_buffer(fft, buffer_a.len())?;
-    info!("{:?}: buffer allocated", sector_id);
 
+    let t = std::time::Instant::now();
     buf_src
         .write_from(0, &buffer_b)
         .context("cannot write buf_src from buffer_a")?;
-    let t = std::time::Instant::now();
+    info!("{:?}: GPU buffer write: {:?}", sector_id, t.elapsed());
+
     crate::gpu::ifft(fft, &mut buf_src, &mut buf_tmp, &params, omega)?;
-    info!("{:?}: ifft: {:?}", sector_id, t.elapsed());
     crate::gpu::coset_fft(fft, &mut buf_src, &mut buf_tmp, &params, omega)?;
-    info!("coset_fft: {:?}", t.elapsed());
 
     buf_src
         .read_into(0, &mut buffer_b)
         .context("cannot read into buffer_b")?;
-    info!("finished buffer_b");
 
+    let t = std::time::Instant::now();
     buf_src
         .write_from(0, &buffer_c)
         .context("cannot write buf_src from buffer_a")?;
+    info!("{:?}: GPU buffer write: {:?}", sector_id, t.elapsed());
+
     crate::gpu::ifft(fft, &mut buf_src, &mut buf_tmp, &params, omega)?;
     crate::gpu::coset_fft(fft, &mut buf_src, &mut buf_tmp, &params, omega)?;
 
+    let t = std::time::Instant::now();
     buf_src
         .read_into(0, &mut buffer_c)
         .context("cannot read into buffer_b")?;
-    info!("finished buffer_c");
+    info!("{:?}: GPU buffer write: {:?}", sector_id, t.elapsed());
 
+    let t = std::time::Instant::now();
     buf_src
         .write_from(0, buffer_a)
         .context("cannot write buf_src from buffer_a")?;
+    info!("{:?}: GPU buffer write: {:?}", sector_id, t.elapsed());
+
     crate::gpu::ifft(fft, &mut buf_src, &mut buf_tmp, &params, omega)?;
     crate::gpu::coset_fft(fft, &mut buf_src, &mut buf_tmp, &params, omega)?;
 
-    info!("finished buffer_a");
-
+    let t = std::time::Instant::now();
     buf_tmp
         .write_from(0, &buffer_b)
         .context("cannot write buffer_b to buf_tmp")?;
+    info!("{:?}: GPU buffer write: {:?}", sector_id, t.elapsed());
 
     crate::gpu::merge_mul(fft, &buf_src, &buf_tmp)?;
     drop(buffer_b);
 
+    let t = std::time::Instant::now();
     buf_tmp
         .write_from(0, &buffer_c)
         .context("cannot write buffer_b to buf_tmp")?;
+    info!("{:?}: GPU buffer write: {:?}", sector_id, t.elapsed());
+
     crate::gpu::merge_sub(fft, &buf_src, &buf_tmp)?;
     drop(buffer_c);
 
