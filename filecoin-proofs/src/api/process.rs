@@ -311,7 +311,9 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         .spawn()
         .with_context(|| format!("{:?}, cannot start program {:?} ", sector_id, c2_exec))?;
 
-    let status = c2_process.wait().expect("c2 is not running");
+    let status = c2_process
+        .wait()
+        .with_context(|| format!("{:?}: c2 is not running", sector_id))?;
 
     match status.code() {
         Some(0) => {
