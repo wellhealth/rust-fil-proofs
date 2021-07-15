@@ -558,6 +558,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                                 .read()
                                 .expect("cannot read exp_labels for file writing"),
                             layer_config,
+                            sector_id,
                         )
                         .with_context(|| {
                             format!("{:?}: write_layer error for layer: {}", sector_id, layer)
