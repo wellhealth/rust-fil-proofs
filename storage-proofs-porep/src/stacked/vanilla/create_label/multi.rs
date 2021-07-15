@@ -458,6 +458,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
             );
         }
     }
+
     defer!({
         if let Err(e) = unbind_core() {
             error!(
@@ -495,7 +496,10 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                 info!("{:?}: Layer {}", sector_id, layer);
 
                 if layer_state.generated {
-                    info!("skipping layer {}, already generated", layer);
+                    info!(
+                        "{:?}: skipping layer {}, already generated",
+                        sector_id, layer
+                    );
 
                     // load the already generated layer into exp_labels
                     read_layer(
@@ -516,7 +520,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                 if layers != 1 {
                     parents_cache.finish_reset()?;
                 }
-                let exp_label = &exp_labels.read().map_err(|_| {
+                let exp_label = exp_labels.read().map_err(|_| {
                     anyhow::anyhow!("cannot read exp_labels for create_layer_labels")
                 })?;
                 create_layer_labels(
@@ -533,6 +537,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
                     sector_id,
                     l3_index.and_then(|x| x.split_first()).map(|x| x.1),
                 );
+				drop(exp_label);
 
                 // Cache reset happens in two parts.
                 // The first part (the start) happens after each layer but the last.
