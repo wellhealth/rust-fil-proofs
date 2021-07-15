@@ -28,17 +28,14 @@ pub fn get_l3_index() -> Option<L3Index> {
     }
 }
 
-pub fn get_l3_topo() -> Vec<Vec<u32>> {
+fn get_l3_topo() -> Vec<Vec<u32>> {
     let hwloc_info = std::process::Command::new("hwloc-info")
         .output()
         .ok()
         .map(|x| x.stdout)
         .map(String::from_utf8)
         .and_then(Result::ok)
-        .unwrap_or_else(|| {
-            error!("cannot get info from hwloc-info");
-            std::process::exit(255)
-        });
+        .expect("cannot get info from hwloc-info");
 
     let l3_cache_regex =
         regex::Regex::new(r#"([[:digit:]]*)[[:space:]]+L3Cache"#).expect("cannot initialize regex");
@@ -48,10 +45,7 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
     let l3_cache_match = l3_cache_regex
         .captures_iter(&hwloc_info)
         .next()
-        .unwrap_or_else(|| {
-            error!("invalid hwloc-info");
-            std::process::exit(255)
-        });
+        .expect("invalid hwloc-info");
 
     info!("l3_cache_match[0] -> {}", &l3_cache_match[1]);
 
@@ -108,7 +102,7 @@ pub fn get_l3_topo() -> Vec<Vec<u32>> {
     res
 }
 
-pub(crate) fn serialize(cores: &[u32]) -> String {
+pub fn serialize(cores: &[u32]) -> String {
     cores
         .split_first()
         .map(|(first, rest)| {

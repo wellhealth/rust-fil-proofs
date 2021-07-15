@@ -8,7 +8,6 @@ mod cache;
 mod challenges;
 mod column;
 mod column_proof;
-mod cores;
 mod encoding_proof;
 mod graph;
 mod labeling_proof;

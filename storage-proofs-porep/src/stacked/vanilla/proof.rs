@@ -312,6 +312,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
         sector_id: SectorId,
+        l3_index: Option<&[u32]>,
     ) -> Result<(Labels<Tree>, Vec<LayerState>)> {
         let mut parent_cache = graph.parent_cache()?;
 
@@ -324,6 +325,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 replica_id,
                 config,
                 sector_id,
+                l3_index,
             )
         } else {
             info!("single core replication");
@@ -1100,7 +1102,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         )
     }
 
-	#[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn transform_and_replicate_layers(
         graph: &StackedBucketGraph<Tree::Hasher>,
         layer_challenges: &LayerChallenges,
@@ -1119,6 +1121,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 replica_id,
                 config.clone(),
                 sector_id,
+                None,
             )
             .context("failed to generate labels")
         })?
@@ -1328,6 +1331,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
         replica_id: &<Tree::Hasher as Hasher>::Domain,
         config: StoreConfig,
         sector_id: SectorId,
+        l3_index: Option<&[u32]>,
     ) -> Result<Labels<Tree>> {
         info!("replicate_phase1");
 
@@ -1338,6 +1342,7 @@ impl<'a, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> StackedDrg<'a, Tr
                 replica_id,
                 config,
                 sector_id,
+                l3_index,
             )
         })?
         .0;

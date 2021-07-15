@@ -1,5 +1,8 @@
 use crate::{
-    api::{as_safe_commitment, commitment_from_fr, get_base_tree_leafs, get_base_tree_size},
+    api::{
+        as_safe_commitment, commitment_from_fr, cores::get_l3_index, get_base_tree_leafs,
+        get_base_tree_size,
+    },
     caches::{get_stacked_srs_key, get_stacked_srs_verifier_key, get_stacked_verifying_key},
     constants::{
         DefaultBinaryTree, DefaultPieceDomain, DefaultPieceHasher, POREP_MINIMUM_CHALLENGES,
@@ -187,6 +190,7 @@ where
         &replica_id,
         config.clone(),
         sector_id,
+        None,
     )?;
 
     let out = SealPreCommitPhase1Output {
@@ -1239,11 +1243,13 @@ where
         sector_id, replica_id
     );
 
+    let l3_index = get_l3_index();
     let labels = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase1(
         &compound_public_params.vanilla_params,
         &replica_id,
         config.clone(),
         sector_id,
+        l3_index.as_ref().map(|x| x.0.as_slice()),
     )?;
 
     let out = SealPreCommitPhase1Output {

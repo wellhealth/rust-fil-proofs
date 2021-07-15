@@ -1,23 +1,21 @@
 use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::mem::{self, size_of};
-use std::sync::{
-    atomic::{AtomicU64, Ordering::SeqCst},
-    Arc, MutexGuard,
-};
+use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use byte_slice_cast::{AsByteSlice, AsMutSliceOf};
 use filecoin_hashers::Hasher;
 use generic_array::{
     typenum::{Unsigned, U64},
     GenericArray,
 };
-use log::{debug, info};
+use log::{debug, error, info};
 use mapr::MmapMut;
 use merkletree::store::{DiskStore, Store, StoreConfig};
+use scopeguard::defer;
 use storage_proofs_core::sector::SectorId;
 use storage_proofs_core::{
     cache_key::CacheKey,
@@ -29,7 +27,6 @@ use storage_proofs_core::{
 
 use crate::stacked::vanilla::{
     cache::ParentCache,
-    cores::{bind_core, checkout_core_group, CoreIndex},
     create_label::{prepare_layers, read_layer, write_layer},
     graph::{StackedBucketGraph, DEGREE, EXP_DEGREE},
     memory_handling::{setup_create_label_memory, CacheReader},
@@ -201,6 +198,7 @@ fn create_label_runner(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_layer_labels(
     parents_cache: &CacheReader<u32>,
     replica_id: &[u8],
@@ -208,7 +206,8 @@ fn create_layer_labels(
     exp_labels: Option<&mut MmapMut>,
     num_nodes: u64,
     cur_layer: u32,
-    core_group: Arc<Option<MutexGuard<'_, Vec<CoreIndex>>>>,
+    sector_id: SectorId,
+    core_group: Option<&[u32]>,
 ) {
     info!("Creating labels for layer {}", cur_layer);
     // num_producers is the number of producer threads
@@ -262,18 +261,25 @@ fn create_layer_labels(
             let ring_buf = &ring_buf;
             let base_parent_missing = &base_parent_missing;
 
-            let core_index = if let Some(cg) = &*core_group {
-                cg.get(i + 1)
-            } else {
-                None
-            };
             runners.push(s.spawn(move |_| {
-                // This could fail, but we will ignore the error if so.
-                // It will be logged as a warning by `bind_core`.
-                debug!("binding core in producer thread {}", i);
-                // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
-                let _cleanup_handle = core_index.map(|c| bind_core(*c));
-
+                if let Some(&core) = core_group.and_then(|x| x.get(i)) {
+                    if let Err(e) = bind_core(core) {
+                        error!(
+                            "{:?}: cannot bind core [{}], error: {:?}",
+                            sector_id, core, e
+                        );
+                    }
+                }
+                defer!({
+                    if let Err(e) = unbind_core() {
+                        error!(
+                            "{:?}: cannot unbind core for thread: {}, error:{:?}",
+                            sector_id,
+                            gettid::gettid(),
+                            e
+                        )
+                    }
+                });
                 create_label_runner(
                     parents_cache,
                     layer_labels,
@@ -442,8 +448,28 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     replica_id: T,
     config: StoreConfig,
     sector_id: SectorId,
+    l3_index: Option<&[u32]>,
 ) -> Result<(Labels<Tree>, Vec<LayerState>)> {
-    info!("{:?}: create labels", sector_id);
+    info!("{:?}: create labels, {:?}", sector_id, l3_index);
+
+    if let Some(&first) = l3_index.and_then(|x| x.first()) {
+        if let Err(e) = bind_core(first) {
+            error!(
+                "{:?}: cannot bind core [{}] for p1: {:?}",
+                sector_id, first, e
+            );
+        }
+    }
+    defer!({
+        if let Err(e) = unbind_core() {
+            error!(
+                "{:?}: cannot unbind core for thread: {}, err: {:?}",
+                sector_id,
+                gettid::gettid(),
+                e
+            )
+        }
+    });
 
     let layer_states = prepare_layers::<Tree>(graph, &config, layers);
 
@@ -452,16 +478,6 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     let cache_window_nodes = SETTINGS.sdr_parents_cache_size as usize;
 
     let default_cache_size = DEGREE * 4 * cache_window_nodes;
-
-    let core_group = Arc::new(checkout_core_group());
-
-    // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
-    let _cleanup_handle = (*core_group).as_ref().map(|group| {
-        // This could fail, but we will ignore the error if so.
-        // It will be logged as a warning by `bind_core`.
-        debug!("binding core in main thread");
-        group.get(0).map(|core_index| bind_core(*core_index))
-    });
 
     // NOTE: this means we currently keep 2x sector size around, to improve speed
     let (parents_cache, mut layer_labels, mut exp_labels) = setup_create_label_memory(
@@ -499,7 +515,8 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
             },
             node_count,
             layer as u32,
-            core_group.clone(),
+            sector_id,
+            l3_index.and_then(|x| x.split_first()).map(|x| x.1),
         );
 
         // Cache reset happens in two parts.
@@ -551,15 +568,7 @@ pub fn create_labels_for_decoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
 
     let default_cache_size = DEGREE * 4 * cache_window_nodes;
 
-    let core_group = Arc::new(checkout_core_group());
-
     // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
-    let _cleanup_handle = (*core_group).as_ref().map(|group| {
-        // This could fail, but we will ignore the error if so.
-        // It will be logged as a warning by `bind_core`.
-        debug!("binding core in main thread");
-        group.get(0).map(|core_index| bind_core(*core_index))
-    });
 
     // NOTE: this means we currently keep 2x sector size around, to improve speed
     let (parents_cache, mut layer_labels, mut exp_labels) = setup_create_label_memory(
@@ -589,7 +598,8 @@ pub fn create_labels_for_decoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
             },
             node_count,
             layer as u32,
-            core_group.clone(),
+            0.into(),
+            None,
         );
 
         // Cache reset happens in two parts.
@@ -756,4 +766,36 @@ mod tests {
         dbg!(&last_label);
         assert_eq!(expected_last_label.into_repr(), last_label.0);
     }
+}
+
+pub fn unbind_core() -> Result<()> {
+    let status = std::process::Command::new("hwloc-bind")
+        .arg("--tid")
+        .arg(gettid::gettid().to_string())
+        .arg("all")
+        .status()
+        .context("cannot execute program hwloc-bind")?
+        .code()
+        .context("hwloc-bind crashed")?;
+
+    if status != 0 {
+        bail!("hwloc-bind returned {}", status);
+    }
+    Ok(())
+}
+
+pub fn bind_core(index: u32) -> Result<()> {
+    let status = std::process::Command::new("hwloc-bind")
+        .arg("--tid")
+        .arg(gettid::gettid().to_string())
+        .arg(format!("pu:{}", index))
+        .status()
+        .context("cannot execute program hwloc-bind")?
+        .code()
+        .context("hwloc-bind crashed")?;
+
+    if status != 0 {
+        bail!("hwloc-bind returned {}", status);
+    }
+    Ok(())
 }

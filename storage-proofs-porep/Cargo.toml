@@ -9,6 +9,8 @@ repository = "https://github.com/filecoin-project/rust-fil-proofs"
 readme = "README.md"
 
 [dependencies]
+scopeguard = "*"
+gettid = "*"
 crossbeam = "0.8"
 digest = "0.9"
 storage-proofs-core = { path = "../storage-proofs-core", version = "^8.0.0", default-features = false}
