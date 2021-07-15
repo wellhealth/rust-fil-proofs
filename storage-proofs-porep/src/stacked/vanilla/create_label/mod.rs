@@ -50,7 +50,7 @@ pub fn prepare_layers<Tree: 'static + MerkleTreeTrait>(
 /// Stores a layer atomically on disk, by writing first to `.tmp` and then renaming.
 pub fn write_layer(data: &[u8], config: &StoreConfig, sector_id: SectorId) -> Result<()> {
     let data_path = StoreConfig::data_path(&config.path, &config.id);
-    let tmp_data_path = data_path.with_extension(".tmp");
+    let tmp_data_path = data_path.with_extension("tmp");
 
     if let Some(parent) = data_path.parent() {
         create_dir_all(parent)
