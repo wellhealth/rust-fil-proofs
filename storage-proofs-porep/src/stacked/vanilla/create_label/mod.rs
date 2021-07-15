@@ -5,13 +5,13 @@ use anyhow::Context;
 use filecoin_hashers::Hasher;
 use log::{info, warn};
 use merkletree::{merkle::Element, store::StoreConfig};
+use storage_proofs_core::sector::SectorId;
 use storage_proofs_core::{
     cache_key::CacheKey, drgraph::Graph, error::Result, merkle::MerkleTreeTrait,
 };
 
 use crate::stacked::vanilla::{proof::LayerState, StackedBucketGraph};
 
-#[cfg(feature = "multicore-sdr")]
 pub mod multi;
 pub mod single;
 
@@ -48,15 +48,18 @@ pub fn prepare_layers<Tree: 'static + MerkleTreeTrait>(
 }
 
 /// Stores a layer atomically on disk, by writing first to `.tmp` and then renaming.
-pub fn write_layer(data: &[u8], config: &StoreConfig) -> Result<()> {
+pub fn write_layer(data: &[u8], config: &StoreConfig, sector_id: SectorId) -> Result<()> {
     let data_path = StoreConfig::data_path(&config.path, &config.id);
-    let tmp_data_path = data_path.with_extension(".tmp");
+    let tmp_data_path = data_path.with_extension("tmp");
 
     if let Some(parent) = data_path.parent() {
-        create_dir_all(parent).context("failed to create parent directories")?;
+        create_dir_all(parent)
+            .with_context(|| format!("{:?}: failed to create parent directories", sector_id))?;
     }
-    fs::write(&tmp_data_path, data).context("failed to write layer data")?;
-    rename(tmp_data_path, data_path).context("failed to rename tmp data")?;
+    fs::write(&tmp_data_path, data)
+        .with_context(|| format!("{:?}: failed to write layer data", sector_id))?;
+    rename(tmp_data_path, data_path)
+        .with_context(|| format!("{:?}: failed to rename tmp data", sector_id))?;
 
     Ok(())
 }

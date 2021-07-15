@@ -78,7 +78,7 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
         let layer_config = &layer_state.config;
 
         info!("  storing labels on disk");
-        write_layer(&layer_labels, layer_config).context("failed to store labels")?;
+        write_layer(&layer_labels, layer_config, 0.into()).context("failed to store labels")?;
 
         info!(
             "  generated layer {} store with id {}",
@@ -148,7 +148,7 @@ pub fn create_labels_for_decoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
 
         // Write the result to disk to avoid keeping it in memory all the time.
         info!("  storing labels on disk");
-        write_layer(&layer_labels, &config)?;
+        write_layer(&layer_labels, &config, 0.into())?;
 
         let layer_store: DiskStore<<Tree::Hasher as Hasher>::Domain> =
             DiskStore::new_from_disk(graph.size(), Tree::Arity::to_usize(), &config)?;

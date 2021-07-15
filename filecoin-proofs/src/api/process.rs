@@ -16,7 +16,10 @@ use crate::{
     api::cores::get_l3_index, api::cores::serialize, PieceInfo, PoRepConfig, ProverId,
     SealPreCommitOutput, SealPreCommitPhase1Output, Ticket,
 };
-use crate::{ChallengeSeed, PoStConfig, PrivateReplicaInfo, SealCommitOutput, SealCommitPhase1Output, SnarkProof};
+use crate::{
+    ChallengeSeed, PoStConfig, PrivateReplicaInfo, SealCommitOutput, SealCommitPhase1Output,
+    SnarkProof,
+};
 use serde::{Deserialize, Serialize};
 pub const SHENSUANYUN_GPU_INDEX: &str = "SHENSUANYUN_GPU_INDEX";
 
@@ -308,7 +311,9 @@ pub fn c2<Tree: 'static + MerkleTreeTrait>(
         .spawn()
         .with_context(|| format!("{:?}, cannot start program {:?} ", sector_id, c2_exec))?;
 
-    let status = c2_process.wait().expect("c2 is not running");
+    let status = c2_process
+        .wait()
+        .with_context(|| format!("{:?}: c2 is not running", sector_id))?;
 
     match status.code() {
         Some(0) => {
@@ -417,18 +422,21 @@ lazy_static::lazy_static! {
 }
 
 pub fn select_gpu_device() -> Option<usize> {
-    if opencl::Device::all().len() == 0 {
+    if opencl::Device::all().is_empty() {
         Some(0)
     } else {
-        GPU_NVIDIA_DEVICES_QUEUE.lock().unwrap().pop_front()
+        GPU_NVIDIA_DEVICES_QUEUE
+            .lock()
+            .expect("cannot obtain lock for GPU_NVIDIA_DEVICES_QUEUE")
+            .pop_front()
     }
 }
 
 pub fn release_gpu_device(gpu_index: usize) {
-    if opencl::Device::all().len() > 0 {
+    if !opencl::Device::all().is_empty() {
         GPU_NVIDIA_DEVICES_QUEUE
             .lock()
-            .unwrap()
+            .expect("cannot obtain lock for GPU_NVIDIA_DEVICES_QUEUE")
             .push_back(gpu_index)
     }
 }

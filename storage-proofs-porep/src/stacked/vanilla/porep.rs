@@ -5,6 +5,7 @@ use merkletree::store::StoreConfig;
 use storage_proofs_core::{
     error::Result,
     merkle::{BinaryMerkleTree, MerkleTreeTrait},
+    sector::SectorId,
     Data,
 };
 
@@ -32,6 +33,7 @@ impl<'a, 'c, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> PoRep<'a, Tre
         data_tree: Option<BinaryMerkleTree<G>>,
         config: StoreConfig,
         replica_path: PathBuf,
+        sector_id: SectorId,
     ) -> Result<(Self::Tau, Self::ProverAux)> {
         let (tau, p_aux, t_aux) = Self::transform_and_replicate_layers(
             &pp.graph,
@@ -41,6 +43,7 @@ impl<'a, 'c, Tree: 'static + MerkleTreeTrait, G: 'static + Hasher> PoRep<'a, Tre
             data_tree,
             config,
             replica_path,
+            sector_id,
         )?;
 
         Ok((tau, (p_aux, t_aux)))

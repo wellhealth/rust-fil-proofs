@@ -17,6 +17,7 @@ use storage_proofs_core::{
     drgraph::BASE_DEGREE,
     merkle::{get_base_tree_count, DiskTree, MerkleTreeTrait},
     proof::ProofScheme,
+    sector::SectorId,
     table_tests,
     test_helper::setup_replica,
     util::{default_rows_to_discard, NODE_SIZE},
@@ -137,6 +138,7 @@ fn test_extract_all<Tree: 'static + MerkleTreeTrait>() {
         &layer_challenges,
         &replica_id,
         config.clone(),
+        SectorId::from(12345),
     )
     .expect("label generation failed");
     for state in &label_states {
@@ -155,6 +157,7 @@ fn test_extract_all<Tree: 'static + MerkleTreeTrait>() {
         &layer_challenges,
         &replica_id,
         config.clone(),
+        SectorId::from(12345),
     )
     .expect("label generation failed");
     for state in &label_states[..off] {
@@ -246,6 +249,7 @@ fn test_stacked_porep_resume_seal() {
         None,
         config.clone(),
         replica_path1,
+        SectorId::from(12345),
     )
     .expect("replication failed 1");
     clear_temp();
@@ -258,6 +262,7 @@ fn test_stacked_porep_resume_seal() {
         None,
         config.clone(),
         replica_path2,
+        SectorId::from(12345),
     )
     .expect("replication failed 2");
     clear_temp();
@@ -268,6 +273,7 @@ fn test_stacked_porep_resume_seal() {
         &layer_challenges,
         &replica_id,
         config.clone(),
+        SectorId::from(12345),
     )
     .expect("label generation failed");
     let off = label_states.len() - 3;
@@ -285,6 +291,7 @@ fn test_stacked_porep_resume_seal() {
         None,
         config.clone(),
         replica_path3,
+        SectorId::from(12345),
     )
     .expect("replication failed 3");
     clear_temp();

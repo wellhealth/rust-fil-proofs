@@ -1,5 +1,8 @@
 use crate::{
-    api::{as_safe_commitment, commitment_from_fr, get_base_tree_leafs, get_base_tree_size},
+    api::{
+        as_safe_commitment, commitment_from_fr, cores::get_l3_index, get_base_tree_leafs,
+        get_base_tree_size,
+    },
     caches::{get_stacked_srs_key, get_stacked_srs_verifier_key, get_stacked_verifying_key},
     constants::{
         DefaultBinaryTree, DefaultPieceDomain, DefaultPieceHasher, POREP_MINIMUM_CHALLENGES,
@@ -22,10 +25,13 @@ use memmap::MmapOptions;
 use merkletree::store::StoreConfig;
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
-use std::fs::{self, metadata, OpenOptions};
 use std::io::Write;
 use std::marker::PhantomData;
 use std::path::Path;
+use std::{
+    fs::{self, metadata, OpenOptions},
+    io::Read,
+};
 use storage_proofs_core::{
     cache_key::CacheKey,
     compound_proof::{self, CompoundProof},
@@ -36,6 +42,7 @@ use storage_proofs_core::{
     parameter_cache::SRS_MAX_PROOFS_TO_AGGREGATE,
     proof::ProofScheme,
     sector::SectorId,
+    settings::SETTINGS,
     util::default_rows_to_discard,
 };
 use storage_proofs_porep::stacked::{
@@ -182,6 +189,8 @@ where
         &compound_public_params.vanilla_params,
         &replica_id,
         config.clone(),
+        sector_id,
+        None,
     )?;
 
     let out = SealPreCommitPhase1Output {
@@ -337,6 +346,7 @@ pub fn seal_commit_phase1<T: AsRef<Path>, Tree: 'static + MerkleTreeTrait>(
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1_tree<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
@@ -451,7 +461,7 @@ where
             .write(true)
             .truncate(true)
             .open(&tree_index)
-            .unwrap();
+            .with_context(|| format!("cannot open file: {:?}", tree_index))?;
         info!("tree-index: {:?} has been created", &tree_index);
         outputfile
             .write_all(&comm_d)
@@ -936,7 +946,7 @@ pub fn verify_seal<Tree: 'static + MerkleTreeTrait>(
     let public_inputs =
         stacked::PublicInputs::<<Tree::Hasher as Hasher>::Domain, DefaultPieceDomain> {
             replica_id,
-            tau: Some(Tau { comm_r, comm_d }),
+            tau: Some(Tau { comm_d, comm_r }),
             seed,
             k: None,
         };
@@ -1065,7 +1075,7 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
             DefaultPieceDomain,
         > {
             replica_id,
-            tau: Some(Tau { comm_r, comm_d }),
+            tau: Some(Tau { comm_d, comm_r }),
             seed: seeds[i],
             k: None,
         });
@@ -1094,7 +1104,48 @@ pub fn verify_batch_seal<Tree: 'static + MerkleTreeTrait>(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn seal_pre_commit_phase1_layer<R, S, T, Tree: 'static + MerkleTreeTrait>(
+    porep_config: PoRepConfig,
+    cache_path: R,
+    in_path: S,
+    out_path: T,
+    prover_id: ProverId,
+    sector_id: SectorId,
+    ticket: Ticket,
+    piece_infos: &[PieceInfo],
+) -> Result<SealPreCommitPhase1Output<Tree>>
+where
+    R: AsRef<Path>,
+    S: AsRef<Path>,
+    T: AsRef<Path>,
+{
+    if SETTINGS.p1_use_subprocess {
+        crate::process::p1(
+            porep_config,
+            cache_path,
+            in_path,
+            prover_id,
+            sector_id,
+            ticket,
+            piece_infos,
+        )
+    } else {
+        seal_pre_commit_phase1_layer_worker(
+            porep_config,
+            cache_path,
+            in_path,
+            out_path,
+            prover_id,
+            sector_id,
+            ticket,
+            piece_infos,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn seal_pre_commit_phase1_layer_worker<R, S, T, Tree: 'static + MerkleTreeTrait>(
     porep_config: PoRepConfig,
     cache_path: R,
     in_path: S,
@@ -1109,13 +1160,103 @@ where
     S: AsRef<Path>,
     T: AsRef<Path>,
 {
-    super::process::p1::<_, _, Tree>(
-        porep_config,
-        cache_path,
-        in_path,
-        prover_id,
+    info!(
+        "{:?}: worker-p1 git-version: {}",
         sector_id,
-        ticket,
-        piece_infos,
-    )
+        crate::GIT_VERSION
+    );
+    info!("{:?}: start p1 without sub-process", sector_id);
+
+    info!("seal_pre_commit_phase1_layer:start: {:?}", sector_id);
+    let compound_setup_params = compound_proof::SetupParams {
+        vanilla_params: setup_params(
+            PaddedBytesAmount::from(porep_config),
+            usize::from(PoRepProofPartitions::from(porep_config)),
+            porep_config.porep_id,
+            porep_config.api_version,
+        )?,
+        partitions: Some(usize::from(PoRepProofPartitions::from(porep_config))),
+        priority: false,
+    };
+
+    let compound_public_params = <StackedCompound<Tree, DefaultPieceHasher> as CompoundProof<
+        StackedDrg<'_, Tree, DefaultPieceHasher>,
+        _,
+    >>::setup(&compound_setup_params)?;
+
+    let base_tree_size = get_base_tree_size::<DefaultBinaryTree>(porep_config.sector_size)?;
+    let base_tree_leafs = get_base_tree_leafs::<DefaultBinaryTree>(base_tree_size)?;
+
+    let mut config = StoreConfig::new(
+        cache_path.as_ref(),
+        CacheKey::CommDTree.to_string(),
+        StoreConfig::default_rows_to_discard(base_tree_leafs, BINARY_ARITY),
+    );
+
+    /////////////////////////////////////////
+    //从文件中读取treed生成的数据用于layer计算
+    //config.size = Some(127);
+    //利用unsealed文件，生成unsealed.index文件
+    let new_path = in_path.as_ref().with_file_name(TREE_INDEX);
+    info!("{:?}: tree-index: {:?}", sector_id, new_path);
+
+    let mut comm_d: [u8; 32] = [0; 32];
+    let mut outputfile = OpenOptions::new()
+        .read(true)
+        .open(&new_path)
+        .with_context(|| format!("cannot open file: {:?}", new_path))?;
+
+    outputfile
+        .read_exact(&mut comm_d)
+        .with_context(|| format!("cannot read commd from {:?}", new_path))?;
+    //读取data_tree.len 数据
+
+    let mut treelen: [u8; 8] = [0; 8];
+    outputfile
+        .read_exact(&mut treelen)
+        .with_context(|| format!("cannot read commd from {:?}", new_path))?;
+
+    config.size = Some(u64::from_le_bytes(treelen) as usize);
+
+    info!(
+        "{:?}: read seal_pre_commit_phase1_layer comm_d is {:?}",
+        sector_id, comm_d
+    );
+    info!("{:?}", config);
+
+    info!("{:?}: verifying pieces", sector_id);
+
+    ensure!(
+        verify_pieces(&comm_d, piece_infos, porep_config.into())?,
+        "pieces and comm_d do not match"
+    );
+
+    let replica_id = generate_replica_id::<Tree::Hasher, _>(
+        &prover_id,
+        sector_id.into(),
+        &ticket,
+        comm_d,
+        &porep_config.porep_id,
+    );
+    info!(
+        "{:?}: seal_pre_commit_phase1_layer replica_id is {:?}",
+        sector_id, replica_id
+    );
+
+    let l3_index = get_l3_index();
+    let labels = StackedDrg::<Tree, DefaultPieceHasher>::replicate_phase1(
+        &compound_public_params.vanilla_params,
+        &replica_id,
+        config.clone(),
+        sector_id,
+        l3_index.as_ref().map(|x| x.0.as_slice()),
+    )?;
+
+    let out = SealPreCommitPhase1Output {
+        labels,
+        config,
+        comm_d,
+    };
+    info!("{:?}: seal_pre_commit_phase1_layer:finished", sector_id);
+    Ok(out)
 }

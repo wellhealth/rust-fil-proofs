@@ -1,23 +1,24 @@
 use std::convert::TryInto;
 use std::marker::PhantomData;
 use std::mem::{self, size_of};
-use std::sync::{
-    atomic::{AtomicU64, Ordering::SeqCst},
-    Arc, MutexGuard,
-};
+use std::ops::DerefMut;
+use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
+use std::sync::RwLock;
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-use byte_slice_cast::{AsByteSlice, AsMutSliceOf};
+use anyhow::{bail, Context, Result};
+use byte_slice_cast::{AsByteSlice, AsMutSliceOf, AsSliceOf};
 use filecoin_hashers::Hasher;
 use generic_array::{
     typenum::{Unsigned, U64},
     GenericArray,
 };
-use log::{debug, info};
+use log::{debug, error, info};
 use mapr::MmapMut;
 use merkletree::store::{DiskStore, Store, StoreConfig};
+use scopeguard::defer;
+use storage_proofs_core::sector::SectorId;
 use storage_proofs_core::{
     cache_key::CacheKey,
     drgraph::{Graph, BASE_DEGREE},
@@ -28,7 +29,6 @@ use storage_proofs_core::{
 
 use crate::stacked::vanilla::{
     cache::ParentCache,
-    cores::{bind_core, checkout_core_group, CoreIndex},
     create_label::{prepare_layers, read_layer, write_layer},
     graph::{StackedBucketGraph, DEGREE, EXP_DEGREE},
     memory_handling::{setup_create_label_memory, CacheReader},
@@ -59,7 +59,7 @@ fn fill_buffer(
     parents_cache: &CacheReader<u32>,
     mut cur_parent: &[u32], // parents for this node
     layer_labels: &UnsafeSlice<'_, u32>,
-    exp_labels: Option<&UnsafeSlice<'_, u32>>, // None for layer0
+    exp_labels: Option<&[u32]>, // None for layer0
     buf: &mut [u8],
     base_parent_missing: &mut BitMask,
 ) {
@@ -111,9 +111,9 @@ fn fill_buffer(
     if let Some(exp_labels) = exp_labels {
         // Read from each of the expander parent nodes
         for k in BASE_DEGREE..DEGREE {
-            let parent_data = unsafe {
+            let parent_data = {
                 let offset = cur_parent[0] as usize * NODE_WORDS;
-                &exp_labels.as_slice()[offset..offset + NODE_WORDS]
+                &exp_labels[offset..offset + NODE_WORDS]
             };
             let a = SHA_BLOCK_SIZE + (NODE_SIZE * k);
             buf[a..a + NODE_SIZE].copy_from_slice(parent_data.as_byte_slice());
@@ -141,7 +141,7 @@ fn fill_buffer(
 fn create_label_runner(
     parents_cache: &CacheReader<u32>,
     layer_labels: &UnsafeSlice<'_, u32>,
-    exp_labels: Option<&UnsafeSlice<'_, u32>>, // None for layer 0
+    exp_labels: Option<&[u32]>, // None for layer 0
     num_nodes: u64,
     cur_producer: &AtomicU64,
     cur_awaiting: &AtomicU64,
@@ -200,14 +200,16 @@ fn create_label_runner(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_layer_labels(
     parents_cache: &CacheReader<u32>,
     replica_id: &[u8],
     layer_labels: &mut MmapMut,
-    exp_labels: Option<&mut MmapMut>,
+    exp_labels: Option<&[u32]>,
     num_nodes: u64,
     cur_layer: u32,
-    core_group: Arc<Option<MutexGuard<'_, Vec<CoreIndex>>>>,
+    sector_id: SectorId,
+    core_group: Option<&[u32]>,
 ) {
     info!("Creating labels for layer {}", cur_layer);
     // num_producers is the number of producer threads
@@ -245,9 +247,6 @@ fn create_layer_labels(
             .as_mut_slice_of::<u32>()
             .expect("failed as mut slice of"),
     );
-    let exp_labels = exp_labels.map(|m| {
-        UnsafeSlice::from_slice(m.as_mut_slice_of::<u32>().expect("failed as mut slice of"))
-    });
     let base_parent_missing = UnsafeSlice::from_slice(&mut base_parent_missing);
 
     crossbeam::thread::scope(|s| {
@@ -255,24 +254,30 @@ fn create_layer_labels(
 
         for i in 0..num_producers {
             let layer_labels = &layer_labels;
-            let exp_labels = exp_labels.as_ref();
             let cur_producer = &cur_producer;
             let cur_awaiting = &cur_awaiting;
             let ring_buf = &ring_buf;
             let base_parent_missing = &base_parent_missing;
 
-            let core_index = if let Some(cg) = &*core_group {
-                cg.get(i + 1)
-            } else {
-                None
-            };
             runners.push(s.spawn(move |_| {
-                // This could fail, but we will ignore the error if so.
-                // It will be logged as a warning by `bind_core`.
-                debug!("binding core in producer thread {}", i);
-                // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
-                let _cleanup_handle = core_index.map(|c| bind_core(*c));
-
+                if let Some(&core) = core_group.and_then(|x| x.get(i)) {
+                    if let Err(e) = bind_core(core) {
+                        error!(
+                            "{:?}: cannot bind core [{}], error: {:?}",
+                            sector_id, core, e
+                        );
+                    }
+                }
+                defer!({
+                    if let Err(e) = unbind_core() {
+                        error!(
+                            "{:?}: cannot unbind core for thread: {}, error:{:?}",
+                            sector_id,
+                            gettid::gettid(),
+                            e
+                        )
+                    }
+                });
                 create_label_runner(
                     parents_cache,
                     layer_labels,
@@ -440,8 +445,29 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
     layers: usize,
     replica_id: T,
     config: StoreConfig,
+    sector_id: SectorId,
+    l3_index: Option<&[u32]>,
 ) -> Result<(Labels<Tree>, Vec<LayerState>)> {
-    info!("create labels");
+    info!("{:?}: create labels, {:?}", sector_id, l3_index);
+
+    if let Some(&first) = l3_index.and_then(|x| x.first()) {
+        if let Err(e) = bind_core(first) {
+            error!(
+                "{:?}: cannot bind core [{}] for p1: {:?}",
+                sector_id, first, e
+            );
+        }
+    }
+    defer!({
+        if let Err(e) = unbind_core() {
+            error!(
+                "{:?}: cannot unbind core for thread: {}, err: {:?}",
+                sector_id,
+                gettid::gettid(),
+                e
+            )
+        }
+    });
 
     let layer_states = prepare_layers::<Tree>(graph, &config, layers);
 
@@ -451,82 +477,123 @@ pub fn create_labels_for_encoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
 
     let default_cache_size = DEGREE * 4 * cache_window_nodes;
 
-    let core_group = Arc::new(checkout_core_group());
-
-    // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
-    let _cleanup_handle = (*core_group).as_ref().map(|group| {
-        // This could fail, but we will ignore the error if so.
-        // It will be logged as a warning by `bind_core`.
-        debug!("binding core in main thread");
-        group.get(0).map(|core_index| bind_core(*core_index))
-    });
-
     // NOTE: this means we currently keep 2x sector size around, to improve speed
-    let (parents_cache, mut layer_labels, mut exp_labels) = setup_create_label_memory(
+    let (parents_cache, mut layer_labels, exp_labels) = setup_create_label_memory(
         sector_size,
         DEGREE,
         Some(default_cache_size as usize),
         &parents_cache.path,
     )?;
 
-    for (layer, layer_state) in (1..=layers).zip(layer_states.iter()) {
-        info!("Layer {}", layer);
+    let exp_labels = RwLock::new(exp_labels);
+    let (err_tx, err_rx) = std::sync::mpsc::channel();
+    let res = crossbeam::scope({
+        let layer_states = &layer_states;
+        let exp_labels = &exp_labels;
+        move |s| -> Result<()> {
+            for (layer, layer_state) in (1..=layers).zip(layer_states.iter()) {
+                info!("{:?}: Layer {}", sector_id, layer);
 
-        if layer_state.generated {
-            info!("skipping layer {}, already generated", layer);
+                if layer_state.generated {
+                    info!("skipping layer {}, already generated", layer);
 
-            // load the already generated layer into exp_labels
-            read_layer(&layer_state.config, &mut exp_labels)?;
-            continue;
+                    // load the already generated layer into exp_labels
+                    read_layer(
+                        &layer_state.config,
+                        &mut exp_labels.write().map_err(|e| {
+                            anyhow::anyhow!(
+                                "{:?}: cannot write exp_labels for read_layer: {:?}",
+                                sector_id,
+                                e
+                            )
+                        })?,
+                    )?;
+                    continue;
+                }
+
+                // Cache reset happens in two parts.
+                // The second part (the finish) happens before each layer but the first.
+                if layers != 1 {
+                    parents_cache.finish_reset()?;
+                }
+                let exp_label = &exp_labels.read().map_err(|_| {
+                    anyhow::anyhow!("cannot read exp_labels for create_layer_labels")
+                })?;
+                create_layer_labels(
+                    &parents_cache,
+                    &replica_id.as_ref(),
+                    &mut layer_labels,
+                    if layer == 1 {
+                        None
+                    } else {
+                        Some(exp_label.as_slice_of::<u32>().expect("failed as slice of"))
+                    },
+                    node_count,
+                    layer as u32,
+                    sector_id,
+                    l3_index.and_then(|x| x.split_first()).map(|x| x.1),
+                );
+
+                // Cache reset happens in two parts.
+                // The first part (the start) happens after each layer but the last.
+                if layer != layers {
+                    parents_cache.start_reset()?;
+                }
+
+                mem::swap(
+                    &mut layer_labels,
+                    &mut exp_labels
+                        .write()
+                        .map_err(|_| anyhow::anyhow!("cannot write exp_labels for mem::swap"))?
+                        .deref_mut(),
+                );
+                {
+                    let layer_config = &layer_state.config;
+
+                    info!("{:?}: storing labels {} on disk", sector_id, layer);
+                    let err_tx = err_tx.clone();
+                    s.spawn(move |_| {
+                        if let Err(e) = write_layer(
+                            &exp_labels
+                                .read()
+                                .expect("cannot read exp_labels for file writing"),
+                            layer_config,
+                            sector_id,
+                        )
+                        .with_context(|| {
+                            format!("{:?}: write_layer error for layer: {}", sector_id, layer)
+                        }) {
+                            error!("{:?}: write_layer error: {:?}", sector_id, e);
+                            let _ = err_tx.send(e);
+                        }
+                    });
+
+                    info!(
+                        "{:?}: generated layer {} store with id {}",
+                        sector_id, layer, layer_config.id
+                    );
+                }
+            }
+            Ok(())
         }
+    });
 
-        // Cache reset happens in two parts.
-        // The second part (the finish) happens before each layer but the first.
-        if layers != 1 {
-            parents_cache.finish_reset()?;
-        }
-
-        create_layer_labels(
-            &parents_cache,
-            &replica_id.as_ref(),
-            &mut layer_labels,
-            if layer == 1 {
-                None
-            } else {
-                Some(&mut exp_labels)
-            },
-            node_count,
-            layer as u32,
-            core_group.clone(),
-        );
-
-        // Cache reset happens in two parts.
-        // The first part (the start) happens after each layer but the last.
-        if layer != layers {
-            parents_cache.start_reset()?;
-        }
-
-        mem::swap(&mut layer_labels, &mut exp_labels);
-        {
-            let layer_config = &layer_state.config;
-
-            info!("  storing labels on disk");
-            write_layer(&exp_labels, layer_config).context("failed to store labels")?;
-
-            info!(
-                "  generated layer {} store with id {}",
-                layer, layer_config.id
-            );
-        }
+    if let Some(e) = err_rx.iter().next() {
+        return Err(e);
     }
 
-    Ok((
-        Labels::<Tree> {
-            labels: layer_states.iter().map(|s| s.config.clone()).collect(),
-            _h: PhantomData,
-        },
-        layer_states,
-    ))
+    match res {
+        Ok(o) => o.map(|_| {
+            (
+                Labels::<Tree> {
+                    labels: layer_states.iter().map(|s| s.config.clone()).collect(),
+                    _h: PhantomData,
+                },
+                layer_states,
+            )
+        }),
+        Err(e) => bail!("{:?}: crossbeam scope panic: {:?}", sector_id, e),
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -549,15 +616,7 @@ pub fn create_labels_for_decoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
 
     let default_cache_size = DEGREE * 4 * cache_window_nodes;
 
-    let core_group = Arc::new(checkout_core_group());
-
     // When `_cleanup_handle` is dropped, the previous binding of thread will be restored.
-    let _cleanup_handle = (*core_group).as_ref().map(|group| {
-        // This could fail, but we will ignore the error if so.
-        // It will be logged as a warning by `bind_core`.
-        debug!("binding core in main thread");
-        group.get(0).map(|core_index| bind_core(*core_index))
-    });
 
     // NOTE: this means we currently keep 2x sector size around, to improve speed
     let (parents_cache, mut layer_labels, mut exp_labels) = setup_create_label_memory(
@@ -583,11 +642,12 @@ pub fn create_labels_for_decoding<Tree: 'static + MerkleTreeTrait, T: AsRef<[u8]
             if layer == 1 {
                 None
             } else {
-                Some(&mut exp_labels)
+                Some(exp_labels.as_slice_of::<u32>().expect("failed as slice of"))
             },
             node_count,
             layer as u32,
-            core_group.clone(),
+            0.into(),
+            None,
         );
 
         // Cache reset happens in two parts.
@@ -754,4 +814,36 @@ mod tests {
         dbg!(&last_label);
         assert_eq!(expected_last_label.into_repr(), last_label.0);
     }
+}
+
+pub fn unbind_core() -> Result<()> {
+    let status = std::process::Command::new("hwloc-bind")
+        .arg("--tid")
+        .arg(gettid::gettid().to_string())
+        .arg("all")
+        .status()
+        .context("cannot execute program hwloc-bind")?
+        .code()
+        .context("hwloc-bind crashed")?;
+
+    if status != 0 {
+        bail!("hwloc-bind returned {}", status);
+    }
+    Ok(())
+}
+
+pub fn bind_core(index: u32) -> Result<()> {
+    let status = std::process::Command::new("hwloc-bind")
+        .arg("--tid")
+        .arg(gettid::gettid().to_string())
+        .arg(format!("pu:{}", index))
+        .status()
+        .context("cannot execute program hwloc-bind")?
+        .code()
+        .context("hwloc-bind crashed")?;
+
+    if status != 0 {
+        bail!("hwloc-bind returned {}", status);
+    }
+    Ok(())
 }
