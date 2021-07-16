@@ -17,6 +17,12 @@ use ff::{Field, PrimeField};
 
 lazy_static! {
     pub static ref GPU_INDEX: usize = select_gpu_device();
+    pub static ref POOL: rayon::ThreadPool = {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(16)
+            .build()
+            .expect("failed to build rayon ThreadPool")
+    };
 }
 
 pub fn select_gpu_device() -> usize {

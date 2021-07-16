@@ -34,16 +34,25 @@ pub fn is_garbage_data(replica_path: &Path) -> bool {
         None => return false,
     };
 
-    let lotus_data = match std::env::var("WORKER_PATH").context("cannot find WORKER_PATH") {
+    let lotus_data = match std::env::var("WORKER_PATH") {
         Ok(o) => o,
-        Err(_) => return false,
+        Err(_) => {
+            error!("{:?}: cannot find WORKER_PATH", replica_path);
+            return false;
+        }
     };
 
     let unsealed = Path::new(&lotus_data).join("unsealed").join(file_name);
 
     let meta_data = match std::fs::symlink_metadata(&unsealed) {
         Ok(o) => o,
-        Err(_) => return false,
+        Err(_) => {
+            error!(
+                "{:?}: cannot find symlink_metadata of {:?}",
+                replica_path, unsealed
+            );
+            return false;
+        }
     };
 
     meta_data.file_type().is_symlink()
@@ -186,6 +195,7 @@ where
             info!("tree-r thread panic: {:?}", e);
         }
 
+        // error handling
         seal_rx.recv().expect("cannot recv seal_rx")?;
         build_tree_rx.recv().expect("cannot recv build_tree_rx")?;
     }
@@ -234,12 +244,18 @@ fn prepare_batch(disk_data: &mut [File; 2], node_count: usize) -> Result<Vec<Fr>
     let mut first = it.next().expect("array length problem");
     let second = it.next().expect("array length problem");
 
-    first
-        .par_iter_mut()
-        .zip(second.par_iter())
-        .for_each(|(fr1, fr2)| {
-            fr1.add_assign(fr2);
-        });
+    super::POOL.install(|| {
+        let cores = super::POOL.current_num_threads();
+        let chunk = first.len() / cores;
+        first
+            .par_chunks_mut(chunk)
+            .zip(second.par_chunks(chunk))
+            .for_each(|(fr1, fr2)| {
+                for (it1, it2) in fr1.iter_mut().zip(fr2.iter()) {
+                    it1.add_assign(it2);
+                }
+            });
+    });
     Ok(first)
 }
 
